@@ -13,3 +13,4 @@ Plugins here may need the shared `.jsfx-inc` files from GFX-II beside them to ru
 - `gfx-benthick-3a.jsfx` — GFX Benthick 3A (archived 9 Oct 2026; the row-layout version of Benthick 3, superseded by 3B).
 - `gfx-g-piano.jsfx` — GFX G Piano (removed from GFX-II 9 Oct 2026).
 - `gfx-palette.jsfx` — GFX Palette (removed from GFX-II 9 Oct 2026).
+- `gfx-g-mallets.jsfx` — GFX G Mallets (removed from GFX-II 9 Oct 2026). Needs gfx-drift, gfx-output, gfx-ui, gfx-panel and gfx-instrument from GFX-II.

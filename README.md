@@ -22,6 +22,12 @@ Plugins here may need the shared `.jsfx-inc` files from GFX-II beside them to ru
 - `gfx-console.jsfx` — GFX Console (removed from GFX-II 10 Oct 2026; Console Q, now OB Q, stays). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-instrument and gfx-dyn from GFX-II.
 - `gfx-duplex.jsfx` — GFX Duplex (removed from GFX-II 10 Oct 2026; Duplex Q stays). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-instrument and gfx-dyn from GFX-II.
 - `gfx-head.jsfx` — GFX Head (removed from GFX-II 10 Oct 2026; its tape stage lives on in GFX Headsmoother). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn, gfx-faceplate, gfx-instrument and gfx-headsmooth from GFX-II.
+- `gfx-model-15.jsfx` — GFX Model 15 (removed from GFX-II 10 Oct 2026; lives on as the 15 model in GFX Channel 92). Needs gfx-output, gfx-input, gfx-ui, gfx-panel and gfx-dyn from GFX-II.
+- `gfx-model-44.jsfx` — GFX Model 44 (removed from GFX-II 10 Oct 2026; lives on as the 44 model in GFX Channel 92). Needs gfx-output, gfx-input, gfx-ui, gfx-panel and gfx-dyn from GFX-II.
+- `gfx-field-42.jsfx` — GFX Field 42 (removed from GFX-II 10 Oct 2026; lives on as the FIELD model in GFX Channel 92). Needs gfx-drift, gfx-input, gfx-lfo, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
+- `gfx-cassette-4.jsfx` — GFX Cassette 4 (removed from GFX-II 10 Oct 2026; lives on as the 15 and 44 models in GFX Sum 92). Needs gfx-drift, gfx-output, gfx-ui, gfx-panel, gfx-instrument and gfx-dyn from GFX-II.
+- `gfx-compact-12.jsfx` — GFX Compact 12 (removed from GFX-II 10 Oct 2026; lives on as Model 12 in GFX Sum 92 and GFX Channel 92). Needs gfx-drift, gfx-output, gfx-ui, gfx-panel, gfx-instrument and gfx-dyn from GFX-II.
+- `gfx-field-42-mix.jsfx` — GFX Field 42 Mix (removed from GFX-II 10 Oct 2026; lives on as the FIELD model in GFX Sum 92). Needs gfx-drift, gfx-input, gfx-lfo, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
 
 ## ideas
 - `ideas/gfx-g-morpho-recipe.md` — GFX G Morpho, a vector / morphing additive synth: recipe and build plan, parked 9 Oct 2026 before any build.

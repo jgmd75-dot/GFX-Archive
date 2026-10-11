@@ -1,0 +1,865 @@
+desc:GFX G Disintegration Engine
+//tags: instrument synth polyphonic pad evolving generative drone
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-output, gfx-ui, gfx-panel, gfx-instrument and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// THE DISINTEGRATION ENGINE, after Kazimierz Dabrowski's theory of positive disintegration: a sound that begins in
+// a stable, rather rigid order, is loosened and pulled apart by five overexcitabilities, and gathers again into a
+// new, richer order - not back to where it started. Polyphonic (8 voices), three columns, left to right.
+//   PRIMARY INTEGRATION    the settled source. Each voice is a fundamental and a strict harmonic stack: ORDER (how
+//              many harmonics, 1 - 8), TILT (dark .. bright). A steady PULSE clock, synced to the host (DIV: 1/1 ..
+//              1/16, triplets), which the forces use; PULSE also sets a gentle throb on it. A clean filter (CUTOFF,
+//              RESO, half key tracking) and the AMP envelope (ATTACK, DECAY, SUSTAIN, RELEASE).
+//   DISINTEGRATION         five forces, each with its lit ON key, an AMOUNT and its own character:
+//     PSYCHOMOTOR    restless stutters on the pulse (RESTLESS: how often, and how finely the pulse is cut) and
+//                    micro pitch JITTER.
+//     SENSUAL        drive and heat: TEXTURE from a warm, rounded saturation to a raw fold; FORMANT, a vowel colour.
+//     INTELLECTUAL   the ratios loosen: partials pulled off their whole-number places (inharmonic), and STRUCTURE
+//                    re-voices them by fourths, fifths and tritone shadows, one partial after another.
+//     IMAGINATIONAL  a granular smear in time, BLUR (from close and clear to scattered and diffuse), and FREEZE,
+//                    which holds the texture as it is.
+//     EMOTIONAL      swells and tremor (TREMOR: slow swells .. a quick tremor) and BLOOM, a resonant feedback
+//                    tuned to the last note (bounded: it blooms, it never runs away).
+//     DISSOLUTION    the big fader: how far the whole structure is allowed to come apart (it scales every force).
+//                    The mod wheel adds to it.
+//   SECONDARY INTEGRATION  the resolver: RESOLVE (how far the new order takes over) and TIME (how slowly it gathers,
+//              1 s .. 10 min). The new order: the partials settle on a new, richer set of ratios - a chord built
+//              from each note: LEARNED (from the notes recently played), ADD 9, SUS, ADD 11, MAJ 9 - and the pulse
+//              slows and deepens (DEEP PULSE: HALF or THIRD). As it gathers, the forces' reach is drawn in. SPACE: a
+//              short, lush room, opening with the new order. BALANCE shows the original order, the disintegration and
+//              the new order in the sound now.
+//   ADJUST     the drift (0 - 100 %, 50 % = standard): the system travels by itself - settled, in flux, re-formed -
+//              over RATE (30 s .. 10 min) per journey. Each journey starts from the latest new order (so the order
+//              keeps developing: the next voicing opens out, then gains fifths). 0 % = the position is set only by
+//              the controls.
+//   VELOCITY, VOLUME, LEVEL, SAT (the output soft clip is always on). POLY / MONO / LEGATO and GLIDE.
+// MIDI: notes, pitch bend (+/- 2), CC1 (adds to DISSOLUTION), CC64 sustain, CC120 / CC123 all notes off.
+
+import gfx-drift.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-instrument.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:4<1,8,1>-Order (harmonics)
+slider2:50<0,100,0.1>-Tilt (dark .. bright, %)
+slider3:2<0,7,1{1/1,1/2,1/4,1/8,1/16,1/4T,1/8T,1/16T}>-Pulse division
+slider4:20<0,100,0.1>-Pulse throb (%)
+slider5:3200<40,18000,1>-Cutoff (Hz)
+slider6:20<0,100,0.1>-Resonance (%)
+slider7:0.01<0.001,10,0.0001>-Attack (s)
+slider8:0.8<0.01,10,0.001>-Decay (s)
+slider9:75<0,100,0.1>-Sustain (%)
+slider10:1.2<0.01,15,0.001>-Release (s)
+slider11:1<0,1,1{Off,On}>-Psychomotor
+slider12:50<0,100,0.1>-Psychomotor amount (%)
+slider13:40<0,100,0.1>-Restless (%)
+slider14:30<0,100,0.1>-Jitter (%)
+slider15:1<0,1,1{Off,On}>-Sensual
+slider16:35<0,100,0.1>-Sensual amount (%)
+slider17:30<0,100,0.1>-Texture (warm .. raw, %)
+slider18:40<0,100,0.1>-Formant (%)
+slider19:1<0,1,1{Off,On}>-Intellectual
+slider20:50<0,100,0.1>-Intellectual amount (%)
+slider21:40<0,100,0.1>-Structure (%)
+slider22:1<0,1,1{Off,On}>-Imaginational
+slider23:40<0,100,0.1>-Imaginational amount (%)
+slider24:50<0,100,0.1>-Blur (%)
+slider25:0<0,1,1{Off,On}>-Freeze
+slider26:1<0,1,1{Off,On}>-Emotional
+slider27:40<0,100,0.1>-Emotional amount (%)
+slider28:35<0,100,0.1>-Tremor (swell .. tremor, %)
+slider29:30<0,100,0.1>-Bloom (%)
+slider30:40<0,100,0.1>-Dissolution (%)
+slider31:60<0,100,0.1>-Resolve (%)
+slider32:20<1,600,0.01>-Resolve time (s)
+slider33:0<0,4,1{Learned,Add 9,Sus,Add 11,Maj 9}>-New order
+slider34:0<0,1,1{Half,Third}>-Deep pulse
+slider35:35<0,100,0.1>-Space (%)
+slider36:50<0,100,1>-Adjust (%)
+slider37:120<30,600,0.1>-Adjust rate (s per journey)
+slider38:-6<-24,6,0.1>-Volume (dB)
+slider39:0<0,2,1{Poly,Mono,Legato}>-Voice mode
+slider40:0<0,100,1>-Glide (%)
+slider41:0<0,16,1>-MIDI channel (0 = omni)
+slider42:60<0,100,1>-Velocity (%)
+slider43:0<0,100,1>-Band sat (%)
+slider44:30<0,100,1>-Bias (%)
+slider45:120<40,400,1>-Sat low band (Hz)
+slider46:6000<2000,16000,10>-Sat high band (Hz)
+slider47:-0.3<-24,0,0.1>-Ceiling (dB)
+slider48:1<0,1,1{Off,Clip}>-(unused, output stage)
+slider49:60<0,100,0.1>-Level (%)
+
+in_pin:none
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-g-disintegration";
+ext_noinit = 1;
+s57_mem = 0;
+
+// ---------- memory ----------
+DZVN = 8; DZVS = 96; DZV = s57_alloc(DZVN * DZVS);      // the voices
+// voice slots (q = DZV + v * DZVS):
+//   0 on  1 note  2 velocity  3 key down  4 stage (1 A, 2 D/S, 3 R, 5 fading to make way)  5 level  6 pitch now (st)
+//   7 pitch target  8 age  9 next note (after the fade)  10 its velocity  11 pan L  12 pan R  13 gain  14 its target
+//   15 jitter now (st)  16 jitter target  17 stuttering  18 swell phase  19 swell rate  20 tremor phase  21 its rate
+//   22 23 filter states  24 25 26 filter coefficients  29 partials running  30 fresh (no glide)
+//   32 .. 39 partial phases  40 .. 47 increments  48 .. 55 levels  56 .. 63 level steps  64 .. 71 ratios now
+//   72 .. 79 each partial's own small offset (-1 .. 1)
+DZQ = s57_alloc(256 * 4);                               // the event queue: offset, type, note, velocity
+DZH = s57_alloc(128);                                   // keys down (mono / legato)
+DZB = s57_alloc(96);                                    // the order now (ratios, per pitch class): starts harmonic
+DZT = s57_alloc(96);                                    // the new order being gathered (ratios, per pitch class)
+DZM = s57_alloc(40);                                    // the new orders' ratio sets
+DZA = s57_alloc(8);                                     // the partials' levels (ORDER, TILT)
+DZO = s57_alloc(8);                                     // INTELLECTUAL: each partial's offset (st)
+DZK = s57_alloc(8);                                     // ... its place in the re-voicing, and DZI its interval
+DZI = s57_alloc(8);
+DZL = s57_alloc(12);                                    // the notes learned (a weight per pitch class)
+DZLK = s57_alloc(12); DZLP = s57_alloc(4); DZIV = s57_alloc(4);
+DZF = s57_alloc(8);                                     // the five forces now (for the display)
+DZN = s57_alloc(8);                                     // their ON keys, faded
+DZDEF = s57_alloc(64); DZTMP = s57_alloc(128);
+DZGN = 262144; DZG = s57_alloc(DZGN);                   // IMAGINATIONAL: the smear's memory (mono)
+DZGR = s57_alloc(4 * 8);                                // its four grains: read pos, age, length, 1 / length, rate, pan L, pan R
+DZTR = s57_alloc(2 * 200);                              // the display's trail (written by @gfx only)
+// the bloom (two tuned lines), the blur (four all-passes), the space (two diffusers, four lines)
+dbl0.s57_dlinit(8192); dbl1.s57_dlinit(8192);
+dbu0.s57_dlinit(2048); dbu1.s57_dlinit(2048); dbu2.s57_dlinit(2048); dbu3.s57_dlinit(2048);
+dsa0.s57_dlinit(2048); dsa1.s57_dlinit(2048);
+dsd0.s57_dlinit(8192); dsd1.s57_dlinit(8192); dsd2.s57_dlinit(8192); dsd3.s57_dlinit(8192);
+
+// the new orders (ratios of partials 1 .. 8): ADD 9, SUS, ADD 11, MAJ 9 (row 0: the harmonic series)
+function de_mrow(m, a, b, c, d, e, f, g, h) local(p) ( p = DZM + m * 8; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; );
+de_mrow(0, 1, 2, 3, 4, 5, 6, 7, 8);
+de_mrow(1, 1, 2, 3, 4.5, 5, 6, 8, 9);
+de_mrow(2, 1, 1.5, 2, 2.6666667, 3, 4, 4.5, 5.3333333);
+de_mrow(3, 1, 2, 2.5, 3, 4, 5.3333333, 6, 9);
+de_mrow(4, 1, 1.5, 1.875, 2.25, 2.5, 3, 3.75, 4.5);
+// INTELLECTUAL's re-voicing: the order the partials leave in (by STRUCTURE) and the interval each takes (st)
+DZK[0] = 99; DZK[2] = 0; DZK[4] = 1; DZK[6] = 2; DZK[1] = 3; DZK[5] = 4; DZK[3] = 5; DZK[7] = 6;
+DZI[0] = 0;  DZI[2] = 5; DZI[4] = 6; DZI[6] = 7; DZI[1] = -5; DZI[5] = 6; DZI[3] = 5; DZI[7] = -6;
+
+// the order: back to the harmonic series
+function de_rebase() local(p, k) ( p = 0; loop(12, k = 0; loop(8, DZB[p * 8 + k] = k + 1; k += 1; ); p += 1; ); de_gen = 0; );
+de_rebase();
+
+ost_init(0); deoL.ost_ch_init(); deoR.ost_ch_init();
+de_dz.drift_init(0.7 + rand(0.4));
+
+// ---------- the presets: the Init values and each preset's changes ----------
+#de_def = "4 50 2 20 3200 20 0.01 0.8 75 1.2 1 50 40 30 1 35 30 40 1 50 40 1 40 50 0 1 40 35 30 40 60 20 0 0 35 50 120 -6 0 0 0 60 0 30 120 6000 -0.3 1 60";
+function de_nums(s, dst) local(i, n, c, len, acc, neg, fr, scl, inn) (
+  n = 0; i = 0; inn = 0; len = strlen(s);
+  loop(len + 1,
+    c = i < len ? str_getchar(s, i) : 32;
+    c >= 48 && c <= 57 ? (
+      !inn ? ( inn = 1; acc = 0; fr = 0; scl = 1; neg = 0; );
+      fr ? ( scl *= 0.1; acc += (c - 48) * scl; ) : acc = acc * 10 + c - 48;
+    ) : c == 46 ? ( !inn ? ( inn = 1; acc = 0; scl = 1; neg = 0; ); fr = 1; ) :
+    c == 45 ? ( inn = 1; acc = 0; fr = 0; scl = 1; neg = 1; ) :
+    ( inn ? ( dst[n] = neg ? -acc : acc; n += 1; inn = 0; ); );
+    i += 1;
+  );
+  n;
+);
+de_nums(#de_def, DZDEF);
+#de_pm = "Init|First Order|Restless Spirit|Inner Conflict|Creative Instability|Dissolving Forms|Multilevel|The Ideal Self|New Hierarchy|Autonomous Order|Slow Becoming|Reintegration";
+function de_pstr(p) (
+  p == 2  ? "1:6 2:45 4:10 5:4200 6:15 30:0 31:0 35:25 36:0 49:59.0" :
+  p == 3  ? "3:3 4:30 12:85 13:75 14:55 16:20 20:25 23:20 27:30 30:70 31:30 36:30 49:60.0" :
+  p == 4  ? "12:25 16:30 20:85 21:75 27:70 28:70 29:55 30:75 31:40 36:40 49:64.7" :
+  p == 5  ? "2:70 5:5000 16:70 17:60 18:65 23:65 24:70 30:65 36:60 37:90 49:73.8" :
+  p == 6  ? "1:5 7:0.8 10:5 12:20 16:20 20:60 23:85 24:85 27:50 30:85 35:55 36:70 37:180 49:67.7" :
+  p == 7  ? "12:55 16:45 20:60 23:50 27:50 30:70 31:70 33:4 36:70 37:60 49:68.5" :
+  p == 8  ? "2:40 7:0.4 10:3 30:25 31:100 32:8 33:4 35:60 36:0 49:59.3" :
+  p == 9  ? "3:3 4:35 30:50 31:85 33:3 34:1 36:40 37:150 49:58.6" :
+  p == 10 ? "30:55 31:90 33:0 35:45 36:60 37:240 49:58.0" :
+  p == 11 ? "1:6 2:35 5:2200 7:1.5 8:3 9:85 10:6 30:80 31:90 32:90 35:55 36:100 37:480 49:55.4" :
+  p == 12 ? "30:75 31:95 32:30 33:2 35:45 36:80 37:90 49:59.3" :
+  "";
+);
+function load_preset(p) local(n, i) (
+  // VOLUME, the voice mode, the MIDI channel and the output stage stay as they are
+  i = 0; loop(37, slider(i + 1) = DZDEF[i]; i += 1; );
+  slider40 = DZDEF[39]; slider42 = DZDEF[41]; slider49 = DZDEF[48];
+  n = de_nums(de_pstr(p), DZTMP);
+  i = 0; loop(floor(n / 2), DZTMP[i * 2] >= 1 && DZTMP[i * 2] <= 49 ? slider(DZTMP[i * 2]) = DZTMP[i * 2 + 1]; i += 1; );
+  i = 1; loop(49, ui_auto(i); i += 1; );
+  pr_cur = p; de_rb = 1;
+);
+
+// ---------- the journey ----------
+function de_ss(x) ( x = min(max(x, 0), 1); x * x * (3 - 2 * x); );
+// the disintegration and the gathering through one journey (p 0 .. 1): settled, in flux, re-formed
+function de_eD(p) ( de_ss((p - 0.08) / 0.27) * (1 - de_ss((p - 0.5) / 0.35)); );
+function de_eR(p) ( de_ss((p - 0.42) / 0.38); );
+
+// the notes learned: the strongest pitch classes (up to four), in DZLP, de_ln of them
+function de_learn() local(i, j, b, bv, mx, th) (
+  mx = 0; i = 0; loop(12, mx = max(mx, DZL[i]); i += 1; );
+  th = max(mx * 0.15, 0.05); de_ln = 0; memset(DZLK, 0, 12);
+  j = 0; loop(4,
+    b = -1; bv = th; i = 0; loop(12, !DZLK[i] && DZL[i] > bv ? ( bv = DZL[i]; b = i; ); i += 1; );
+    b >= 0 ? ( DZLK[b] = 1; DZLP[j] = b; de_ln = j + 1; );
+    j += 1; );
+);
+// the new order for pitch class p (ratios into DZT)
+function de_trow(p) local(k, j, iv, n, a, b, m, t, r, g) (
+  t = DZT + p * 8;
+  slider33 < 0.5 && de_ln >= 1 ? (
+    // LEARNED: the intervals above this note of the classes played (up to three), voiced over three octaves
+    n = 0; j = 0; loop(de_ln, iv = (DZLP[j] - p + 12) % 12; iv > 0 && n < 3 ? ( DZIV[n] = iv; n += 1; ); j += 1; );
+    j = 0; loop(3, iv = j == 0 ? 7 : j == 1 ? 2 : 5;
+      n < 3 && iv != DZIV[0] && (n < 2 || iv != DZIV[1]) ? ( DZIV[n] = iv; n += 1; ); j += 1; );
+    // in order
+    DZIV[0] > DZIV[1] ? ( a = DZIV[0]; DZIV[0] = DZIV[1]; DZIV[1] = a; );
+    DZIV[1] > DZIV[2] ? ( a = DZIV[1]; DZIV[1] = DZIV[2]; DZIV[2] = a; );
+    DZIV[0] > DZIV[1] ? ( a = DZIV[0]; DZIV[0] = DZIV[1]; DZIV[1] = a; );
+    t[0] = 1; t[1] = 2; t[2] = 2 * 2 ^ (DZIV[0] / 12); t[3] = 2 * 2 ^ (DZIV[1] / 12);
+    t[4] = 4; t[5] = 4 * 2 ^ (DZIV[0] / 12); t[6] = 4 * 2 ^ (DZIV[2] / 12); t[7] = 8;
+  ) : (
+    m = slider33 < 0.5 ? 1 : floor(slider33 + 0.5);
+    k = 0; loop(8, t[k] = DZM[m * 8 + k]; k += 1; );
+  );
+  // each later journey takes the order onward: the voicing opens out, then gains fifths
+  g = de_gen % 3;
+  g == 1 ? ( k = 1; loop(3, t[k] < 4 ? t[k] *= 2; k += 1; ); ) :
+  g == 2 ? ( k = 3; loop(3, t[k] *= 1.5; k += 2; ); );
+);
+function de_targets() local(p) ( de_learn(); p = 0; loop(12, de_trow(p); p += 1; ); );
+de_targets();
+
+// ---------- voices ----------
+function de_pan(q, v) local(p, a) (
+  p = slider39 >= 1 ? 0 : (v & 1 ? 1 : -1) * (0.1 + 0.07 * (v >> 1));
+  a = (p + 1) * $pi * 0.25; q[11] = cos(a) * 1.4142; q[12] = sin(a) * 1.4142;
+);
+// a voice's pitch, partials, gains and filter for a block (and at its start)
+function de_prep(q) local(lp, f0, b, t, k, r, inc, at, n, fc, g, a1, chop, emo, ro) (
+  // PSYCHOMOTOR: a stutter on this pulse (or not), the jitter
+  de_tick ? q[17] = rand(1) < de_pprob;
+  (de_tick || (q[17] && de_subt)) ? q[16] = (rand(2) - 1) * de_jit;
+  q[15] += (q[16] - q[15]) * de_jk;
+  chop = q[17] ? (de_gate ? 1 : 1 - de_pdep) : 1;
+  // EMOTIONAL: the swell and the tremor
+  q[18] += q[19] * de_bs; q[18] -= floor(q[18]);
+  q[20] += q[21] * de_bs * (1 + 0.25 * sin(18.85 * q[18])); q[20] -= floor(q[20]);
+  emo = 1 - de_ee * ((1 - de_et) * 0.8 * (0.5 - 0.5 * cos(6.283185307 * q[18])) + de_et * 0.65 * (0.5 - 0.5 * cos(6.283185307 * q[20])));
+  q[14] = chop * emo * de_emk * de_pg * (1 - de_vs + de_vs * q[2]);
+  q[30] ? q[13] = q[14];
+  // the partials: the order now, gathered towards the new order, loosened by INTELLECTUAL
+  lp = q[6] + q[15];
+  f0 = 440 * 2 ^ ((lp - 69) / 12) * de_bend / srate;
+  b = DZB + (q[1] % 12) * 8; t = DZT + (q[1] % 12) * 8;
+  n = 0; k = 0;
+  loop(8,
+    ro = DZO[k] + q[72 + k] * de_irn * (k > 0 ? 1 : 0.25);
+    r = (b[k] + (t[k] - b[k]) * de_rr) * (ro != 0 ? 2 ^ (ro / 12) : 1);
+    q[30] ? q[64 + k] = r : q[64 + k] += (r - q[64 + k]) * de_rgk;
+    inc = f0 * q[64 + k];
+    at = DZA[k] * (inc < 0.4 ? 1 : inc < 0.45 ? (0.45 - inc) * 20 : 0);
+    q[40 + k] = min(inc, 0.49);
+    q[30] ? ( q[48 + k] = at; q[56 + k] = 0; ) : q[56 + k] = (at - q[48 + k]) * de_ibs;
+    (at > 0 || q[48 + k] > 0.000001) ? n = k + 1;
+    k += 1; );
+  q[29] = n;
+  // the clean filter (half key tracking, velocity brightens a little)
+  fc = min(max(de_cut * 2 ^ ((q[6] - 60) / 24 + (q[2] - 0.7) * de_vs * 0.8), 20), srate * 0.43);
+  g = tan($pi * fc / srate);
+  a1 = 1 / (1 + g * (g + de_fk)); q[24] = a1; q[25] = g * a1; q[26] = g * g * a1;
+);
+// a voice begins (from silence): phases at zero, the filter clear, its own small offsets
+function de_fresh(q, v, note, vel) local(k) (
+  memset(q + 13, 0, DZVS - 13);
+  q[0] = 1; q[1] = note; q[2] = vel; q[3] = 1; q[4] = 1; q[5] = 0; q[7] = note;
+  q[6] = slider40 > 0 && de_lastp > 0 ? de_lastp : note;
+  q[8] = de_age; de_age += 1;
+  k = 0; loop(8, q[72 + k] = rand(2) - 1; k += 1; );
+  q[18] = rand(1); q[19] = 0.06 + rand(0.14); q[20] = rand(1); q[21] = 4.5 + rand(3);
+  de_pan(q, v);
+  q[30] = 1; de_prep(q); q[30] = 0;
+);
+// a voice for a played note: a free one, else the quietest released one, else the oldest
+function de_pick() local(v, q, best, bl, old, oa) (
+  best = -1; bl = 10; old = 0; oa = 1000000000000;
+  v = 0; loop(DZVN, q = DZV + v * DZVS; best < 0 && !q[0] ? best = v; v += 1; );
+  best < 0 ? (
+    v = 0; loop(DZVN, q = DZV + v * DZVS;
+      q[4] == 3 && q[5] < bl ? ( bl = q[5]; best = v; );
+      q[8] < oa ? ( oa = q[8]; old = v; );
+      v += 1; );
+    best < 0 ? best = old;
+  );
+  best;
+);
+function de_on(note, vel) local(v, q) (
+  slider39 >= 1 ? (
+    q = DZV;
+    slider39 == 2 && de_mheld && q[0] && q[4] < 3 ? (
+      q[1] = note; q[7] = note; q[3] = 1;                // LEGATO: the pitch moves, nothing restarts
+    ) : q[0] && q[4] != 5 ? (
+      // MONO: the envelope starts again from where it is (the phases run on)
+      q[1] = note; q[2] = vel; q[3] = 1; q[4] = 1; q[7] = note; slider40 <= 0 ? q[6] = note;
+    ) : q[0] ? ( q[9] = note; q[10] = vel; q[1] = note; q[3] = 1; ) : de_fresh(q, 0, note, vel);
+  ) : (
+    v = de_pick(); q = DZV + v * DZVS;
+    // a sounding voice makes way: a short fade, then the new note from silence
+    q[0] && q[5] > 0.0005 ? ( q[4] = 5; q[9] = note; q[10] = vel; q[1] = note; q[3] = 1; q[8] = de_age; de_age += 1; )
+                          : de_fresh(q, v, note, vel);
+  );
+  de_lastp = note;
+  ins_midi_hit();
+);
+function de_start(q) local(v, kd) (
+  v = (q - DZV) / DZVS; kd = q[3];
+  de_fresh(q, v, q[9], q[10]);
+  !kd ? ( q[3] = 0; !de_ped ? q[4] = 3; );
+);
+function de_off(note) local(v, q, k, b) (
+  slider39 >= 1 ? (
+    q = DZV; b = -1; k = 0; loop(128, DZH[k] && k != note ? b = k; k += 1; );
+    q[0] && q[1] == note ? (
+      b >= 0 ? ( q[1] = b; q[7] = b; slider40 <= 0 ? q[6] = b; de_lastp = b; ) : ( q[3] = 0; !de_ped && q[4] != 5 ? q[4] = 3; );
+    );
+  ) : (
+    v = 0; loop(DZVN, q = DZV + v * DZVS; q[0] && q[1] == note && q[3] ? ( q[3] = 0; !de_ped && q[4] != 5 ? q[4] = 3; ); v += 1; );
+  );
+);
+function de_all_off() local(v, q) ( v = 0; loop(DZVN, q = DZV + v * DZVS; q[3] = 0; q[0] && q[4] != 5 ? q[4] = 3; v += 1; ); );
+
+// IMAGINATIONAL: a new grain somewhere behind the writing point
+function de_grain(g) local(len, d, sp, p) (
+  len = floor(srate * (0.2 - 0.09 * de_blur)); g[2] = len; g[3] = 1 / len; g[1] = 0;
+  g[4] = 2 ^ ((rand(2) - 1) * de_blur * 0.12 / 12);
+  d = len * 1.15 + 0.02 * srate; sp = min(srate * (0.04 + 1.1 * de_blur), DZGN - d - 2048);
+  d += rand(1) * sp;
+  g[0] = de_gw - d; g[0] < 0 ? g[0] += DZGN;
+  p = (rand(2) - 1) * (0.3 + 0.6 * de_blur); p = (p + 1) * $pi * 0.25;
+  g[5] = cos(p); g[6] = sin(p);
+);
+// the formant colour: two band-passes (TPT), 0 dB at their peaks
+function de_form(x) instance(c1, c2, d1, d2) local(v1, v2, v3, f) (
+  v3 = x - c2; v1 = de_fa1 * c1 + de_fa2 * v3; v2 = c2 + de_fa2 * c1 + de_fa3 * v3; c1 = v1 + v1 - c1; c2 = v2 + v2 - c2; f = v1 * de_fq;
+  v3 = x - d2; v1 = de_fb1 * d1 + de_fb2 * v3; v2 = d2 + de_fb2 * d1 + de_fb3 * v3; d1 = v1 + v1 - d1; d2 = v2 + v2 - d2; f += v1 * de_fq * 0.7;
+  f;
+);
+function de_fset(f, w) local(g, a1) (
+  g = tan($pi * min(f, srate * 0.45) / srate); a1 = 1 / (1 + g * (g + de_fq));
+  w ? ( de_fb1 = a1; de_fb2 = g * a1; de_fb3 = g * g * a1; ) : ( de_fa1 = a1; de_fa2 = g * a1; de_fa3 = g * g * a1; );
+);
+
+function de_srinit() local(i, g) (
+  de_sr = srate; de_sm = s57_kt(0.02, srate); de_gk = s57_kt(0.003, srate);
+  de_finc = 1 / (0.004 * srate);
+  ost_init(0);
+  i = 0; loop(4, g = DZGR + i * 8; g[2] = floor(0.15 * srate); g[3] = 1 / g[2]; g[1] = floor(g[2] * i / 4); g[4] = 1; g[0] = 0; g[5] = g[6] = 0.7071; i += 1; );
+);
+de_srinit();
+de_bend = 1; de_ord = 4; de_sn = 1; de_bd0 = de_bd1 = 400;
+DZN[0] = DZN[1] = DZN[2] = DZN[3] = DZN[4] = 1;
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+// ---------- the display's colours: a dark glass, cream and signal-orange traces ----------
+function de_pal() (
+  DE_GLASS = 0x16171A; DE_GINK = 0xEDE6D6; DE_GDIM = 0x77736A; DE_GGRID = 0x2A2B2F; DE_NEW = 0x3E5560;
+);
+
+@slider
+ins_output_setup(43);
+
+@block
+srate != de_sr ? de_srinit();
+ins_output_setup(43);
+de_bs = samplesblock / srate; de_ibs = 1 / samplesblock;
+de_rb ? ( de_rebase(); de_rb = 0; de_targ = 1; );
+de_lmode != slider39 ? ( de_all_off(); de_lmode = slider39; );
+de_vol = 10 ^ (slider38 / 20);
+de_vs = slider42 / 100;
+
+// ---------- the journey: ADJUST's drift, the disintegration, the gathering ----------
+de_w = min(slider36 / 100 * 1.5, 1);
+de_zz = de_dz.drift_tick(0.05 * de_bs);
+slider36 > 0 ? (
+  de_phi += de_bs / slider37 * (1 + 0.3 * de_zz * de_w);
+  de_phi >= 1 ? (
+    // a new order reached: it becomes the order the next journey starts from
+    de_phi -= 1; i_ = 0; loop(96, DZB[i_] += (DZT[i_] - DZB[i_]) * de_rr; i_ += 1; );
+    de_rr = 0; de_gen += 1; de_targ = 1;
+  );
+);
+de_dc = min(slider30 / 100 + de_cc1, 1);
+de_dt = de_dc * ((1 - de_w) + de_w * de_eD(de_phi));
+de_dis += (de_dt - de_dis) * (1 - exp(-de_bs / 0.25));
+de_rt = slider31 / 100 * ((1 - de_w) + de_w * de_eR(de_phi));
+k_ = 1 - exp(-de_bs / (slider32 / 3));
+de_res += (de_rt - de_res) * k_; de_rr += (de_rt - de_rr) * k_;
+de_gth = de_dis * (1 - 0.8 * de_res);                      // the forces' reach: drawn in as the new order gathers
+// the five forces now
+k_ = 1 - exp(-de_bs / 0.03);
+DZN[0] += ((slider11 >= 0.5) - DZN[0]) * k_; DZN[1] += ((slider15 >= 0.5) - DZN[1]) * k_; DZN[2] += ((slider19 >= 0.5) - DZN[2]) * k_;
+DZN[3] += ((slider22 >= 0.5) - DZN[3]) * k_; DZN[4] += ((slider26 >= 0.5) - DZN[4]) * k_;
+DZF[0] = slider12 / 100 * DZN[0] * de_gth; DZF[1] = slider16 / 100 * DZN[1] * de_gth; DZF[2] = slider20 / 100 * DZN[2] * de_gth;
+DZF[3] = slider23 / 100 * DZN[3] * de_gth; DZF[4] = slider27 / 100 * DZN[4] * de_gth;
+// the position on the journey, for the display: across (settled .. in flux .. re-formed), up (the forces' reach)
+de_jx = 0.15 + 0.35 * min(de_dis / max(de_dc, 0.25), 1) * (1 - de_res) + 0.7 * min(de_res / max(slider31 / 100, 0.2), 1) ^ 0.6;
+de_jy = min(de_gth * 1.25, 1);
+
+// ---------- the pulse (host synced; free at the host tempo when stopped) ----------
+de_pm = slider3 < 0.5 ? 0.25 : slider3 < 1.5 ? 0.5 : slider3 < 2.5 ? 1 : slider3 < 3.5 ? 2 : slider3 < 4.5 ? 4 : slider3 < 5.5 ? 1.5 : slider3 < 6.5 ? 3 : 6;
+(play_state & 1) ? de_pp = beat_position * de_pm : de_pp += tempo / 60 * de_bs * de_pm;
+de_tick = floor(de_pp) != de_lt; de_lt = floor(de_pp);
+de_pfr = de_pp - floor(de_pp);
+de_dv = slider34 >= 0.5 ? 3 : 2;
+de_pp2 = de_pp / de_dv; de_pfr2 = de_pp2 - floor(de_pp2);
+// PSYCHOMOTOR: how often a voice stutters, how finely, how deep; the jitter
+de_nsub = 2 + floor(slider13 / 100 * 3.99);
+de_sb_ = floor(de_pfr * de_nsub); de_subt = de_sb_ != de_lsub; de_lsub = de_sb_;
+de_gate = de_pfr * de_nsub - de_sb_ < 0.55;
+de_pprob = min(DZF[0] * 1.6, 1) * (0.25 + 0.75 * slider13 / 100);
+de_pdep = min(DZF[0] * 2, 1) * 0.92;
+de_jit = slider14 / 100 * min(DZF[0] * 1.6, 1) * 0.8;
+de_jk = 1 - exp(-de_bs / 0.012);
+// the throb: the pulse's own, slowing and deepening with the new order
+de_pg = 1 - slider4 / 100 * ((1 - de_res) * 0.55 * (0.5 - 0.5 * cos(2 * $pi * de_pfr)) + de_res * 0.8 * (0.5 - 0.5 * cos(2 * $pi * de_pfr2)));
+// EMOTIONAL
+de_ee = min(DZF[4] * 1.6, 1); de_et = slider28 / 100;
+de_emk = 1 / (1 - de_ee * ((1 - de_et) * 0.4 + de_et * 0.325));             // the swells' make-up
+de_bfbt = min(DZF[4] * 1.8, 1) * slider29 / 100 * 0.9;
+de_bmxt = min(DZF[4] * 1.8, 1) * slider29 / 100 * 0.8;
+// SENSUAL
+de_swt = min(DZF[1] * 1.8, 1);
+de_sdt = 1 + 7 * min(DZF[1] * 1.6, 1);
+de_stxt = slider17 / 100;
+de_sfmt = slider18 / 100 * 1.2;
+de_sb = 0.15 * min(DZF[1] * 1.6, 1); de_sbt = s57_th(de_sb);
+de_snt = de_sdt ^ -0.25;
+de_fq = 1 / 5;
+de_fset(320 * 2.4 ^ (slider18 / 100), 0); de_fset(900 * 2.6 ^ (slider18 / 100), 1);
+// INTELLECTUAL: the stretch, the re-voicing (partial after partial), each partial's own offset
+ai_ = min(DZF[2] * 1.6, 1);
+b_ = 0.0045 * ai_; s_ = slider21 / 100 * 7.5;
+k_ = 0; loop(8,
+  o_ = 6 * log(1 + b_ * (k_ + 1) * (k_ + 1)) / log(2);
+  o_ += min(max(s_ - DZK[k_], 0), 1) * ai_ * DZI[k_];
+  DZO[k_] = k_ > 0 ? o_ : 0;
+  k_ += 1; );
+de_irn = ai_ * 0.45;
+// IMAGINATIONAL
+de_blur = slider24 / 100;
+de_frz = slider25 >= 0.5 && slider22 >= 0.5;
+de_iwt = min(DZF[3] * 1.6, 1);
+de_frz ? de_iwt = max(de_iwt, 0.8 * slider23 / 100);
+de_bg = 0.4 + 0.3 * de_blur;
+// SPACE
+de_spwt = slider35 / 100 * (0.45 + 0.55 * de_res);
+// the order: ORDER (richer as the new order gathers), TILT; the levels normalised
+de_ord += (slider1 - de_ord) * (1 - exp(-de_bs / 0.08));
+c_ = de_ord + (max(de_ord, 7) - de_ord) * de_res;
+e_ = 2.1 - 1.8 * slider2 / 100;
+s_ = 0; k_ = 0; loop(8, a_ = (k_ + 1) ^ (-e_) * min(max(c_ - k_, 0), 1); DZA[k_] = a_; s_ += a_ * a_; k_ += 1; );
+s_ = 0.5 / sqrt(max(s_, 0.000001)); k_ = 0; loop(8, DZA[k_] *= s_; k_ += 1; );
+de_rgk = 1 - exp(-de_bs / 0.06);
+// the filter, the envelope
+de_cut = slider5; de_fk = 2 - 1.8 * slider6 / 100;
+de_ainc = 1 / max(slider7 * srate, 1);
+de_dk = s57_kt(slider8 / 4.6, srate); de_rk = s57_kt(slider10 / 4.6, srate);
+de_sus = slider9 / 100;
+de_ogt = (slider49 / 100) ^ 2 * 1.9 * de_vol;
+// the notes learned fade over about half a minute
+k_ = exp(-de_bs / 30); i_ = 0; loop(12, DZL[i_] *= k_; i_ += 1; );
+
+// ---------- MIDI into the queue ----------
+de_qn = 0;
+while (midirecv(mofs, m1, m2, m3)) (
+  ins_chan_ok(m1, slider41) ? (
+    st_ = m1 & 0xF0;
+    st_ == 0x90 && m3 > 0 ? (
+      DZH[m2] = 1;
+      de_qn < 250 ? ( k_ = de_qn * 4; DZQ[k_] = mofs; DZQ[k_ + 1] = 1; DZQ[k_ + 2] = m2; DZQ[k_ + 3] = m3 / 127; de_qn += 1; );
+      DZL[m2 % 12] += 0.4 + 0.6 * m3 / 127; de_targ = 1;
+      de_bn = m2;
+    ) : st_ == 0x80 || (st_ == 0x90 && m3 == 0) ? (
+      DZH[m2] = 0;
+      de_qn < 250 ? ( k_ = de_qn * 4; DZQ[k_] = mofs; DZQ[k_ + 1] = 0; DZQ[k_ + 2] = m2; DZQ[k_ + 3] = 0; de_qn += 1; );
+    ) : st_ == 0xE0 ? ( de_bend = ins_bend(m2, m3, 2); ) :
+    st_ == 0xB0 ? (
+      m2 == 1 ? ( de_cc1 = m3 / 127; ) :
+      m2 == 64 ? ( de_ped = m3 >= 64; !de_ped ? ( v_ = 0; loop(DZVN, q_ = DZV + v_ * DZVS; q_[0] && !q_[3] && q_[4] < 3 ? q_[4] = 3; v_ += 1; ); ); ) :
+      m2 == 120 || m2 == 123 ? ( de_all_off(); memset(DZH, 0, 128); );
+    );
+  );
+  midisend(mofs, m1, m2, m3);
+);
+// the new order's targets: when the notes learned or the order change (and now and then as the learning fades)
+de_tc += 1; de_tm != slider33 || de_tc >= 32 ? de_targ = 1; de_tm = slider33;
+de_targ ? ( de_targets(); de_targ = 0; de_tc = 0; );
+// the bloom's tuning: an octave below the last note (a fifth lower again on the right)
+de_bf = 440 * 2 ^ ((de_bn - 12 - 69) / 12);
+de_bdt = min(max(srate / max(de_bf, 20), 32), 8000);
+de_bd0 += (de_bdt - de_bd0) * (1 - exp(-de_bs / 0.08)); de_bd1 += (min(de_bdt * 1.5, 8000) - de_bd1) * (1 - exp(-de_bs / 0.08));
+de_bk = s57_k(3200, srate);
+
+// ---------- per block: the voices ----------
+de_glk = slider40 > 0 ? 1 - exp(-samplesblock / ((0.005 + 0.6 * (slider40 / 100) ^ 2) * srate)) : 1;
+de_nact = 0;
+v_ = 0; loop(DZVN,
+  q_ = DZV + v_ * DZVS;
+  q_[0] ? ( de_nact += 1; q_[6] += (q_[7] - q_[6]) * de_glk; de_prep(q_); );
+  v_ += 1; );
+de_mheld = 0; i_ = 0; loop(128, DZH[i_] ? de_mheld += 1; i_ += 1; );
+de_qr = 0; de_sp = 0;
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- the queue ----------
+while (de_qr < de_qn && DZQ[de_qr * 4] <= de_sp) (
+  k_ = de_qr * 4;
+  DZQ[k_ + 1] == 1 ? ( de_mheld = 0; i_ = 0; loop(128, DZH[i_] && i_ != DZQ[k_ + 2] ? de_mheld = 1; i_ += 1; ); de_on(DZQ[k_ + 2], DZQ[k_ + 3]); )
+                   : de_off(DZQ[k_ + 2]);
+  de_qr += 1;
+);
+de_sp += 1;
+
+// ---------- the bus controls, glided ----------
+de_sw += (de_swt - de_sw) * de_sm; de_sd += (de_sdt - de_sd) * de_sm; de_sn += (de_snt - de_sn) * de_sm; de_stx += (de_stxt - de_stx) * de_sm; de_sfm += (de_sfmt - de_sfm) * de_sm;
+de_bfb += (de_bfbt - de_bfb) * de_sm; de_bmx += (de_bmxt - de_bmx) * de_sm;
+de_iw += (de_iwt - de_iw) * de_sm; de_spw += (de_spwt - de_spw) * de_sm; de_og += (de_ogt - de_og) * de_sm;
+
+// ---------- the voices ----------
+de_l = de_r = 0;
+q_ = DZV;
+loop(DZVN,
+  q_[0] ? (
+    st_ = q_[4];
+    st_ == 1 ? ( q_[5] += de_ainc; q_[5] >= 1 ? ( q_[5] = 1; q_[4] = 2; ); ) :
+    st_ == 2 ? ( q_[5] += (de_sus - q_[5]) * de_dk; ) :
+    st_ == 3 ? ( q_[5] -= q_[5] * de_rk; q_[5] < 0.00003 ? ( q_[0] = 0; q_[5] = 0; ); ) :
+    ( q_[5] -= de_finc; q_[5] <= 0 ? ( q_[5] = 0; de_start(q_); ); );
+    q_[13] += (q_[14] - q_[13]) * de_gk;
+    // the partials
+    y_ = 0; p_ = q_ + 32;
+    loop(q_[29],
+      ph_ = p_[0] + p_[8]; ph_ >= 1 ? ph_ -= 1; p_[0] = ph_;
+      a_ = p_[16] + p_[24]; p_[16] = a_;
+      y_ += a_ * sin(6.283185307 * ph_);
+      p_ += 1; );
+    // the filter (a TPT state-variable low-pass)
+    v3_ = y_ - q_[23]; v1_ = q_[24] * q_[22] + q_[25] * v3_; v2_ = q_[23] + q_[25] * q_[22] + q_[26] * v3_;
+    q_[22] = v1_ + v1_ - q_[22]; q_[23] = v2_ + v2_ - q_[23];
+    y_ = v2_ * q_[5] * q_[13];
+    de_l += y_ * q_[11]; de_r += y_ * q_[12];
+  );
+  q_ += DZVS;
+);
+
+// ---------- SENSUAL: drive (warm .. raw), the formant colour ----------
+de_sw > 0.0005 ? (
+  x_ = de_l * de_sd; y_ = s57_th(x_ + de_sb) - de_sbt; y_ += (sin(x_ * 1.3) * 0.85 - y_) * de_stx; y_ *= de_sn;
+  y_ += deFL.de_form(y_) * de_sfm; de_l += (y_ - de_l) * de_sw;
+  x_ = de_r * de_sd; y_ = s57_th(x_ + de_sb) - de_sbt; y_ += (sin(x_ * 1.3) * 0.85 - y_) * de_stx; y_ *= de_sn;
+  y_ += deFR.de_form(y_) * de_sfm; de_r += (y_ - de_r) * de_sw;
+);
+// (the bias leaves a little DC: blocked)
+de_dcl = de_l - de_dxl + 0.9995 * de_dcl; de_dxl = de_l; de_l = de_dcl;
+de_dcr = de_r - de_dxr + 0.9995 * de_dcr; de_dxr = de_r; de_r = de_dcr;
+
+// ---------- EMOTIONAL: the bloom (two tuned lines, limited in the loop) ----------
+b0_ = dbl0.s57_dlr(de_bd0); de_bl0 += (b0_ - de_bl0) * de_bk; y0_ = s57_th(de_bl0 * 1.2) * 0.8333;
+b1_ = dbl1.s57_dlr(de_bd1); de_bl1 += (b1_ - de_bl1) * de_bk; y1_ = s57_th(de_bl1 * 1.2) * 0.8333;
+dbl0.s57_dlw(de_l * 0.5 + y0_ * de_bfb + 0.000000000000001); dbl1.s57_dlw(de_r * 0.5 + y1_ * de_bfb + 0.000000000000001);
+de_l += y0_ * de_bmx; de_r += y1_ * de_bmx;
+
+// ---------- IMAGINATIONAL: the smear (four grains), the blur, FREEZE ----------
+!de_frz ? ( de_gw += 1; de_gw >= DZGN ? de_gw = 0; DZG[de_gw] = (de_l + de_r) * 0.5; );
+de_iw > 0.0005 ? (
+  gl_ = gr_ = 0; g_ = DZGR;
+  loop(4,
+    g_[1] += 1; g_[1] >= g_[2] ? de_grain(g_);
+    x_ = g_[1] * g_[3]; w_ = 4 * x_ * (1 - x_);
+    p_ = g_[0] + g_[4]; p_ >= DZGN ? p_ -= DZGN; g_[0] = p_;
+    i_ = p_ | 0; f_ = p_ - i_; j_ = i_ + 1; j_ >= DZGN ? j_ = 0;
+    s_ = (DZG[i_] + (DZG[j_] - DZG[i_]) * f_) * w_;
+    gl_ += s_ * g_[5]; gr_ += s_ * g_[6];
+    g_ += 8; );
+  gl_ = dbu1.s57_ap(dbu0.s57_ap(gl_ * 0.55, 0.0083 * srate, de_bg), 0.0191 * srate, de_bg);
+  gr_ = dbu3.s57_ap(dbu2.s57_ap(gr_ * 0.55, 0.0097 * srate, de_bg), 0.0173 * srate, de_bg);
+  de_l = de_l * (1 - 0.45 * de_iw) + gl_ * de_iw * 1.2;
+  de_r = de_r * (1 - 0.45 * de_iw) + gr_ * de_iw * 1.2;
+);
+
+// ---------- SPACE: two diffusers into four lines ----------
+de_hin = (de_l + de_r) * 0.5 * de_spw + 0.000000000000001;
+de_hin = dsa1.s57_ap(dsa0.s57_ap(de_hin, 0.0071 * srate, 0.62), 0.0113 * srate, 0.62);
+h0_ = dsd0.s57_dlr(0.0347 * srate); h1_ = dsd1.s57_dlr(0.0411 * srate); h2_ = dsd2.s57_dlr(0.0473 * srate); h3_ = dsd3.s57_dlr(0.0563 * srate);
+de_h0 += (h0_ - de_h0) * 0.45; de_h1 += (h1_ - de_h1) * 0.45; de_h2 += (h2_ - de_h2) * 0.45; de_h3 += (h3_ - de_h3) * 0.45;
+a_ = de_h0 + de_h1; b_ = de_h0 - de_h1; c_ = de_h2 + de_h3; d_ = de_h2 - de_h3;
+dsd0.s57_dlw((a_ + c_) * 0.5 * 0.86 + de_hin); dsd1.s57_dlw((b_ + d_) * 0.5 * 0.86 - de_hin);
+dsd2.s57_dlw((a_ - c_) * 0.5 * 0.86 + de_hin * 0.7); dsd3.s57_dlw((b_ - d_) * 0.5 * 0.86 - de_hin * 0.7);
+de_l += (h0_ + h2_ * 0.6) * 0.55; de_r += (h1_ + h3_ * 0.6) * 0.55;
+
+// ---------- out ----------
+de_l *= de_og; de_r *= de_og;
+de_vo = max(de_vo * 0.9995, abs(de_l) + abs(de_r));
+de_l = deoL.ost_band(de_l); de_r = deoR.ost_band(de_r);
+ost_out(de_l, de_r);
+spl0 = abs(ost_l) < 0.0000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.0000000001 ? 0 : ost_r;
+
+@gfx 1200 800
+ui_begin(1200, 800);
+s57_pal(0); de_pal(); s57_hv = 0;
+s57_fonts();
+s57_face(1200, 800);
+
+// ---------- helpers ----------
+// a column's title band: charcoal, cream capitals, a hairline of signal orange beneath
+function dg_bar(x, y, w, s, t) local(tw, th) (
+  ui_col(S57_INK); s57_r(x, y, w, 24); ui_col(S57_ORNG); s57_r(x, y + 23, w, 1.5);
+  gfx_setfont(12); ui_col(0xF3EFE5); s57_t(x + 12, y + 4, s); gfx_measurestr(s, tw, th);
+  strlen(t) ? ( gfx_setfont(13); ui_col(0xBDB6A8); s57_t(x + 24 + tw / sc, y + 7, t); );
+);
+// a lit key bound to a switch slider
+function dg_sw(x, y, w, h, idx, s) ( s57_key(x, y, w, h, slider(idx) >= 0.5, s) ? s57_set(idx, slider(idx) >= 0.5 ? 0 : 1); );
+// the big fader: a slot in the enamel, a cream cap with an orange index; drag (SHIFT fine), wheel, Ctrl-click default
+function dg_fader(cx, y0, h, idx, def, now) local(v, n, hov, did, cy, i, ty) (
+  did = 6000 + idx; v = slider(idx); n = v / 100;
+  hov = s57_hov(cx - 26, y0 - 16, 52, h + 32);
+  pressed && hov && drag_id == 0 ? (
+    (mouse_cap & 4) ? ( s57_set(idx, def); drag_id = -1; ) : ( drag_id = did; dg_fy = mouse_y; dg_fn = n; );
+  );
+  drag_id == did ? (
+    dg_fn = min(max(dg_fn + (dg_fy - mouse_y) / (((mouse_cap & 8) ? 5 : 1) * h * sc), 0), 1); dg_fy = mouse_y;
+    v = floor(dg_fn * 1000 + 0.5) / 10; slider(idx) != v ? s57_set(idx, v);
+  );
+  hov && mouse_wheel != 0 && drag_id == 0 ? ( s57_set(idx, min(max(v + mouse_wheel / 120 * ((mouse_cap & 8) ? 0.5 : 2), 0), 100)); mouse_wheel = 0; );
+  v = slider(idx); n = v / 100;
+  // the scale: ticks every tenth, longer at the ends and the middle
+  i = 0; loop(11, ty = y0 + h - h * i / 10; ui_cola(S57_INK, 0.7); s57_r(cx - 26 + (i % 5 ? 4 : 0), ty, i % 5 ? 8 : 12, 1.2); s57_r(cx + 14, ty, i % 5 ? 8 : 12, 1.2); i += 1; );
+  gfx_setfont(13); ui_col(S57_DIM); s57_tc(cx - 36, y0, "100"); s57_tc(cx - 34, y0 + h * 0.5, "50"); s57_tc(cx - 34, y0 + h, "0");
+  // the slot, the reach the journey gives it now (orange, beside it)
+  ui_col(S57_INK); s57_rr(cx - 4, y0 - 4, 8, h + 8, 3); ui_col(0x3A3936); s57_r(cx - 2, y0, 4, h);
+  ui_cola(S57_ORNG, 0.85); s57_r(cx + 7, y0 + h - h * min(max(now, 0), 1), 4, h * min(max(now, 0), 1));
+  // the cap
+  cy = y0 + h - h * n;
+  ui_cola(0x000000, 0.22); s57_rr(cx - 19, cy - 10, 40, 24, 3);
+  ui_col(0x57524A); s57_rr(cx - 20, cy - 12, 40, 24, 3);
+  ui_col(S57_CREAM); s57_rr(cx - 18.8, cy - 10.8, 37.6, 21.6, 2);
+  ui_cola(0xFFFFFF, 0.5); s57_r(cx - 16, cy - 9.5, 32, 1.5);
+  ui_cola(S57_INK, 0.15); s57_r(cx - 16, cy - 6, 32, 1); s57_r(cx - 16, cy + 5, 32, 1);
+  ui_col(S57_IDX); s57_r(cx - 16, cy - 1, 32, 2);
+  (hov || drag_id == did) ? ( sprintf(#s57_vv, "%.0f%%", v); s57_pill(cx, y0 + h + 10, #s57_vv); );
+);
+// the display's X for a position on the journey (0 .. 1), across the three zones
+function dg_jx(p) ( p < 1 / 3 ? 40 + p * 3 * 316 : p < 2 / 3 ? 384 + (p - 1 / 3) * 3 * 432 : 848 + (p - 2 / 3) * 3 * 312; );
+function dg_jy(t) ( 200 - min(max(t, 0), 1) * 80; );
+
+// ---------- the header ----------
+ui_col(S57_INK); s57_r(0, 52, 1200, 2);
+pk_pextra = "Reset all to defaults";
+gk_ = pk_preset(20 * sc, 10 * sc, 370 * sc, 34 * sc, pr_cur, #de_pm);
+gk_ > 0 ? ( gk_ == 13 ? ( load_preset(1); gi_ = 38; loop(12, slider(gi_) = DZDEF[gi_ - 1]; ui_auto(gi_); gi_ += 1; ); pr_cur = 13; ) : load_preset(gk_); );
+gfx_setfont(14); ui_col(S57_INK); s57_tc(604, 27, "DISINTEGRATION ENGINE");
+ui_col(S57_ORNG); s57_r(436, 44, 336, 2);
+gfx_setfont(13); ui_col(S57_INK); s57_t(800, 22, "MIDI"); pk_led(842 * sc, 28 * sc, 4 * sc, ins_midi_lit(), S57_ORNG);
+gm_ = 0; loop(3, s57_key(860 + gm_ * 70, 16, 66, 22, slider39 == gm_, gm_ == 0 ? "POLY" : gm_ == 1 ? "MONO" : "LEGATO") ? s57_set(39, gm_); gm_ += 1; );
+s57_knob(1090, 28, 12, 40, 0, 100, 0, 0, "", "GLIDE %.0f%%", 0);
+ui_size_picker(1126 * sc, 18 * sc);
+
+// ---------- the display: the journey across the three columns ----------
+ui_col(S57_INK); s57_rr(20, 58, 1160, 208, 5);
+ui_col(DE_GLASS); s57_rr(24, 62, 1152, 200, 3);
+ui_cola(DE_GGRID, 0.9); gi_ = 1; loop(47, s57_r(24 + gi_ * 24, 64, 1, 196); gi_ += 1; ); gi_ = 1; loop(8, s57_r(26, 62 + gi_ * 24, 1148, 1); gi_ += 1; );
+// the zones, their names (the one the sound is in, lit)
+gz_ = de_jx < 1 / 3 ? 0 : de_jx < 2 / 3 ? 1 : 2;
+ui_cola(DE_GDIM, 0.8); gi_ = 0; loop(24, s57_r(368, 70 + gi_ * 8, 1, 4); s57_r(832, 70 + gi_ * 8, 1, 4); gi_ += 1; );
+gfx_setfont(13);
+ui_col(gz_ == 0 ? S57_ORNGL : DE_GDIM); s57_tc(196, 76, "INTEGRATION");
+ui_col(gz_ == 1 ? S57_ORNGL : DE_GDIM); s57_tc(600, 76, "DISINTEGRATION");
+ui_col(gz_ == 2 ? S57_ORNGL : DE_GDIM); s57_tc(1004, 76, "SECONDARY INTEGRATION");
+// the journey's course as the controls set it (ADJUST travels it), faint
+slider36 > 0 ? (
+  gw_ = min(slider36 / 100 * 1.5, 1); gd_ = min(slider30 / 100 + de_cc1, 1);
+  gi_ = 0; loop(61, gu_ = gi_ / 60;
+    grr_ = slider31 / 100 * ((1 - gw_) + gw_ * de_eR(gu_)); gs_ = gd_ * ((1 - gw_) + gw_ * de_eD(gu_));
+    gxx_ = dg_jx(0.15 + 0.35 * min(gs_ / max(gd_, 0.25), 1) * (1 - grr_) + 0.7 * min(grr_ / max(slider31 / 100, 0.2), 1) ^ 0.6); gyy_ = dg_jy(min(gs_ * (1 - 0.8 * grr_) * 1.25, 1));
+    gi_ & 1 && gi_ > 0 ? ( ui_cola(DE_GINK, 0.18); s57_ln(gpx_, gpy_, gxx_, gyy_, 1); );
+    gpx_ = gxx_; gpy_ = gyy_; gi_ += 1; );
+);
+// the trail: where the sound has been (a point when it has moved, or now and then)
+gmx_ = dg_jx(de_jx); gmy_ = dg_jy(de_jy);
+gt_ = time_precise();
+(abs(gmx_ - dg_lx) + abs(gmy_ - dg_ly) > 2.5 || gt_ - dg_tt > 0.25) ? (
+  dg_ti = (dg_ti + 1) % 200; DZTR[dg_ti * 2] = gmx_; DZTR[dg_ti * 2 + 1] = gmy_; dg_tn = min(dg_tn + 1, 200);
+  dg_lx = gmx_; dg_ly = gmy_; dg_tt = gt_;
+);
+gi_ = 1; loop(dg_tn - 1,
+  gj_ = (dg_ti - dg_tn + 1 + gi_ + 400) % 200; gk_ = (gj_ + 199) % 200;
+  ui_cola(DE_GINK, 0.06 + 0.7 * (gi_ / dg_tn) ^ 1.5); s57_ln(DZTR[gk_ * 2], DZTR[gk_ * 2 + 1], DZTR[gj_ * 2], DZTR[gj_ * 2 + 1], 1.6);
+  gi_ += 1; );
+// the marker, the five forces as rays from it
+gi_ = 0; loop(5,
+  ga_ = (160 - gi_ * 35) * $pi / 180; gln_ = 10 + 22 * min(DZF[gi_] * 1.6, 1);
+  ui_cola(S57_ORNGL, 0.25 + 0.6 * min(DZF[gi_] * 2, 1)); s57_ln(gmx_ + cos(ga_) * 9, gmy_ - sin(ga_) * 9, gmx_ + cos(ga_) * gln_, gmy_ - sin(ga_) * gln_, 1.6);
+  gfx_circle((gmx_ + cos(ga_) * gln_) * sc, (gmy_ - sin(ga_) * gln_) * sc, 2.2 * sc, 1, 1);
+  gi_ += 1; );
+ui_cola(DE_GINK, 0.25); gfx_circle(gmx_ * sc, gmy_ * sc, 11 * sc, 1, 1);
+ui_col(S57_ORNG); gfx_circle(gmx_ * sc, gmy_ * sc, 6 * sc, 1, 1);
+ui_col(DE_GINK); gfx_circle(gmx_ * sc, gmy_ * sc, 2.2 * sc, 1, 1);
+// the floor: the partials now (left), the five forces (centre), the journey (right)
+ui_cola(DE_GDIM, 0.6); s57_r(36, 212, 1128, 1);
+gfx_setfont(13); ui_col(DE_GDIM); s57_t(40, 220, "PARTIALS");
+// the newest voice's partials on a ratio scale (1 .. 10), the harmonic places marked
+gv_ = -1; gb_ = -1; gi_ = 0; loop(DZVN, gq_ = DZV + gi_ * DZVS; gq_[0] && gq_[8] > gb_ ? ( gb_ = gq_[8]; gv_ = gi_; ); gi_ += 1; );
+gi_ = 1; loop(10, gxx_ = 120 + 232 * log(gi_) / log(10); ui_cola(DE_GDIM, 0.5); s57_r(gxx_, 244, 1, 8); gi_ += 1; );
+gv_ >= 0 ? (
+  gq_ = DZV + gv_ * DZVS; gi_ = 0;
+  loop(8, gu_ = gq_[64 + gi_]; ga_ = gq_[48 + gi_] / max(DZA[0], 0.0001);
+    ga_ > 0.01 && gu_ >= 1 && gu_ <= 10.5 ? ( gxx_ = 120 + 232 * log(gu_) / log(10); ui_cola(S57_ORNGL, 0.4 + 0.6 * min(ga_, 1)); s57_r(gxx_ - 1, 252 - 30 * min(ga_, 1) - 2, 2.2, 30 * min(ga_, 1) + 2); );
+    gi_ += 1; );
+) : ( ui_col(DE_GDIM); s57_t(180, 232, "(PLAY A NOTE)"); );
+// the forces' bars
+gi_ = 0; loop(5,
+  gxx_ = 404 + gi_ * 84; ui_col(DE_GDIM); s57_t(gxx_, 220, gi_ == 0 ? "PSYCHO" : gi_ == 1 ? "SENSUAL" : gi_ == 2 ? "INTELL" : gi_ == 3 ? "IMAGIN" : "EMOTION");
+  ui_cola(DE_GGRID, 1); s57_r(gxx_, 240, 72, 6);
+  ui_col(S57_ORNGL); s57_r(gxx_, 240, 72 * min(DZF[gi_] * 1.6, 1), 6);
+  gi_ += 1; );
+// the journey: how far through, the new orders reached
+ui_col(DE_GDIM); s57_t(852, 220, "JOURNEY");
+ui_cola(DE_GGRID, 1); s57_r(852, 240, 150, 6); ui_col(slider36 > 0 ? DE_GINK : DE_GDIM); s57_r(852, 240, 150 * de_phi, 6);
+sprintf(#t_, slider36 > 0 ? "%.0f%%" : "HELD", de_phi * 100); ui_col(DE_GINK); s57_t(1010, 236, #t_);
+ui_col(DE_GDIM); s57_t(1060, 220, "NEW ORDERS");
+sprintf(#t_, "%d", de_gen); ui_col(DE_GINK); s57_t(1060, 236, #t_);
+
+// ---------- PRIMARY INTEGRATION ----------
+s57_plate(24, 272, 340, 450);
+dg_bar(24, 272, 340, "PRIMARY INTEGRATION", "THE SETTLED ORDER");
+s57_knob(80, 344, 24, 1, 1, 8, 4, 0, "ORDER", "%.0f HARMONICS", 1);
+s57_knob(166, 344, 20, 2, 0, 100, 50, 0, "TILT", "%.0f%%", 0);
+// the harmonic stack, as ORDER and TILT set it
+ge_ = 2.1 - 1.8 * slider2 / 100;
+gi_ = 0; loop(8,
+  gxx_ = 222 + gi_ * 16; gh_ = 58 * (gi_ + 1) ^ (-ge_);
+  gi_ < slider1 ? ( ui_col(S57_INK); s57_r(gxx_, 372 - gh_, 10, gh_); ) : ( ui_cola(S57_INK, 0.35); s57_r(gxx_, 372 - gh_, 10, 1); s57_r(gxx_, 372 - gh_, 1, gh_); s57_r(gxx_ + 9, 372 - gh_, 1, gh_); );
+  gfx_setfont(13); ui_col(S57_DIM); sprintf(#t_, "%d", gi_ + 1); s57_tc(gxx_ + 5, 382, #t_);
+  gi_ += 1; );
+ui_cola(S57_INK, 0.5); s57_r(218, 372, 132, 1);
+// the pulse
+pk_pitem("1/1|1/2|1/4|1/8|1/16|1/4T|1/8T|1/16T", floor(slider3 + 0.5) + 1, #s57_vs);
+s57_knob(80, 452, 18, 3, 0, 7, 2, 0, "DIV", "", 1);
+s57_knob(166, 452, 18, 4, 0, 100, 20, 0, "PULSE", "%.0f%%", 0);
+gfx_setfont(13); ui_col(S57_DIM); s57_t(218, 420, "CLOCK"); s57_t(218, 462, "DEEP");
+ui_col(S57_INK); s57_t(310, 420, #s57_vs);
+gc_ = floor(de_lt) % 8; gc_ < 0 ? gc_ += 8;
+gi_ = 0; loop(8, ui_col(gi_ == gc_ ? S57_ORNG : S57_FACEX); gfx_circle((224 + gi_ * 16) * sc, 446 * sc, 4.5 * sc, 1, 1);
+  ui_cola(S57_INK, 0.5); gfx_circle((224 + gi_ * 16) * sc, 446 * sc, 4.5 * sc, 0, 1); gi_ += 1; );
+gdv_ = slider34 >= 0.5 ? 3 : 2; gc2_ = floor(gc_ / gdv_);
+gi_ = 0; loop(ceil(8 / gdv_), gxx_ = 220 + gi_ * 16 * gdv_; ui_col(gi_ == gc2_ ? S57_INK : S57_FACEX); s57_rr(gxx_, 482, min(16 * gdv_ - 4, 352 - gxx_), 8, 3); gi_ += 1; );
+// the clean filter
+s57_knob(80, 556, 22, 5, 40, 18000, 3200, 1, "CUTOFF", "%.0f Hz", 0);
+s57_knob(166, 556, 18, 6, 0, 100, 20, 0, "RESO", "%.0f%%", 0);
+gk2_ = 2 - 1.8 * slider6 / 100;
+ui_cola(S57_INK, 0.2); s57_r(218, 580, 132, 1);
+gi_ = 0; loop(67, gu_ = 20 * 1000 ^ (gi_ / 66) / slider5; gm_ = 1 / sqrt(sqr(1 - gu_ * gu_) + sqr(gk2_ * gu_));
+  gxx_ = 218 + gi_ * 2; gyy_ = 562 - 20 * log10(max(gm_, 0.001)) * 1.1; gyy_ = min(max(gyy_, 520), 596);
+  gi_ > 0 ? ( ui_col(S57_INK); s57_ln(gpx_, gpy_, gxx_, gyy_, 1.5); ); gpx_ = gxx_; gpy_ = gyy_; gi_ += 1; );
+// the envelope
+s57_knob(68, 656, 16, 7, 0.001, 10, 0.01, 1, "ATTACK", "%.3f s", 0);
+s57_knob(146, 656, 16, 8, 0.01, 10, 0.8, 1, "DECAY", "%.2f s", 0);
+s57_knob(224, 656, 16, 9, 0, 100, 75, 0, "SUSTAIN", "%.0f%%", 0);
+s57_knob(302, 656, 16, 10, 0.01, 15, 1.2, 1, "RELEASE", "%.2f s", 0);
+
+// ---------- DISINTEGRATION ----------
+s57_plate(372, 272, 456, 450);
+dg_bar(372, 272, 456, "DISINTEGRATION", "FIVE OVEREXCITABILITIES");
+gfx_setfont(11); ui_col(S57_INK); s57_tc(424, 312, "DISSOLUTION");
+dg_fader(424, 340, 340, 30, 40, de_dis);
+ui_cola(S57_INK, 0.25); s57_r(476, 304, 1, 410);
+gi_ = 0; loop(5,
+  gyy_ = 300 + gi_ * 84;
+  gi_ > 0 ? ( ui_cola(S57_INK, 0.18); s57_r(484, gyy_ - 2, 334, 1); );
+  gs_ = gi_ == 0 ? 11 : gi_ == 1 ? 15 : gi_ == 2 ? 19 : gi_ == 3 ? 22 : 26;
+  dg_sw(484, gyy_ + 8, 116, 24, gs_, gi_ == 0 ? "PSYCHOMOTOR" : gi_ == 1 ? "SENSUAL" : gi_ == 2 ? "INTELLECTUAL" : gi_ == 3 ? "IMAGINATIONAL" : "EMOTIONAL");
+  ui_col(S57_FACEX); s57_r(484, gyy_ + 40, 116, 4); ui_col(S57_ORNG); s57_r(484, gyy_ + 40, 116 * min(DZF[gi_] * 1.6, 1), 4);
+  gfx_setfont(13); ui_col(S57_DIM);
+  s57_t(484, gyy_ + 52, gi_ == 0 ? "RHYTHM, PITCH" : gi_ == 1 ? "TIMBRE, HEAT" : gi_ == 2 ? "INTERVAL, RATIO" : gi_ == 3 ? "SMEAR, MEMORY" : "SWELL, TREMOR");
+  s57_knob(640, gyy_ + 36, 17, gs_ + 1, 0, 100, DZDEF[gs_], 0, "AMOUNT", "%.0f%%", 0);
+  gi_ == 0 ? ( s57_knob(714, gyy_ + 36, 13, 13, 0, 100, 40, 0, "RESTLESS", "%.0f%%", 0); s57_knob(784, gyy_ + 36, 13, 14, 0, 100, 30, 0, "JITTER", "%.0f%%", 0); ) :
+  gi_ == 1 ? ( s57_knob(714, gyy_ + 36, 13, 17, 0, 100, 30, 0, "TEXTURE", "%.0f%%", 0); s57_knob(784, gyy_ + 36, 13, 18, 0, 100, 40, 0, "FORMANT", "%.0f%%", 0); ) :
+  gi_ == 2 ? ( s57_knob(748, gyy_ + 36, 13, 21, 0, 100, 40, 0, "STRUCTURE", "%.0f%%", 0); ) :
+  gi_ == 3 ? ( s57_knob(714, gyy_ + 36, 13, 24, 0, 100, 50, 0, "BLUR", "%.0f%%", 0); dg_sw(752, gyy_ + 24, 64, 24, 25, "FREEZE"); ) :
+             ( s57_knob(714, gyy_ + 36, 13, 28, 0, 100, 35, 0, "TREMOR", "%.0f%%", 0); s57_knob(784, gyy_ + 36, 13, 29, 0, 100, 30, 0, "BLOOM", "%.0f%%", 0); );
+  gi_ += 1; );
+
+// ---------- SECONDARY INTEGRATION ----------
+s57_plate(836, 272, 340, 450);
+dg_bar(836, 272, 340, "SECONDARY INTEGRATION", "THE NEW ORDER");
+s57_ks = 1.6; s57_knob(900, 352, 30, 31, 0, 100, 60, 0, "RESOLVE", "%.0f%%", 0); s57_ks = 1;
+s57_knob(1004, 352, 20, 32, 1, 600, 20, 1, "TIME", "%.1f s", 0);
+s57_knob(1100, 352, 20, 35, 0, 100, 35, 0, "SPACE", "%.0f%%", 0);
+gfx_setfont(13); ui_col(S57_DIM); s57_t(852, 418, "NEW ORDER");
+gxx_ = 852; gi_ = 0; loop(5, gw_ = gi_ == 0 ? 72 : gi_ == 1 ? 54 : gi_ == 2 ? 46 : gi_ == 3 ? 60 : 56;
+  s57_key(gxx_, 434, gw_, 24, floor(slider33 + 0.5) == gi_, gi_ == 0 ? "LEARNED" : gi_ == 1 ? "ADD 9" : gi_ == 2 ? "SUS" : gi_ == 3 ? "ADD 11" : "MAJ 9") ? s57_set(33, gi_);
+  gxx_ += gw_ + 6; gi_ += 1; );
+gfx_setfont(13); ui_col(S57_DIM); s57_t(852, 478, "DEEP PULSE");
+s57_key(852, 494, 58, 24, slider34 < 0.5, "HALF") ? s57_set(34, 0);
+s57_key(914, 494, 58, 24, slider34 >= 0.5, "THIRD") ? s57_set(34, 1);
+// the notes learned
+gfx_setfont(13); ui_col(S57_DIM); s57_t(994, 478, "LEARNED");
+gm_ = 0.05; gi_ = 0; loop(12, gm_ = max(gm_, DZL[gi_]); gi_ += 1; );
+gi_ = 0; loop(12, gb_ = gi_ == 1 || gi_ == 3 || gi_ == 6 || gi_ == 8 || gi_ == 10;
+  ui_col(gb_ ? 0xCFC8B8 : S57_PLATE); s57_r(996 + gi_ * 14, 494, 13, 24);
+  ui_cola(S57_ORNG, min(DZL[gi_] / gm_, 1) * (DZL[gi_] > 0.05)); s57_r(996 + gi_ * 14, 494, 13, 24);
+  ui_cola(S57_INK, 0.5); s57_r(996 + gi_ * 14, 494, 1, 24);
+  gfx_setfont(13); ui_col(S57_DIM); !gb_ ? s57_tc(1002.5 + gi_ * 14, 528, gi_ == 0 ? "C" : gi_ == 2 ? "D" : gi_ == 4 ? "E" : gi_ == 5 ? "F" : gi_ == 7 ? "G" : gi_ == 9 ? "A" : "B");
+  gi_ += 1; );
+ui_cola(S57_INK, 0.5); s57_r(996, 494, 168, 1); s57_r(996, 518, 168, 1); s57_r(1164, 494, 1, 24);
+// the balance: the original order, the disintegration, the new order in the sound now
+gfx_setfont(13); ui_col(S57_DIM); s57_t(852, 556, "BALANCE");
+gd_ = min(de_dis * 1.25, 1) * (1 - de_res); go_ = (1 - min(de_dis * 1.25, 1)) * (1 - de_res); gn_ = de_res;
+ui_col(S57_INK); s57_rr(850, 572, 314, 22, 2);
+ui_col(S57_DIM); s57_r(852, 574, 310 * go_, 18);
+ui_col(S57_ORNG); s57_r(852 + 310 * go_, 574, 310 * gd_, 18);
+ui_col(DE_NEW); s57_r(852 + 310 * (go_ + gd_), 574, 310 * gn_, 18);
+gi_ = 0; loop(3,
+  gyy_ = 606 + gi_ * 20;
+  ui_col(gi_ == 0 ? S57_DIM : gi_ == 1 ? S57_ORNG : DE_NEW); s57_r(852, gyy_ + 2, 10, 10);
+  gfx_setfont(13); ui_col(S57_INK); s57_t(870, gyy_, gi_ == 0 ? "ORIGINAL ORDER" : gi_ == 1 ? "DISINTEGRATION" : "NEW ORDER");
+  sprintf(#t_, "%.0f%%", 100 * (gi_ == 0 ? go_ : gi_ == 1 ? gd_ : gn_)); gfx_measurestr(#t_, tw_, th_); s57_t(1162 - tw_ / sc, gyy_, #t_);
+  gi_ += 1; );
+ui_cola(S57_INK, 0.2); s57_r(852, 670, 310, 1);
+gfx_setfont(13); ui_col(S57_DIM);
+s57_t(852, 682, gz_ == 0 ? "SETTLED: THE FIRST ORDER HOLDS" : gz_ == 1 ? "IN FLUX: THE ORDER LOOSENS" : "RE-FORMING: A NEW ORDER GATHERS");
+
+// ---------- the foot: ADJUST, its rate; velocity, volume, level, sat, the meter, the channel ----------
+s57_knob(64, 754, 14, 36, 0, 100, 50, 0, "ADJUST", "%.0f%%", 0);
+s57_knob(132, 754, 14, 37, 30, 600, 120, 1, "RATE", "%.0f s", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_t(170, 744, "THE DRIFT: SETTLED, IN FLUX, RE-FORMED");
+ui_col(S57_DIM); s57_t(170, 760, "EACH JOURNEY BEGINS FROM THE LATEST ORDER");
+ui_col(S57_DIM); s57_tc(600, 752, "AFTER K. DABROWSKI");
+s57_knob(752, 754, 14, 42, 0, 100, 60, 0, "VELOCITY", "%.0f%%", 0);
+s57_knob(818, 754, 14, 38, -24, 6, -6, 0, "VOLUME", "%+.1f dB", 0);
+s57_knob(878, 754, 14, 49, 0, 100, 60, 0, "LEVEL", "%.0f%%", 0);
+s57_knob(938, 754, 14, 43, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(958 * sc, 740 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+dg_v = max(dg_v * 0.85, de_vo);
+gi_ = 0; loop(8, gon_ = 20 * log10(max(dg_v * 0.5, 0.00001)) > -36 + gi_ * 4.6;
+  ui_col(gon_ ? (gi_ >= 7 ? 0xE0402A : gi_ >= 5 ? S57_AMB : S57_INK) : S57_FACEX); s57_r(972 + gi_ * 12, 748, 10, 12); gi_ += 1; );
+gfx_setfont(13); ui_col(S57_DIM); s57_tc(1018, 772, "LEVEL");
+sprintf(#t_, "CH %s", slider41 == 0 ? "OMNI" : ""); slider41 > 0 ? sprintf(#t_, "CH %d", slider41);
+s57_key(1080, 742, 84, 24, 0, #t_) ? s57_set(41, (slider41 + 1) % 17);
+
+s57_hv = 0;
+pk_end();
+ui_end();

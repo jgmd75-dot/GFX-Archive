@@ -30,6 +30,10 @@ Plugins here may need the shared `.jsfx-inc` files from GFX-II beside them to ru
 - `gfx-field-42-mix.jsfx` — GFX Field 42 Mix (removed from GFX-II 10 Oct 2026; lives on as the FIELD model in GFX Sum 92). Needs gfx-drift, gfx-input, gfx-lfo, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
 - `gfx-guitar-head.jsfx` — GFX Guitar Head (removed from GFX-II 10 Oct 2026; lives on as the GUITAR model in GFX Amp Head). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn, gfx-faceplate, gfx-instrument, gfx-headsmooth and gfx-amp from GFX-II.
 - `gfx-bass-head.jsfx` — GFX Bass Head (removed from GFX-II 10 Oct 2026; lives on as the BASS model in GFX Amp Head). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn, gfx-faceplate, gfx-instrument, gfx-headsmooth and gfx-amp from GFX-II.
+- `gfx-e-delay.jsfx` — GFX E-Delay (removed from GFX-II 11 Oct 2026; lives on as the EU side of GFX DLY45). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-lozenge, gfx-bverb and gfx-bdelay from GFX-II.
+- `gfx-j-delay.jsfx` — GFX J-Delay (removed from GFX-II 11 Oct 2026; lives on as the JP side of GFX DLY45). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-lozenge, gfx-bverb and gfx-bdelay from GFX-II.
+- `gfx-e-verb.jsfx` — GFX E-Verb (removed from GFX-II 11 Oct 2026; lives on as the EU side of GFX VRB45). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-lozenge and gfx-bverb from GFX-II.
+- `gfx-j-verb.jsfx` — GFX J-Verb (removed from GFX-II 11 Oct 2026; lives on as the JP side of GFX VRB45). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-lozenge and gfx-bverb from GFX-II.
 
 ## ideas
 - `ideas/gfx-g-morpho-recipe.md` — GFX G Morpho, a vector / morphing additive synth: recipe and build plan, parked 9 Oct 2026 before any build.

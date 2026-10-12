@@ -1,0 +1,395 @@
+desc:GFX DLY92 [delay]
+//tags: delay echo tape tape-echo valve wow flutter digital 16-bit tap tempo ping-pong hold freeze home-studio series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// DLY92 (Series 92: high-end home recording from the 90s): the studio delay of a serious 90s home studio, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> (+ the feedback) -> LOW CUT and HIGH CUT (in the loop: every repeat is filtered again)
+//   ANALOG:  the boutique tape echo of the decade's revival: a valve record amp (a soft, slightly uneven saturation that
+//            keeps the loop in check) onto a tape loop whose bandwidth follows its speed - the top falls away with each
+//            repeat, more so on long times (a slower tape); the playback head's bump lifts the lows; wow and flutter
+//            (MOD) wobble the pitch; moving TIME bends the pitch as the varispeed motor catches up.
+//   DIGITAL: the 90s digital delay: a 16-bit sampling line (TPDF-dithered) with its converters' band limit on the
+//            repeats; a change of TIME crossfades to the new time (no pitch bend); MOD is a clean chorus on the
+//            repeats; HOLD freezes the line and loops what is in it (the input stops going in); the loop is clean,
+//            with a soft limit only near full scale.
+//   -> MODE: MONO (the input summed, one echo in the middle), STEREO (left and right, each feeding itself),
+//      PING-PONG (the input summed into the left, the repeats crossing from side to side)
+//   -> WIDTH (of the repeats) -> MIX (send law: the dry stays full up to 50 %, the echo full from 50 %) -> OUTPUT
+//   -> the house output stage (band SAT, CLIP always on).
+// TIME  20 - 2000 ms, shown on the LCD (in ms, with the note value under SYNC); TAP sets it from two taps; SYNC locks
+//   it to the tempo (1/16 .. one bar, with dotted and triplet values).
+// FEEDBACK  0 - 100 %: near the top the repeats run on; the record amp (ANALOG) or a soft limit (DIGITAL) in the loop
+//   keeps it stable.
+// MOD  ANALOG: wow and flutter; DIGITAL: a clean chorus on the repeats.
+// HOLD  DIGITAL only: freezes the line (greyed on ANALOG).
+// DRIFT (0 - 100 %, 50 % = the standard amount): ANALOG - the capstan motor's speed wanders, each side its own, and the
+//   valve's bias drifts as it warms; DIGITAL - the clock is steady: only a trace of time wander.
+// ANALOG and DIGITAL are level matched. Changing the model or the mode fades the echo out and back in (a model change
+// clears the lines); HOLD glides in and out.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:375<20,2000,1>-Time (ms)
+slider4:0<0,1,1{Off,On}>-Sync
+slider5:3<0,8,1{1/16,1/8 T,1/8,1/8 D,1/4 T,1/4,1/4 D,1/2,1 bar}>-Sync note
+slider6:35<0,100,1>-Feedback (%)
+slider7:1<0,2,1{Mono,Stereo,Ping-pong}>-Mode
+slider8:9000<1000,20000,10>-High cut (Hz)
+slider9:60<20,1000,1>-Low cut (Hz)
+slider10:20<0,100,1>-Mod (%)
+slider11:100<0,100,1>-Width (%)
+slider12:30<0,100,1>-Mix (%)
+slider13:0<-24,12,0.1>-Output (dB)
+slider14:0<0,1,1{Analog,Digital}>-Model
+slider15:50<0,100,1>-Drift (%)
+slider16:0<0,100,1>-Band sat (%)
+slider17:30<0,100,1>-Bias (output stage, %)
+slider18:120<40,400,1>-Sat low band (Hz)
+slider19:6000<2000,16000,10>-Sat high band (Hz)
+slider20:-0.3<-24,0,0.1>-Ceiling (dB)
+slider21:1<0,1,1{Off,Clip}>-(unused, output stage)
+slider22:0<0,1,1{Off,On}>-Hold (digital)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-dly92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+l9_ostm = s92_alloc(4096);
+l9_LEN = 2.1 * 192000 + 64;                             // 2 s of delay + the modulation, up to 192 kHz
+l9L.s92_dlinit(l9_LEN); l9R.s92_dlinit(l9_LEN);
+
+// ---------- one side of the delay ----------
+// ANALOG: the valve record amp (a biased soft clip, unity at small signals), the tape's bandwidth (a one-pole that
+// follows the tape speed), the tape loop read at the moving head, the playback head's bump. d = the delay in samples.
+function l9_tape(x, d) instance(tl, bp) local(u, v) (
+  u = (s92_th(l9_rg * x + l9_rb) - s92_th(l9_rb)) * l9_rn;
+  tl += (u - tl) * l9_ktp;
+  this.s92_dlw(tl);
+  v = this.s92_dlr3(d);
+  bp.s92_bq(v);
+);
+// DIGITAL: the line, read at the current time; while the time changes, a raised-cosine crossfade to the new one.
+// HOLD: the line is fed back on itself at the held time (hd), untouched, while the input fades out of it.
+function l9_dig(x, m) instance(ca, cb, cx, xg, hd) local(a, b, w, r) (
+  r = l9_hg > 0 ? this.s92_dlr(hd - 1) : 0;
+  this.s92_dlw(x + (r - x) * l9_hg);
+  !xg && l9_hg == 0 && abs(l9_Dt - ca) > 0.5 ? ( cb = l9_Dt; xg = 1; cx = 0; );
+  a = this.s92_dlr3(ca + m);
+  xg ? (
+    b = this.s92_dlr3(cb + m); cx += l9_kx; w = 0.5 - 0.5 * cos($pi * min(cx, 1));
+    a += (b - a) * w;
+    cx >= 1 ? ( ca = cb; xg = 0; );
+  );
+  l9_hg > 0 ? a += (r - a) * l9_hg;
+  a;
+);
+// DIGITAL: the 16-bit line (TPDF dither)
+function l9_q16(x) ( floor(x * 32768 + rand(1) - rand(1) + 0.5) / 32768; );
+// DIGITAL: a soft limit near full scale only
+function l9_lim(y) local(a) ( a = abs(y); a > 0.8 ? sign(y) * (0.8 + 0.2 * s92_th((a - 0.8) / 0.2)) : y; );
+function l9_clr() (
+  memset(l9L.buf, 0, l9L.len); memset(l9R.buf, 0, l9R.len);
+  l9L.tl = l9R.tl = 0; l9L.bp.s92_bqclr(); l9R.bp.s92_bqclr();
+  l9L.hc.s92_bqclr(); l9L.lc.s92_bqclr(); l9R.hc.s92_bqclr(); l9R.lc.s92_bqclr();
+  l9L.c1.s92_bqclr(); l9L.c2.s92_bqclr(); l9R.c1.s92_bqclr(); l9R.c2.s92_bqclr();
+  l9L.ca = l9L.cb = l9R.ca = l9R.cb = l9_Dt; l9L.xg = l9R.xg = 0;
+  l9_D = l9_Dt; l9_fbl = l9_fbr = 0; l9_hg = 0;
+);
+
+// ---------- settings ----------
+function l9_beats(n) ( n == 0 ? 0.25 : n == 1 ? 1 / 3 : n == 2 ? 0.5 : n == 3 ? 0.75 : n == 4 ? 2 / 3 : n == 5 ? 1 : n == 6 ? 1.5 : n == 7 ? 2 : 4; );
+function l9_ms() ( slider4 >= 0.5 ? min(max(60000 / max(tempo, 20) * l9_beats(slider5), 20), 2000) : min(max(slider3, 20), 2000); );
+function l9_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  l9_Dt = l9_ms() / 1000 * srate;
+  l9_tfb = slider6 / 100 * 1.04;
+  l9_tmd = slider7;
+  l9_thc = slider8; l9_tlc = slider9;
+  l9_tmod = slider10 / 100;
+  l9_twd = slider11 / 100; l9_tmix = slider12 / 100; l9_tog = 10 ^ (slider13 / 20);
+  l9_tmo = slider14 >= 0.5;
+  l9_thd = slider22 >= 0.5;
+  drift_macro(slider15);
+  ost_setup(slider16 / 100, slider17 / 100, slider18, slider19, slider20, 1);   // output stage: CLIP, always on
+);
+// the loop's filters: ANALOG a little softer (Q 0.6), DIGITAL Butterworth
+function l9_cutset() local(q) (
+  q = l9_mo ? 0.707 : 0.6;
+  l9L.hc.s92_bqset(0, l9_hcf, 0, q, srate); l9R.hc.s92_bqset(0, l9_hcf, 0, q, srate);
+  l9L.lc.s92_bqset(1, l9_lcf, 0, q, srate); l9R.lc.s92_bqset(1, l9_lcf, 0, q, srate);
+);
+// ANALOG: the tape follows its speed (the delay): the bandwidth (13 kHz at 150 ms, falling as the tape slows) and the
+// head bump (95 Hz at 375 ms)
+function l9_tapeset(d) local(t, f) (
+  t = max(d / srate * 1000, 20);
+  l9_ktp = s92_k(min(max(13000 * sqrt(150 / t), 2500), 14000), srate);
+  f = min(max(95 * sqrt(375 / t), 35), 180);
+  l9L.bp.s92_bqset(3, f, 2.5, 1.1, srate); l9R.bp.s92_bqset(3, f, 2.5, 1.1, srate);
+);
+// the valve record amp: drive and bias (the bias drifts with DRIFT); l9_rn keeps its small-signal gain at 1
+function l9_recset(b) (
+  l9_rg = 1.5; l9_rb = b;
+  l9_rn = 0.002 / (s92_th(b + 0.001) - s92_th(b - 0.001)) / l9_rg;
+);
+function l9_srinit() (
+  l9_sr = srate;
+  l9_sm = s92_kt(0.02, srate);                          // the glides
+  l9_kg = s92_kt(0.15, srate);                          // ANALOG: the motor's slew (the pitch bend)
+  l9_kx = 1 / (0.05 * srate);                           // DIGITAL: the 50 ms crossfade
+  l9_khd = 1 / (0.03 * srate);                          // DIGITAL: HOLD glides in 30 ms
+  l9_fd = 1 / (0.01 * srate);
+  ost_init(l9_ostm);
+  l9_hcf = l9_thc; l9_lcf = l9_tlc; l9_cutset();
+  // DIGITAL: the converters' band limit on the repeats (4th-order Butterworth at 16 kHz)
+  l9_cvf = min(16000, 0.45 * srate);
+  l9L.c1.s92_bqset(0, l9_cvf, 0, 0.541, srate); l9L.c2.s92_bqset(0, l9_cvf, 0, 1.307, srate);
+  l9R.c1.s92_bqset(0, l9_cvf, 0, 0.541, srate); l9R.c2.s92_bqset(0, l9_cvf, 0, 1.307, srate);
+  l9_tapeset(l9_D);
+);
+
+in_init();
+l9_tmo = slider14 >= 0.5;
+l9_update();
+l9_mo = l9_tmo; l9_md = l9_tmd;
+l9_D = l9_Dt;
+l9_srinit();
+l9_recset(0.12);
+l9_mko = 1.0;                                           // ANALOG: the makeup that matches DIGITAL (measured on pink noise)
+l9_mkd = 1.0;
+l9dsL.drift_init(0.8 + rand(0.4)); l9dsR.drift_init(0.8 + rand(0.4)); l9dbi.drift_init(0.8 + rand(0.4));
+l9dw.drift_init(0.7 + rand(0.3));
+l9L.ost_ch_init(); l9R.ost_ch_init();
+l9_clr();
+l9_fb = l9_tfb; l9_mod = l9_tmod; l9_wd = l9_twd; l9_mix = l9_tmix; l9_og = l9_tog;
+l9_fade = 1; l9_fst = 0; l9_hold = 0; l9_wph = 0; l9_fph = 0; l9_cph = 0; l9_hg = 0;
+
+// ---------- presets ----------
+function l9_set(tm, sy, nt, fb, md, hc, lc, mo, wd, mx, ou, ml) (
+  slider3 = tm; slider4 = sy; slider5 = nt; slider6 = fb; slider7 = md; slider8 = hc; slider9 = lc;
+  slider10 = mo; slider11 = wd; slider12 = mx; slider13 = ou; slider14 = ml; slider22 = 0;
+  slider_automate(16380 + 2097152);                     // sliders 3 - 14 and HOLD (TRIM, GUARD, DRIFT and the output stage stay)
+);
+#l9_pm = "Init|Vocal Slap|Ballad Echo|Dub Tape Loop|Warped Tape|Runaway Tape|Indie Guitar|Clean Quarter|Dotted Eighths|Chorus Repeats|Ambient Ping-Pong|Snare Throw";
+function load_preset(p) (
+  //                time sy nt  fb md    hc    lc  mod  wd  mix  out  model
+  p == 1  ? l9_set( 375, 0, 3,  35, 1,  9000,  60, 20, 100, 30,    0, 0) :     // Init
+  p == 2  ? l9_set( 115, 0, 3,  10, 0,  7000, 120, 15,   0, 32,  0.4, 0) :     // Vocal Slap
+  p == 3  ? l9_set( 500, 1, 5,  32, 1,  6000, 180, 20,  70, 24,  0.8, 0) :     // Ballad Echo
+  p == 4  ? l9_set( 600, 1, 6,  80, 1,  3000, 150, 35,  90, 28,  0.4, 0) :     // Dub Tape Loop
+  p == 5  ? l9_set( 330, 0, 3,  45, 1,  6500, 100, 85, 100, 30,  0.2, 0) :     // Warped Tape
+  p == 6  ? l9_set( 420, 0, 3, 100, 2,  5000, 180, 30, 100, 20,  0.3, 0) :     // Runaway Tape
+  p == 7  ? l9_set( 375, 1, 3,  40, 2,  7500,  90, 25, 100, 30,  0.6, 0) :     // Indie Guitar
+  p == 8  ? l9_set( 500, 1, 5,  35, 1, 12000,  80, 10, 100, 28,  0.2, 1) :     // Clean Quarter
+  p == 9  ? l9_set( 375, 1, 3,  45, 2, 14000,  60,  5, 100, 30,  0.4, 1) :     // Dotted Eighths
+  p == 10 ? l9_set( 280, 0, 3,  40, 1, 10000,  80, 60, 100, 30,  0.1, 1) :     // Chorus Repeats
+  p == 11 ? l9_set(1000, 1, 7,  65, 2,  6000, 150, 30, 100, 30,  0.5, 1) :     // Ambient Ping-Pong
+  p == 12 ? l9_set( 500, 1, 5,  20, 1,  8000, 300,  0,  60, 34,  0.3, 1) :     // Snare Throw
+  p == 13 ? (                                               // Reset all to defaults
+    l9_set(375, 0, 3, 35, 1, 9000, 60, 20, 100, 30, 0, 0);
+    slider1 = 0; slider2 = 1; slider15 = 50; slider16 = 0; slider17 = 30; slider18 = 120; slider19 = 6000; slider20 = -0.3; slider21 = 1;
+    slider_automate(4194303);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+l9_update();
+
+@block
+srate != l9_sr ? l9_srinit();
+l9_update();                                            // knobs moved on the panel do not run @slider
+// the loop's filters glide (about 20 ms)
+l9_kb = 1 - exp(-samplesblock / (0.02 * srate));
+abs(l9_hcf - l9_thc) > 0.5 || abs(l9_lcf - l9_tlc) > 0.05 ? (
+  l9_hcf += (l9_thc - l9_hcf) * l9_kb; l9_lcf += (l9_tlc - l9_lcf) * l9_kb;
+  abs(l9_hcf - l9_thc) <= 0.5 ? l9_hcf = l9_thc; abs(l9_lcf - l9_tlc) <= 0.05 ? l9_lcf = l9_tlc;
+  l9_cutset();
+);
+// DRIFT: ANALOG - the capstan motor's speed wanders (each side its own) and the record valve's bias drifts; DIGITAL a trace
+l9_di = 0.12 * dm_s * samplesblock / srate;
+l9_wc = l9_mo ? 0.0001 : 0.0025;
+l9_dvL = l9_wc * dm_a * l9dsL.drift_tick(l9_di); l9_dvR = l9_wc * dm_a * l9dsR.drift_tick(l9_di);
+l9_bv = l9dbi.drift_tick(l9_di);
+!l9_mo ? l9_recset(0.12 + 0.05 * dm_a * l9_bv);
+l9_wdr = l9dw.drift_tick(l9_di * 2);
+// ANALOG: the tape's bandwidth and head bump follow the speed
+!l9_mo ? l9_tapeset(l9_D);
+l9a_vi = max(l9a_vi, l9_viL); l9a_vo = max(l9a_vo, l9_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+l9_fb += (l9_tfb - l9_fb) * l9_sm; l9_mod += (l9_tmod - l9_mod) * l9_sm; l9_wd += (l9_twd - l9_wd) * l9_sm;
+l9_mix += (l9_tmix - l9_mix) * l9_sm; l9_og += (l9_tog - l9_og) * l9_sm;
+// ANALOG: the varispeed motor slews to the new time (the pitch bends), at most 0.75 samples per sample
+l9_dd = (l9_Dt - l9_D) * l9_kg; l9_D += min(max(l9_dd, -0.75), 0.75);
+// DIGITAL: HOLD glides in and out; on engaging, each side holds its current time
+l9_hgt = l9_mo && l9_thd && l9_fst == 0;
+l9_hgt && l9_hg == 0 ? ( l9L.hd = max(floor(l9L.ca + 0.5), 4); l9R.hd = max(floor(l9R.ca + 0.5), 4); );
+l9_hg = l9_hgt ? min(l9_hg + l9_khd, 1) : max(l9_hg - l9_khd, 0);
+// a change of model or mode: fade the echo (and what goes into the lines) out, switch at the silent point, wait, fade back in
+(l9_tmo != l9_mo || l9_tmd != l9_md) && l9_fst == 0 ? l9_fst = 1;
+l9_fst == 1 ? ( l9_fade -= l9_fd; l9_fade <= 0 ? (
+  l9_fade = 0;
+  l9_tmo != l9_mo ? ( l9_mo = l9_tmo; l9_clr(); l9_cutset(); l9_tapeset(l9_D); );
+  l9_md = l9_tmd; l9_hold = 64; l9_fst = 2; ); ) :
+l9_fst == 2 ? ( l9_hold -= 1; l9_hold <= 0 ? l9_fst = 3; ) :
+l9_fst == 3 ? ( l9_fade += l9_fd; l9_fade >= 1 ? ( l9_fade = 1; l9_fst = 0; ); );
+
+// ---------- input ----------
+in_process(spl0, spl1);
+l9_xl = in_l; l9_xr = in_r;
+l9_viL = max(l9_viL * 0.9995, abs(l9_xl) + abs(l9_xr));
+l9_xm = (l9_xl + l9_xr) * 0.5;
+// into the lines: faded with the echo when the model or the mode changes (no step is ever written into a line)
+l9_jl = l9_xl * l9_fade; l9_jr = l9_xr * l9_fade; l9_jm = l9_xm * l9_fade;
+
+// ---------- the modulation ----------
+l9_mo ? (
+  // DIGITAL: a clean sine chorus on the repeats, the sides a quarter turn apart
+  l9_cph += 0.9 / srate; l9_cph >= 1 ? l9_cph -= 1;
+  l9_mdp = (0.00004 + 0.0022 * l9_mod) * srate;
+  l9_ml = l9_mdp * (1 + sin(2 * $pi * l9_cph)); l9_mr = l9_mdp * (1 + cos(2 * $pi * l9_cph));
+) : (
+  // ANALOG: wow (slow and uneven, it wanders with the motor) and flutter (the capstan), one tape so the sides nearly agree
+  l9_wph += (0.62 + 0.15 * l9_wdr) / srate; l9_wph >= 1 ? l9_wph -= 1;
+  l9_fph += 7.3 / srate; l9_fph >= 1 ? l9_fph -= 1;
+  l9_wa = (0.05 + l9_mod) * (0.0006 + 0.0015 * l9_D / srate) * srate;
+  l9_fa = (0.05 + l9_mod) * 0.00004 * srate;
+  l9_ml = l9_wa * sin(2 * $pi * l9_wph) + l9_fa * sin(2 * $pi * l9_fph);
+  l9_mr = l9_wa * sin(2 * $pi * l9_wph + 0.6) + l9_fa * sin(2 * $pi * l9_fph + 1.1);
+);
+
+// ---------- what goes into the lines: the input and the feedback, through the loop's filters ----------
+l9_md == 2 ? ( l9_il = l9_jm + l9_fbr; l9_ir = l9_fbl; ) :           // PING-PONG: the repeats cross
+l9_md == 1 ? ( l9_il = l9_jl + l9_fbl; l9_ir = l9_jr + l9_fbr; ) :   // STEREO
+             ( l9_il = l9_jm + l9_fbl; l9_ir = l9_jm + l9_fbr; );    // MONO
+l9_il = l9L.lc.s92_bq(l9L.hc.s92_bq(l9_il)); l9_ir = l9R.lc.s92_bq(l9R.hc.s92_bq(l9_ir));
+
+// ---------- the lines ----------
+l9_mo ? (
+  l9_wl = l9L.l9_dig(l9_q16(l9_il), 2 + l9_ml + l9_dvL * l9_Dt); l9_wr = l9R.l9_dig(l9_q16(l9_ir), 2 + l9_mr + l9_dvR * l9_Dt);
+  l9_fbl = l9_lim(l9_wl * l9_fb) * l9_fade; l9_fbr = l9_lim(l9_wr * l9_fb) * l9_fade;
+  l9_wl = l9L.c2.s92_bq(l9L.c1.s92_bq(l9_wl)) * l9_mkd; l9_wr = l9R.c2.s92_bq(l9R.c1.s92_bq(l9_wr)) * l9_mkd;
+) : (
+  l9_wl = l9L.l9_tape(l9_il, max(l9_D * (1 + l9_dvL) + l9_ml, 4)); l9_wr = l9R.l9_tape(l9_ir, max(l9_D * (1 + l9_dvR) + l9_mr, 4));
+  l9_fbl = l9_wl * l9_fb * l9_fade; l9_fbr = l9_wr * l9_fb * l9_fade;
+  l9_wl *= l9_mko; l9_wr *= l9_mko;
+);
+l9_md == 0 ? ( l9_wl = l9_wr = (l9_wl + l9_wr) * 0.5; );
+
+// ---------- WIDTH, MIX (send law), the fade, OUTPUT and the house output stage ----------
+l9_em = (l9_wl + l9_wr) * 0.5; l9_es = (l9_wl - l9_wr) * 0.5 * l9_wd;
+l9_gd = min(1, 2 - 2 * l9_mix); l9_gw = min(1, 2 * l9_mix) * l9_fade;
+l9_yl = l9_xl * l9_gd + (l9_em + l9_es) * l9_gw; l9_yr = l9_xr * l9_gd + (l9_em - l9_es) * l9_gw;
+l9_vL = max(l9_vL * 0.9995, abs(l9_yl) + abs(l9_yr));
+l9_yl = l9L.ost_band(l9_yl) * l9_og; l9_yr = l9R.ost_band(l9_yr) * l9_og;
+ost_out(l9_yl, l9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider14);
+s92_fonts();
+s92_face(960, 366);
+l9g_dgt = slider14 >= 0.5;
+l9g_syn = slider4 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "DLY92", "SERIES 92", "STUDIO DELAY", #l9_pm, 14);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the LED ladders, the trim, GUARD ----------
+s92_mod(20, 62, 166, 292, "INPUT");
+l9mI.s92_edge(30, 94, 146, 46, l9a_vi * 2.83, "IN");
+l9mO.s92_edge(30, 148, 146, 46, l9a_vo * 2.83, "OUT");
+l9a_vi *= 0.6; l9a_vo *= 0.6;
+s92_off = 0; s92_knob(66, 282, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(146, 248, "GUARD");
+s92_key(120, 258, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(178 * sc, 270 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+
+// ---------- TIME: the LCD, the time, TAP, SYNC and its note, the mode ----------
+s92_mod(198, 62, 272, 292, "TIME");
+l9g_ms = l9_ms();
+l9g_syn ? (
+  pk_pitem("1/16|1/8 T|1/8|1/8 D|1/4 T|1/4|1/4 D|1/2|1 BAR", slider5 + 1, #gt_);
+  sprintf(#gl_, "%s%s   %.0f MS", slider22 >= 0.5 && l9g_dgt ? "HOLD   " : "", #gt_, l9g_ms);
+) : (
+  sprintf(#gl_, "%s%.0f MS", slider22 >= 0.5 && l9g_dgt ? "HOLD   " : "", l9g_ms);
+);
+s92_lcd(212, 94, 244, 28, #gl_);
+s92_off = l9g_syn;
+s92_knob(258, 200, 40, 3, 20, 2000, 375, 1, "TIME", "%.0f ms", 0);
+s92_off = 0;
+// TAP: the time from two taps (up to 2 s apart); it switches SYNC off
+l9g_tf = l9g_tt > 0 && time_precise() - l9g_tt < 0.12;
+s92_key(394, 142, 64, 22, l9g_tf, "TAP") ? (
+  l9g_now = time_precise(); l9g_dt = l9g_now - l9g_tt; l9g_tt = l9g_now;
+  l9g_dt >= 0.02 && l9g_dt <= 2 ? ( s92_set(3, floor(l9g_dt * 1000 + 0.5)); l9g_syn ? s92_set(4, 0); );
+);
+s92_key(318, 142, 64, 22, l9g_syn, "SYNC") ? s92_set(4, l9g_syn ? 0 : 1);
+gi_ = 0; loop(9, pk_pitem("1/16|1/8T|1/8|1/8D|1/4T|1/4|1/4D|1/2|BAR", gi_ + 1, #gt_);
+  s92_key(318 + (gi_ % 3) * 48, 172 + floor(gi_ / 3) * 26, 44, 22, l9g_syn && slider5 == gi_, #gt_) ? ( s92_set(5, gi_); s92_set(4, 1); );
+  gi_ += 1; );
+s92_smallc(334, 274, "MODE");
+s92_key(212, 284, 78, 26, slider7 == 0, "MONO") ? s92_set(7, 0);
+s92_key(296, 284, 78, 26, slider7 == 1, "STEREO") ? s92_set(7, 1);
+s92_key(380, 284, 78, 26, slider7 == 2, "PING-PONG") ? s92_set(7, 2);
+s92_smallc(334, 330, "20 - 2000 MS  ·  TAP  ·  SYNC");
+
+// ---------- REPEATS: the feedback and its filters (HIGH CUT black, LOW CUT yellow) ----------
+s92_mod(482, 62, 144, 292, "REPEATS");
+s92_knob(554, 146, 30, 6, 0, 100, 35, 0, "FEEDBACK", "%.0f%%", 0);
+s92_kc = S92_C_LPF; s92_knob(518, 262, 18, 8, 1000, 20000, 9000, 1, "HIGH CUT", "%.0f Hz", 0);
+s92_kc = S92_C_HPF; s92_knob(590, 262, 18, 9, 20, 1000, 60, 1, "LOW CUT", "%.0f Hz", 0);
+s92_kc = 0;
+s92_smallc(554, 330, "IN THE LOOP");
+
+// ---------- MOD · HOLD: wow and flutter (ANALOG) / chorus (DIGITAL); HOLD (DIGITAL) ----------
+s92_mod(638, 62, 96, 292, "MOD · HOLD");
+s92_knob(686, 136, 22, 10, 0, 100, 20, 0, "MOD", "%.0f%%", 0);
+s92_smallc(686, 196, l9g_dgt ? "CHORUS" : "WOW · FLUTTER");
+s92_smallc(686, 240, "HOLD");
+s92_key(656, 250, 60, 24, slider22 >= 0.5 && l9g_dgt, slider22 >= 0.5 && l9g_dgt ? "ON" : "OFF") ? s92_set(22, slider22 >= 0.5 ? 0 : 1);
+s92_smallc(686, 300, l9g_dgt ? "FREEZE LOOP" : "DIGITAL ONLY");
+s92_smallc(686, 330, l9g_dgt ? "16-BIT LINE" : "TAPE LOOP");
+
+// ---------- OUTPUT: WIDTH, DRIFT, SAT; MIX and OUTPUT on faders ----------
+s92_mod(746, 62, 194, 292, "OUTPUT");
+s92_knob(788, 118, 18, 11, 0, 100, 100, 0, "WIDTH", "%.0f%%", 0);
+s92_knob(788, 206, 18, 15, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(788, 290, 12, 16, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(810 * sc, 278 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fc = S92_F_BLUE; s92_fader(852, 106, 130, 12, 0, 100, 30, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(906, 106, 130, 13, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s92_smallc(879, 300, "MIX: SEND LAW");
+s92_smallc(879, 330, "DRY FULL TO 50%");
+
+pk_end();
+ui_end();

@@ -1,0 +1,264 @@
+desc:GFX Rum57 [scanner vibrato/chorus]
+//tags: chorus vibrato scanner organ tonewheel lc delay line stereo valve modulation space series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// RUM57 (Series 57). The 1957 counterpart of Raum81: before bucket brigades, the chorus of the valve age was the
+// organ's scanner vibrato - a sixteen-section LC delay line, tapped at every section, and a motor-driven capacitive
+// scanner sweeping round the taps. The sweep is not perfectly smooth (the rotor passes from plate to plate), and the
+// later taps are darker (the signal has passed more coils), which gives the sound its shimmer.
+//   V1 / V2 / V3   vibrato: the scanner sweeps a third, two thirds or all of the line (only the delayed signal).
+//   C1 / C2 / C3   chorus: the same sweeps, mixed with the direct signal.
+//   RATE  the motor, 2 - 10 Hz (6.9 Hz, as on the organs). WIDTH  stereo: the right scanner runs behind the left,
+//   up to half a turn. TONE  the coils, dark .. bright. DRIVE  the valve pre-amp before the line (2x oversampled).
+//   The IN button (by the title) switches the line in or out (the pre-amp stays); MIX blends with the input.
+// ULM / COPENHAGEN (the face): ULM - a brighter line and a crisper scanner (you hear it step from plate to plate).
+//   COPENHAGEN - darker coils, a smoother scanner (wider plates), a rounder pre-amp. Level matched.
+// DRIFT (0 - 100 %, 50 % = standard): the motor's speed wanders and the two scanners slip against each other.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:5<0,5,1{V1,V2,V3,C1,C2,C3}>-Mode
+slider4:6.86<2,10,0.01>-Rate (Hz)
+slider5:50<0,100,1>-Width (%)
+slider6:0<-100,100,1>-Tone
+slider7:20<0,100,1>-Drive (%)
+slider8:100<0,100,1>-Mix (%)
+slider9:0<-24,12,0.1>-Output (dB)
+slider10:50<0,100,1>-Drift (%)
+slider11:0<0,100,1>-Band sat (%)
+slider12:30<0,100,1>-Bias (output stage, %)
+slider13:120<40,400,1>-Sat low band (Hz)
+slider14:6000<2000,16000,10>-Sat high band (Hz)
+slider15:-0.3<-24,0,0.1>-Ceiling (dB)
+slider16:0<0,1,1{Ulm,Copenhagen}>-Face
+slider17:1<0,1,1{Out,In}>-Line in
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-rum57";
+ext_noinit = 1;
+s57_mem = 0;
+
+rz_HB = s57_alloc(64); s57_hbdesign(rz_HB, 63, 8);
+rzuL.s57_upinit(63, rz_HB, 64); rzuR.s57_upinit(63, rz_HB, 64); rzdL.s57_dninit(63, rz_HB, 64); rzdR.s57_dninit(63, rz_HB, 64);
+rz_LAT = 31;
+rzL.s57_dlinit(2048); rzR.s57_dlinit(2048);
+rz_DRY = s57_alloc(256);
+
+// one channel of the scanner at 2x: the line, the plate the rotor is on, the coils' darkness at that tap
+function rz_scan(x, ph) instance(lp) local(tri, pos, i, f, w, d, y, k) (
+  // the rotor sweeps up the taps and back (a triangle), round the plates
+  tri = ph < 0.5 ? 2 * ph : 2 - 2 * ph;
+  pos = tri * rz_span;                                  // 0 .. 16 x span (taps)
+  i = floor(pos); f = pos - i;
+  // the capacitive pickup: plate to plate - a soft step (ULM crisper, COPENHAGEN smoother)
+  w = f < 0.5 ? 0.5 * (2 * f) ^ rz_stp : 1 - 0.5 * (2 - 2 * f) ^ rz_stp;
+  d = (i + w) * rz_tap + 2;
+  y = this.s57_dlr(d);
+  // the coils: the further down the line, the darker
+  k = rz_k0 * (1 - 0.55 * (i + w) / 16);
+  lp += (y - lp) * k;
+  lp;
+);
+
+function rz_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  rz_tmode = slider3; rz_trate = slider4; rz_wid = slider5 / 100 * 0.5;
+  rz_drv = slider7 / 100; rz_tmix = slider8 / 100; rz_tog = 10 ^ (slider9 / 20);
+  rz_tfc = slider16 >= 0.5; rz_tin = slider17 >= 0.5;
+  drift_macro(slider10);
+  ost_setup(slider11 / 100, slider12 / 100, slider13, slider14, slider15, 1);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = rz_LAT;
+);
+function rz_voice() local(f) (
+  rz_mode = rz_tmode; rz_fc = rz_tfc;
+  rz_span = 16 * (rz_mode % 3 == 0 ? 0.36 : rz_mode % 3 == 1 ? 0.66 : 1);
+  rz_ch = rz_mode >= 3;
+  rz_tap = 0.07 / 1000 * rz_fs2;                       // 70 us a section: about 1.1 ms down the whole line
+  f = (rz_fc ? 5200 : 8500) * 2 ^ (slider6 / 100 * 1.2);
+  rz_k0 = s57_k(f, rz_fs2); rz_tl = slider6;
+  rz_stp = rz_fc ? 1.4 : 2.6;
+  rz_vb = rz_fc ? 0.15 : 0.05;
+  // the vibrato modes are a touch quieter than the chorus modes on a real organ; keep them level
+  rz_mk = rz_ch ? 1.16 : 1.0;
+);
+function rz_srinit() (
+  rz_sr = srate; rz_fs2 = 2 * srate;
+  rz_sm = s57_kt(0.02, srate); rz_fd = 1 / (0.006 * srate);
+  rz_voice();
+  ost_init(0);
+);
+
+in_init();
+rz_update();
+rz_srinit();
+rz_dfR.drift_init(0.8 + rand(0.4)); rz_dfP.drift_init(0.6 + rand(0.4));
+rzo.ost_ch_init(); rzp.ost_ch_init();
+rz_rate = rz_trate; rz_mix = rz_tmix; rz_og = rz_tog; rz_in = rz_tin; rz_ing = rz_in;
+rz_fade = 1; rz_fst = 0; rz_ph = 0;
+
+function rz_set(mo, ra, wi, tn, dr, mx) (
+  slider3 = mo; slider4 = ra; slider5 = wi; slider6 = tn; slider7 = dr; slider8 = mx; slider17 = 1;
+  slider_automate(65788);                               // sliders 3 - 8 and 17
+);
+#rz_pm = "Init|Chorus Three|Vibrato Three|Gentle C1|Gospel Organ|Wide Ensemble|Slow Swirl|Fast Shimmer|Dark Coils|Bright Plates|Mono Vibrato|Driven Chorus";
+function load_preset(p) (
+  //                mo  rate   wid tone drv mix
+  p == 1  ? rz_set(5, 6.86,  50,   0, 20, 100) :     // Init
+  p == 2  ? rz_set(5, 6.86,  30,   0, 15, 100) :     // Chorus Three
+  p == 3  ? rz_set(2, 6.86,  30,   0, 15, 100) :     // Vibrato Three
+  p == 4  ? rz_set(3, 6.86,  60,  10, 10, 100) :     // Gentle C1
+  p == 5  ? rz_set(5, 7.2,   20, -10, 45, 100) :     // Gospel Organ
+  p == 6  ? rz_set(4, 5.5,  100,   0, 15, 100) :     // Wide Ensemble
+  p == 7  ? rz_set(5, 2.4,   70, -20, 20, 100) :     // Slow Swirl
+  p == 8  ? rz_set(4, 9.5,   50,  30, 15, 100) :     // Fast Shimmer
+  p == 9  ? rz_set(5, 6.0,   50, -70, 25, 100) :     // Dark Coils
+  p == 10 ? rz_set(3, 7.5,   40,  70, 10, 100) :     // Bright Plates
+  p == 11 ? rz_set(1, 6.86,   0,   0, 20, 100) :     // Mono Vibrato
+  p == 12 ? rz_set(5, 6.5,   60, -20, 80, 100) :     // Driven Chorus
+  p == 13 ? (
+    rz_set(5, 6.86, 50, 0, 20, 100);
+    slider1 = 0; slider2 = 1; slider9 = 0; slider10 = 50; slider11 = 0; slider12 = 30; slider13 = 120; slider14 = 6000; slider15 = -0.3;
+    slider_automate(98303);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+rz_update();
+
+@block
+srate != rz_sr ? rz_srinit();
+rz_update();
+(rz_tmode != rz_mode || rz_tfc != rz_fc) && rz_fst == 0 ? rz_fst = 1;
+slider6 != rz_tl ? ( rz_f = (rz_fc ? 5200 : 8500) * 2 ^ (slider6 / 100 * 1.2); rz_k0 = s57_k(rz_f, rz_fs2); rz_tl = slider6; );
+// DRIFT: the motor and the slip between the scanners
+rz_di = 0.12 * dm_s * samplesblock / srate;
+rz_drt = dm_a * 0.04 * rz_dfR.drift_tick(rz_di);
+rz_dph = dm_a * 0.03 * rz_dfP.drift_tick(rz_di);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+rz_rate += (rz_trate - rz_rate) * rz_sm; rz_mix += (rz_tmix - rz_mix) * rz_sm; rz_og += (rz_tog - rz_og) * rz_sm;
+rz_ing += (rz_tin - rz_ing) * rz_sm;
+rz_fst == 1 ? ( rz_fade -= rz_fd; rz_fade <= 0 ? ( rz_fade = 0; rz_voice(); rz_hold = rz_LAT + 8; rz_fst = 2; ); ) :
+rz_fst == 2 ? ( rz_hold -= 1; rz_hold <= 0 ? rz_fst = 3; ) :
+rz_fst == 3 ? ( rz_fade += rz_fd; rz_fade >= 1 ? ( rz_fade = 1; rz_fst = 0; ); );
+
+in_process(spl0, spl1);
+rz_xl = in_l; rz_xr = in_r;
+rz_DRY[rz_dp] = rz_xl; rz_DRY[128 + rz_dp] = rz_xr;
+rz_rp = (rz_dp - rz_LAT) & 127; rz_yld = rz_DRY[rz_rp]; rz_yrd = rz_DRY[128 + rz_rp]; rz_dp = (rz_dp + 1) & 127;
+
+// ---------- at 2x: the valve pre-amp, the line, the scanners ----------
+function rz_pre(x) local(k) ( k = 1 + 4 * rz_drv; (s57_th(x * k + rz_vb) - s57_th(rz_vb)) / k * (1 + 0.3 * rz_drv); );
+function rz_step() local(pl, pr, vl, vr) (
+  rz_ph += rz_rate * (1 + rz_drt) / rz_fs2; rz_ph >= 1 ? rz_ph -= 1;
+  pl = rz_pre(rz_a); pr = rz_pre(rz_b);
+  rzL.s57_dlw(pl); rzR.s57_dlw(pr);
+  vl = rzL.rz_scan(pl, rz_ph);
+  rz_q = rz_ph + rz_wid + rz_dph; rz_q -= floor(rz_q);
+  vr = rzR.rz_scan(pr, rz_q);
+  // C modes: the line with the direct signal; V modes: the line alone. The IN button crossfades to the pre-amp.
+  rz_ch ? ( vl = (vl + pl) * 0.5; vr = (vr + pr) * 0.5; );
+  rz_a = (pl + (vl * rz_mk - pl) * rz_ing); rz_b = (pr + (vr * rz_mk - pr) * rz_ing);
+);
+rzuL.s57_up(rz_xl); rzuR.s57_up(rz_xr);
+rz_a = rzuL.o0; rz_b = rzuR.o0; rz_step(); rz_q0l = rz_a; rz_q0r = rz_b;
+rz_a = rzuL.o1; rz_b = rzuR.o1; rz_step(); rz_q1l = rz_a; rz_q1r = rz_b;
+rz_yl = rzdL.s57_dn(rz_q0l, rz_q1l); rz_yr = rzdR.s57_dn(rz_q0r, rz_q1r);
+
+// (a mode or face change fades to the dry signal and back)
+rz_yl = rz_yld + (rz_yl - rz_yld) * rz_mix * rz_fade; rz_yr = rz_yrd + (rz_yr - rz_yrd) * rz_mix * rz_fade;
+rz_yl = rzo.ost_band(rz_yl) * rz_og; rz_yr = rzp.ost_band(rz_yr) * rz_og;
+ost_out(rz_yl, rz_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider16);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "RUM57", "SERIES 57", "SCANNER CHORUS", #rz_pm, 16);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 4);
+s57_small(30, 378, "IN"); s57_small(330, 378, "PRE-AMP"); s57_small(634, 378, "LC LINE · SCANNER"); s57_small(892, 378, "OUT");
+
+// ---------- the scanner: sixteen plates round a rotor ----------
+s57_plate(20, 68, 300, 292);
+s57_title(32, 76, "SCANNER");
+s57_inkey(130, 77, 17);
+cx_ = 170; cy_ = 222; r_ = 92;
+ui_cola(0x000000, 0.15); gfx_circle((cx_ + 2) * sc, (cy_ + 3) * sc, (r_ + 8) * sc, 1, 1);
+ui_col(S57_INK); gfx_circle(cx_ * sc, cy_ * sc, (r_ + 8) * sc, 1, 1);
+ui_col(S57_WELL); gfx_circle(cx_ * sc, cy_ * sc, (r_ + 5) * sc, 1, 1);
+// the plates: lit up to the sweep's span
+sp_ = slider3 % 3 == 0 ? 0.36 : slider3 % 3 == 1 ? 0.66 : 1;
+i_ = 0; loop(16,
+  a_ = -0.5 * $pi + (i_ + 0.5) * 2 * $pi / 16;
+  ui_col(i_ < 16 * sp_ ? S57_ORNG : S57_DIM);
+  s57_ln(cx_ + cos(a_) * (r_ - 18), cy_ + sin(a_) * (r_ - 18), cx_ + cos(a_) * (r_ - 2), cy_ + sin(a_) * (r_ - 2), 7);
+  i_ += 1; );
+gfx_setfont(13); ui_col(S57_DIM);
+i_ = 0; loop(4, a_ = -0.5 * $pi + (i_ * 4 + 0.5) * 2 * $pi / 16; sprintf(#t_, "%d", i_ * 4 + 1); s57_tc(cx_ + cos(a_) * (r_ - 32), cy_ + sin(a_) * (r_ - 32), #t_); i_ += 1; );
+// the rotor (the panel shows it slowed down 8 times so the eye can follow)
+rz_vis += slider4 / 8 / 30 * (slider17 >= 0.5);
+rz_vis -= floor(rz_vis);
+a_ = -0.5 * $pi + rz_vis * 2 * $pi;
+ui_cola(0x000000, 0.25); s57_ln(cx_ + 2, cy_ + 3, cx_ + 2 + cos(a_) * (r_ - 22), cy_ + 3 + sin(a_) * (r_ - 22), 6);
+ui_col(S57_CREAM); s57_ln(cx_, cy_, cx_ + cos(a_) * (r_ - 22), cy_ + sin(a_) * (r_ - 22), 6);
+ui_col(S57_IDX); s57_ln(cx_ + cos(a_) * (r_ - 40), cy_ + sin(a_) * (r_ - 40), cx_ + cos(a_) * (r_ - 22), cy_ + sin(a_) * (r_ - 22), 2);
+ui_col(S57_INK); gfx_circle(cx_ * sc, cy_ * sc, 12 * sc, 1, 1); ui_col(0x9EA3AA); gfx_circle(cx_ * sc, cy_ * sc, 7 * sc, 1, 1);
+s57_small(36, 340, "THE ROTOR IS SHOWN 8 TIMES SLOWER");
+
+// ---------- the controls ----------
+s57_well(336, 68, 380, 292);
+s57_title(348, 76, "VIBRATO  ·  CHORUS");
+m_ = 0; loop(6,
+  s57_key(348 + m_ * 59 + (m_ >= 3) * 8, 102, 52, 26, slider3 == m_, m_ == 0 ? "V1" : m_ == 1 ? "V2" : m_ == 2 ? "V3" : m_ == 3 ? "C1" : m_ == 4 ? "C2" : "C3") ? s57_set(3, m_);
+  m_ += 1; );
+s57_small(348, 134, "VIBRATO"); s57_small(533, 134, "CHORUS");
+s57_knob(424, 228, 34, 4, 2, 10, 6.86, 0, "RATE", "%.2f Hz", 0);
+s57_knob(560, 214, 20, 5, 0, 100, 50, 0, "WIDTH", "%.0f%%", 0);
+s57_knob(650, 214, 20, 6, -100, 100, 0, 0, "TONE", "%+.0f", 0);
+s57_knob(560, 312, 18, 7, 0, 100, 20, 0, "DRIVE", "%.0f%%", 0);
+s57_knob(650, 312, 18, 8, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s57_small(374, 300, "THE ORGANS RAN AT 6.9 HZ");
+
+// ---------- IN / OUT ----------
+s57_plate(732, 68, 208, 292);
+s57_title(744, 76, "IN · OUT");
+s57_knob(782, 140, 16, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(886, 120, "GUARD");
+s57_key(862, 130, 48, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(918 * sc, 140 * sc, 3 * sc, 1, S57_ORNG); ); in_grd = 0;
+s57_knob(836, 234, 22, 9, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(782, 316, 13, 10, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(886, 316, 13, 11, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(914 * sc, 300 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

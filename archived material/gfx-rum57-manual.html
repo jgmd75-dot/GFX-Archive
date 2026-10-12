@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX Rum57 - manual</title><meta name="description" content="Series 57's chorus: the organ scanner vibrato - a sixteen-section LC delay line and a motor-driven scanner, V1 - V3 and C1 - C3, in stereo.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-rum57">
+<div class="cat">Modulation &amp; space</div><h1>Rum57</h1>
+<p class="tagline">Series 57's chorus: the organ scanner vibrato - a sixteen-section LC delay line and a motor-driven scanner, V1 - V3 and C1 - C3, in stereo.</p>
+<div class="shot"><img src="img/gfx-rum57.webp" alt="The Rum57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-rum57-cph.webp" alt="The Rum57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>Rum57 is the Series 57 counterpart of Raum81. Before bucket brigades, the chorus of the valve age was the organ's scanner vibrato: a sixteen-section LC delay line, tapped at every section, and a motor-driven capacitive scanner sweeping round the taps.</p><p>The sweep is not perfectly smooth (the rotor passes from plate to plate), and the later taps are darker (the signal has passed more coils), which gives the sound its shimmer. V1, V2 and V3 are vibrato (the delayed signal alone); C1, C2 and C3 are chorus (mixed with the direct signal). Rum57 runs two scanners, the right one behind the left, for a stereo spread, through a valve pre-amp oversampled 2x.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Organ chorus and vibrato on keys of any kind</li><li>A shimmering, old-fashioned chorus on guitars and pads</li><li>Stereo width with movement</li><li>Pitch vibrato on vocals and leads (V modes)</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert Rum57 on a track. It opens on Init: C3 at the organs' 6.9 Hz.</li><li>Pick a mode: V1 - V3 for vibrato, C1 - C3 for chorus; the higher the number, the deeper.</li><li>Set WIDTH for the stereo spread and TONE for how dark the line is.</li><li>Slow RATE right down for a slow swirl, or push it up for a fast shimmer.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>SCANNER</h3><p>The IN button next to the title switches the line in or out (the pre-amp stays in).</p><dl class="ctl"><dt>The scanner</dt><dd>Sixteen plates round the rotor, lit as far as the mode sweeps. The rotor is shown eight times slower than it turns, so the eye can follow it.</dd></dl>
+<h3>VIBRATO &middot; CHORUS</h3><dl class="ctl"><dt>V1 / V2 / V3</dt><dd>Vibrato: the scanner sweeps a third, two thirds or all of the line, and only the delayed signal is heard.</dd><dt>C1 / C2 / C3</dt><dd>Chorus: the same sweeps, mixed with the direct signal. Changing the mode fades out and back in.</dd><dt>RATE</dt><dd>The motor, 2 - 10 Hz (6.86 Hz, as on the organs).</dd><dt>WIDTH</dt><dd>The right scanner runs behind the left, up to half a turn, 0 - 100% (50%). 0 is mono.</dd><dt>TONE</dt><dd>The coils, dark (-) to bright (+) (0).</dd><dt>DRIVE</dt><dd>The valve pre-amp before the line, 0 - 100% (20%). Oversampled 2x.</dd><dt>MIX</dt><dd>Blends the effect with the input, 0 - 100% (100%). The input is delayed to match.</dd></dl>
+<h3>IN &middot; OUT</h3><dl class="ctl"><dt>INPUT</dt><dd>Trim before everything, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard: eases very hot sources down (on by default). Its LED lights while it works.</dd><dt>OUTPUT</dt><dd>The output level, -24 to +12 dB (0 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the motor's speed wanders and the two scanners slip against each other.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). Its soft CLIP is always on; the red LED lights when it catches a peak.</dd></dl>
+<h3>The signal path</h3><p>The line along the foot: IN, PRE-AMP, LC LINE and SCANNER, OUT.</p>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>A brighter line and a crisper scanner: you hear it step from plate to plate.</dd><dt>COPENHAGEN</dt><dd>Darker coils, a smoother scanner (wider plates) and a rounder pre-amp.</dd></dl>
+<h2>Presets</h2><p>A preset sets the mode, RATE, WIDTH, TONE, DRIVE and MIX, and switches the line in; the face, INPUT, GUARD, OUTPUT, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness.</p><dl class="ctl"><dt>Init</dt><dd>C3 at 6.9 Hz, moderate width.</dd><dt>Chorus Three</dt><dd>The classic C3, a little narrower.</dd><dt>Vibrato Three</dt><dd>Full-depth vibrato.</dd><dt>Gentle C1</dt><dd>A light chorus, wide and a touch bright.</dd><dt>Gospel Organ</dt><dd>C3 with a driven pre-amp, slightly darker.</dd><dt>Wide Ensemble</dt><dd>C2, the scanners half a turn apart.</dd><dt>Slow Swirl</dt><dd>A slow, wide C3.</dd><dt>Fast Shimmer</dt><dd>C2 at nearly 10 Hz, bright.</dd><dt>Dark Coils</dt><dd>A dark line.</dd><dt>Bright Plates</dt><dd>C1 with a bright line.</dd><dt>Mono Vibrato</dt><dd>V2 in mono.</dd><dt>Driven Chorus</dt><dd>C3 with the pre-amp pushed.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>C3 is the organ chorus everyone knows; on a guitar or an electric piano it is just as lovely.</li><li>V modes change the pitch: use them on single lines rather than whole mixes.</li><li>WIDTH at 100% puts the two scanners in opposition: a big, swirling stereo image that still folds to mono as a chorus.</li><li>COPENHAGEN's smoother scanner suits pads; ULM's crisp steps suit organs and guitars.</li></ul>
+<p class="file">File: gfx-rum57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

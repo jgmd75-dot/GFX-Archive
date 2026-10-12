@@ -1,0 +1,291 @@
+desc:GFX Vari-Mu57 [vari-mu comp]
+//tags: dynamics compressor limiter vari-mu variable-mu valve tube program bus mastering lateral vertical mid-side series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// VARI-MU57 (Series 57). The 1957 counterpart of Fet81: a variable-mu valve compressor / limiter - there were no
+// FETs in 1957, so the gain element is a push-pull pair of remote-cutoff valves whose gain (mu) falls as their
+// grid bias is pushed negative by the side-chain.
+//   THRESHOLD  where it starts (-40 .. 0 dB, -18 dB).
+//   The ratio is not set: it rises with the gain reduction, as on the valves - about 1.5:1 just over the threshold,
+//   past 6:1 when it is pushed hard. BIAS sets how quickly it rises (the valves' standing bias: low = soft and
+//   gentle, high = firmer, closer to a limiter).
+//   TIME CONSTANT  six positions, as on the classic broadcast limiters:
+//     1  0.2 ms / 0.3 s     2  0.2 ms / 0.8 s     3  0.4 ms / 2 s     4  0.4 ms / 5 s
+//     5  0.4 ms / programme: 2 s, and 10 s after long passages
+//     6  0.2 ms / programme: 0.3 s, 10 s and 25 s
+//   The side-chain hears the output (feedback, as on the original), through SC FILTER (a high-pass, off - 300 Hz).
+//   MODE  STEREO (linked), LAT / VERT (mid and side, each with its own valve pair - as for the disc-cutting lathe:
+//   lateral = mid, vertical = side) or DUAL (two independent channels).
+//   The audio passes the valve pair and an output transformer, oversampled 2x. MIX (dry, latency matched), OUTPUT.
+// ULM / COPENHAGEN (the face): ULM - quicker, a firmer knee, the push-pull pair balanced (odd harmonics, clean).
+//   COPENHAGEN - slower, a softer knee, the pair a little unbalanced (even harmonics, warmer), a fuller iron low
+//   end and a softer top. Level matched; presets leave the face alone; switching fades out and back in.
+// DRIFT (0 - 100 %, 50 % = standard): the valves' bias wanders (the threshold and the balance of the pair), and the
+//   two channels never quite match.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:-18<-40,0,0.1>-Threshold (dB)
+slider4:2<1,6,1>-Time constant
+slider5:50<0,100,1>-Bias (%)
+slider6:0<0,2,1{Stereo,Lat / Vert,Dual}>-Mode
+slider7:0<0,300,1>-SC filter (Hz, 0 = off)
+slider8:3.6<-12,24,0.1>-Output (dB)
+slider9:100<0,100,1>-Mix (%)
+slider10:50<0,100,1>-Drift (%)
+slider11:0<0,100,1>-Band sat (%)
+slider12:30<0,100,1>-Bias (output stage, %)
+slider13:120<40,400,1>-Sat low band (Hz)
+slider14:6000<2000,16000,10>-Sat high band (Hz)
+slider15:-0.3<-24,0,0.1>-Ceiling (dB)
+slider16:0<0,1,1{Ulm,Copenhagen}>-Face
+slider17:0<0,1,1{Out,In}>-(unused)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vari-mu57";
+ext_noinit = 1;
+s57_mem = 0;
+
+vm_H = s57_alloc(64); s57_hbdesign(vm_H, 63, 8);
+vmuL.s57_upinit(63, vm_H, 64); vmuR.s57_upinit(63, vm_H, 64); vmdL.s57_dninit(63, vm_H, 64); vmdR.s57_dninit(63, vm_H, 64);
+vm_LAT = 31;
+vm_DRY = s57_alloc(256);
+
+// ---------- the time constants ----------
+function vm_tc(n) (
+  // attack (s), release 1 (s), release 2 (s, 0 = none), release 3 (s, 0 = none)
+  n == 1 ? ( vm_at = 0.0002; vm_r1 = 0.3; vm_r2 = 0;  vm_r3 = 0; ) :
+  n == 2 ? ( vm_at = 0.0002; vm_r1 = 0.8; vm_r2 = 0;  vm_r3 = 0; ) :
+  n == 3 ? ( vm_at = 0.0004; vm_r1 = 2;   vm_r2 = 0;  vm_r3 = 0; ) :
+  n == 4 ? ( vm_at = 0.0004; vm_r1 = 5;   vm_r2 = 0;  vm_r3 = 0; ) :
+  n == 5 ? ( vm_at = 0.0004; vm_r1 = 2;   vm_r2 = 10; vm_r3 = 0; ) :
+           ( vm_at = 0.0002; vm_r1 = 0.3; vm_r2 = 10; vm_r3 = 25; );
+  vm_at *= vm_fc ? 2.2 : 1;
+  vm_ka = s57_kt(vm_at * 4, vm_fs2);                    // (the rectifier's charge, a little slower than the grid)
+  vm_k1 = s57_kt(vm_r1, vm_fs2); vm_k2 = s57_kt(max(vm_r2, 0.01), vm_fs2); vm_k3 = s57_kt(max(vm_r3, 0.01), vm_fs2);
+);
+
+// ---------- one side of the side-chain and the valve pair at 2x ----------
+// e1 e2 e3: the control voltages (fast, programme, long); gr: the reduction in dB
+function vm_sc(x) instance(hp, e1, e2, e3, gr, lv) local(r, l, over, a, g, c) (
+  r = abs(vm_scf ? hp.s57_bq(x) : x);
+  // the rectifier charges the timing capacitors quickly; each discharges at its own rate
+  e1 += (r - e1) * (r > e1 ? vm_ka : vm_k1);
+  vm_r2 > 0 ? ( e2 += (r - e2) * (r > e2 ? vm_ka * 0.02 : vm_k2); ) : e2 = 0;
+  vm_r3 > 0 ? ( e3 += (r - e3) * (r > e3 ? vm_ka * 0.005 : vm_k3); ) : e3 = 0;
+  l = 20 * log10(max(max(e1, max(e2 * 0.9, e3 * 0.8)), 0.0000001));
+  over = l - vm_thr - this.dt;
+  // the gain law: the ratio rises with the reduction (the remote-cutoff valves)
+  c = vm_knee;
+  over <= -c ? g = 0 : over < c ? ( g = sqr(over + c) / (4 * c); ) : g = over;
+  a = vm_a0 + vm_a1 * gr;                               // the slope in the feedback loop: ratio = 1 + a
+  gr = min(g * a, 40);
+  lv = 10 ^ (-gr / 20);
+);
+// the valve pair: the signal rides on the bias; push-pull cancels the even harmonics (unless unbalanced)
+function vm_valve(x, gr) instance(lo, tt) local(u, y, k, b) (
+  k = 1 + gr * 0.035;                                   // pushed harder, the pair is driven further round its curve
+  b = vm_unb + this.db;
+  u = x * 0.6 * k;
+  y = (s57_th(u + b) - s57_th(-u + b)) * 0.5 / (0.6 * k);
+  // the output transformer: the lows saturate first
+  lo += (y - lo) * vm_klo;
+  y = (y - lo) + s57_th(lo * 1.3) / 1.3;
+  y;
+);
+
+function vm_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  vm_thr = slider3; vm_ttc = slider4; vm_tmode = slider6; vm_tfc = slider16 >= 0.5;
+  vm_bias = slider5 / 100;
+  vm_a0 = 0.4 + 0.6 * vm_bias; vm_a1 = (0.12 + 0.25 * vm_bias) * (vm_fc ? 0.8 : 1);
+  vm_knee = (vm_fc ? 7 : 4) * (1.3 - 0.6 * vm_bias);
+  vm_scf = slider7 >= 20;
+  vm_tog = 10 ^ (slider8 / 20); vm_tmix = slider9 / 100;
+  drift_macro(slider10);
+  ost_setup(slider11 / 100, slider12 / 100, slider13, slider14, slider15, 0);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = vm_LAT;
+);
+function vm_filters() (
+  vm_scf ? ( vmA.hp.s57_bqset(1, max(slider7, 20), 0, 0.7, vm_fs2); vmB.hp.s57_bqset(1, max(slider7, 20), 0, 0.7, vm_fs2); );
+  vm_klo = s57_k(vm_fc ? 70 : 110, vm_fs2);
+  vm_unb = vm_fc ? 0.18 : 0.02;
+  vmEL.s57_bqset(4, 90, vm_fc ? 1.0 : 0, 0.7, srate); vmER.s57_bqset(4, 90, vm_fc ? 1.0 : 0, 0.7, srate);
+  vmFL.s57_bqset(5, 9000, vm_fc ? -1.5 : 0.4, 0.7, srate); vmFR.s57_bqset(5, 9000, vm_fc ? -1.5 : 0.4, 0.7, srate);
+  vm_sf = slider7;
+);
+function vm_srinit() (
+  vm_sr = srate; vm_fs2 = 2 * srate;
+  vm_sm = s57_kt(0.02, srate); vm_fd = 1 / (0.006 * srate);
+  vm_tc(vm_tcn); vm_filters();
+  ost_init(0);
+);
+
+in_init();
+vm_fc = vm_tfc = slider16 >= 0.5; vm_tcn = vm_ttc = slider4; vm_mode = vm_tmode = slider6;
+vm_update(); vm_srinit();
+vm_dA.drift_init(0.8 + rand(0.4)); vm_dB.drift_init(0.8 + rand(0.4));
+vm_sA = rand(2) - 1; vm_sB = rand(2) - 1;
+vmo.ost_ch_init(); vmp.ost_ch_init();
+vm_og = vm_tog; vm_mix = vm_tmix; vm_fade = 1; vm_fst = 0;
+vm_mk = 1;
+
+// ---------- presets ----------
+function vm_set(th, tc, bi, mo, sf, ou, mx) (
+  slider3 = th; slider4 = tc; slider5 = bi; slider6 = mo; slider7 = sf; slider8 = ou; slider9 = mx;
+  slider_automate(508);                                 // sliders 3 - 9
+);
+#vm_pm = "Init|Gentle Bus|Mix Glue|Vocal Leveller|Programme Limiter|Drum Squash|Bass Hold|Lat-Vert Master|Slow Swell|Parallel Valves|Pumping Room|Brick Wall";
+function load_preset(p) (
+  //                 thr tc  bias mode sc   out   mix
+  p == 1  ? vm_set(-18, 2, 50, 0, 0, 3.6, 100) :     // Init
+  p == 2  ? vm_set(-14, 3, 30, 0, 90, 0.2, 100) :     // Gentle Bus
+  p == 3  ? vm_set(-20, 5, 45, 0, 120, 1.6, 100) :     // Mix Glue
+  p == 4  ? vm_set(-24, 2, 60, 2, 80, 6.2, 100) :     // Vocal Leveller
+  p == 5  ? vm_set(-12, 1, 90, 0, 0, 0.4, 100) :     // Programme Limiter
+  p == 6  ? vm_set(-30, 1, 80, 0, 0, 13.6, 100) :     // Drum Squash
+  p == 7  ? vm_set(-22, 4, 55, 0, 0, 7.4, 100) :     // Bass Hold
+  p == 8  ? vm_set(-16, 6, 40, 1, 100, 0.5, 100) :     // Lat-Vert Master
+  p == 9  ? vm_set(-26, 4, 20, 0, 0, 9.5, 100) :     // Slow Swell
+  p == 10 ? vm_set(-34, 1, 85, 0, 0, 17, 40) :     // Parallel Valves
+  p == 11 ? vm_set(-32, 1, 70, 0, 200, 9.7, 100) :     // Pumping Room
+  p == 12 ? vm_set(-8, 1, 100, 0, 0, 0.1, 100) :     // Brick Wall
+  p == 13 ? (
+    vm_set(-18, 2, 50, 0, 0, 3.6, 100);
+    slider1 = 0; slider2 = 1; slider10 = 50; slider11 = 0; slider12 = 30; slider13 = 120; slider14 = 6000; slider15 = -0.3;
+    slider_automate(32767);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+vm_update();
+
+@block
+srate != vm_sr ? vm_srinit();
+vm_update();
+slider7 != vm_sf ? vm_filters();
+vm_ttc != vm_tcn ? ( vm_tcn = vm_ttc; vm_tc(vm_tcn); );
+(vm_tfc != vm_fc || vm_tmode != vm_mode) && vm_fst == 0 ? vm_fst = 1;
+// DRIFT: the bias of each valve pair (the threshold and the balance)
+vm_di = 0.12 * dm_s * samplesblock / srate;
+vmA.dt = dm_a * (0.5 * vm_dA.drift_tick(vm_di) + 0.25 * vm_sA); vmB.dt = dm_a * (0.5 * vm_dB.drift_tick(vm_di) + 0.25 * vm_sB);
+vmVA.db = dm_a * 0.02 * vm_dA.v; vmVB.db = -dm_a * 0.02 * vm_dB.v;
+vma_gr = max(vma_gr, vm_grm); vm_grm = 0;
+vma_vi = max(vma_vi, vm_viL); vma_vo = max(vma_vo, vm_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+vm_og += (vm_tog - vm_og) * vm_sm; vm_mix += (vm_tmix - vm_mix) * vm_sm;
+vm_fst == 1 ? ( vm_fade -= vm_fd; vm_fade <= 0 ? (
+  vm_fade = 0; vm_mode = vm_tmode;
+  vm_tfc != vm_fc ? ( vm_fc = vm_tfc; vm_update(); vm_tc(vm_tcn); vm_filters(); );
+  vmA.e1 = vmA.e2 = vmA.e3 = vmB.e1 = vmB.e2 = vmB.e3 = 0; vmA.gr = vmB.gr = 0; vmA.lv = vmB.lv = 1;
+  vm_hold = vm_LAT + 16; vm_fst = 2; ); ) :
+vm_fst == 2 ? ( vm_hold -= 1; vm_hold <= 0 ? vm_fst = 3; ) :
+vm_fst == 3 ? ( vm_fade += vm_fd; vm_fade >= 1 ? ( vm_fade = 1; vm_fst = 0; ); );
+
+in_process(spl0, spl1);
+vm_xl = in_l; vm_xr = in_r;
+vm_viL = max(vm_viL * 0.9995, abs(vm_xl) + abs(vm_xr));
+vm_DRY[vm_dp] = vm_xl; vm_DRY[128 + vm_dp] = vm_xr;
+vm_rp = (vm_dp - vm_LAT) & 127; vm_yld = vm_DRY[vm_rp]; vm_yrd = vm_DRY[128 + vm_rp]; vm_dp = (vm_dp + 1) & 127;
+
+// ---------- one 2x sample: vm_a / vm_b in and out ----------
+function vm_step() local(m, s, g) (
+  vm_mode == 1 ? ( m = (vm_a + vm_b) * 0.5; s = (vm_a - vm_b) * 0.5; vm_a = m; vm_b = s; );
+  // the gain (from the feedback side-chain: it heard the last output)
+  vm_mode == 0 ? ( g = min(vmA.lv, vmB.lv); vm_a *= g; vm_b *= g; vm_ga = vm_gb = max(vmA.gr, vmB.gr); ) :
+                 ( vm_a *= vmA.lv; vm_b *= vmB.lv; vm_ga = vmA.gr; vm_gb = vmB.gr; );
+  vm_a = vmVA.vm_valve(vm_a, vm_ga); vm_b = vmVB.vm_valve(vm_b, vm_gb);
+  vm_mode == 0 ? ( vmA.vm_sc(max(abs(vm_a), abs(vm_b))); vmB.gr = vmA.gr; vmB.lv = vmA.lv; ) :
+                 ( vmA.vm_sc(vm_a); vmB.vm_sc(vm_b * (vm_mode == 1 ? 1.4 : 1)); );
+  vm_grm = max(vm_grm, max(vmA.gr, vmB.gr));
+  vm_mode == 1 ? ( m = vm_a; s = vm_b; vm_a = m + s; vm_b = m - s; );
+);
+vmuL.s57_up(vm_xl); vmuR.s57_up(vm_xr);
+vm_a = vmuL.o0; vm_b = vmuR.o0; vm_step(); vm_q0l = vm_a; vm_q0r = vm_b;
+vm_a = vmuL.o1; vm_b = vmuR.o1; vm_step(); vm_q1l = vm_a; vm_q1r = vm_b;
+vm_yl = vmdL.s57_dn(vm_q0l, vm_q1l); vm_yr = vmdR.s57_dn(vm_q0r, vm_q1r);
+// the face's iron colour (COPENHAGEN: fuller lows, a softer top; ULM: a breath of air)
+vm_yl = vmFL.s57_bq(vmEL.s57_bq(vm_yl)) * vm_mk; vm_yr = vmFR.s57_bq(vmER.s57_bq(vm_yr)) * vm_mk;
+
+vm_yl = (vm_yld + (vm_yl * vm_og - vm_yld) * vm_mix) * vm_fade; vm_yr = (vm_yrd + (vm_yr * vm_og - vm_yrd) * vm_mix) * vm_fade;
+vm_vL = max(vm_vL * 0.9995, abs(vm_yl) + abs(vm_yr));
+vm_yl = vmo.ost_band(vm_yl); vm_yr = vmp.ost_band(vm_yr);
+ost_out(vm_yl, vm_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider16);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "VARI-MU57", "SERIES 57", "VARI-MU COMP", #vm_pm, 16);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 4);
+s57_small(30, 378, "IN"); s57_small(330, 378, "VALVE PAIR"); s57_small(634, 378, "OUTPUT IRON"); s57_small(892, 378, "OUT");
+
+// ---------- left: the levels ----------
+s57_plate(20, 68, 214, 292);
+s57_title(32, 76, "LEVEL");
+vmI.s57_edge(32, 98, 190, 66, vma_vi * 2.83, "IN");
+vmO.s57_edge(32, 172, 190, 66, vma_vo * 2.83, "OUT");
+vma_vi *= 0.6; vma_vo *= 0.6;
+s57_knob(76, 300, 20, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(170, 268, "GUARD");
+s57_key(144, 280, 52, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(206 * sc, 290 * sc, 3.5 * sc, 1, S57_ORNG); ); in_grd = 0;
+
+// ---------- centre: the gain reduction and the valves (a recessed well) ----------
+s57_well(250, 68, 400, 292);
+s57_title(262, 76, "GAIN REDUCTION");
+vmG.s57_gredge(262, 98, 376, 70, vma_gr, slider6 == 1 ? "LAT  ·  VERT" : "dB");
+vma_gr *= 0.5;
+s57_knob(340, 262, 34, 3, -40, 0, -18, 0, "THRESHOLD", "%.1f dB", 0);
+// TIME CONSTANT: a six-position switch
+s57_knob(460, 262, 28, 4, 1, 6, 2, 0, "TIME CONSTANT", "%.0f", 1);
+i_ = 0; loop(6, a_ = -0.75 * $pi + i_ * 0.3 * $pi; gfx_setfont(13); ui_col(slider4 == i_ + 1 ? S57_ORNG : S57_DIM);
+  sprintf(#t_, "%d", i_ + 1); s57_tc(460 + sin(a_) * 50, 262 - cos(a_) * 50, #t_); i_ += 1; );
+s57_knob(578, 262, 24, 5, 0, 100, 50, 0, "BIAS", "%.0f%%", 0);
+s57_small(530, 280, "SOFT"); s57_small(604, 280, "FIRM");
+// MODE
+m_ = 0; loop(3, s57_key(262 + m_ * 70, 180, 64, 20, slider6 == m_, m_ == 0 ? "STEREO" : m_ == 1 ? "LAT/VERT" : "DUAL") ? s57_set(6, m_); m_ += 1; );
+
+// ---------- right: the side-chain and the output ----------
+s57_plate(666, 68, 274, 292);
+s57_title(678, 76, "SIDE-CHAIN  ·  OUTPUT");
+s57_knob(716, 146, 20, 7, 0, 300, 0, 0, "SC FILTER", slider7 < 20 ? "OFF" : "%.0f Hz", 0);
+s57_knob(806, 146, 20, 9, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s57_knob(896, 146, 20, 8, -12, 24, 3.6, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(716, 268, 13, 10, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(806, 268, 13, 11, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(836 * sc, 250 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s57_valve(896, 262, 0.9, min(vma_gr / 12, 1) * 0.8 + 0.2);
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

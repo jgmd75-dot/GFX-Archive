@@ -1,0 +1,493 @@
+desc:GFX VRB92 [reverb]
+//tags: reverb spring tank valve hall room plate chamber digital 16-bit 20-bit home-studio series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// VRB92 (Series 92: high-end home recording from the 90s): the main reverb of a serious 90s home studio, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> the send ->
+//   ANALOG:  a valve-driven spring tank - the boutique rack spring unit of the decade. The send goes through a valve
+//            stage (DRIVE), the tank's band limits (about 100 Hz - 5 kHz) and the driver coil (DWELL: how hard the
+//            send drives the tank; hits make the springs BOING), into two or three springs (SPRINGS). Each spring is a
+//            dispersive line - a cascade of stretched all-passes in a feedback loop - so every echo comes back as the
+//            chirpy spring drip, more smeared on each pass. TENSION: loose (long, slow, very dispersive springs) to
+//            tight (shorter, brighter, less drip). The springs return through the tank's band limit and a valve
+//            recovery stage (DRIVE). DECAY sets the tank's reverb time (0.4 - 6 s), HIGH RT its high damping.
+//            PRE-DELAY, SIZE, LOW RT, DIFFUSION, MOD, the programs and the converter are out of the path.
+//   DIGITAL: the workhorse 90s digital reverb: PRE-DELAY, the program's early reflections (none on PLATE), input
+//            diffusion (DIFFUSION), an eight-line feedback delay network (Hadamard) with frequency-dependent decay
+//            (DECAY, LOW RT, HIGH RT) and a touch of chorus on four of its lines (MOD). PROGRAM: HALL, ROOM, PLATE,
+//            CHAMBER (the lines' lengths, the early pattern, the crossovers); SIZE the space within its program.
+//            CONVERTER: VINTAGE - the send and the return band-limited to about 16 kHz, the wet at 16 bits (TPDF
+//            dither); STUDIO - full band, 20 bits. The program and its decay show on the LCD. TENSION, DWELL, DRIVE
+//            and SPRINGS are out of the path.
+//   -> MIX (send law: the dry stays at full up to 50 %, the wet reaches full at 50 %) -> OUTPUT -> the house output
+//   stage (band SAT, CLIP always on).
+// The wet is level-normalised against DECAY, SIZE, TENSION, DWELL and DRIVE, and the two models are matched to each
+// other at the default MIX.
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the valves warm up and the mains wander: the springs' tension
+// and the valves' bias drift slowly, every spring on its own; DIGITAL - the clock is steady: only a trace in the
+// chorus.
+// Changing the model, the program, SPRINGS or the converter fades the wet out and back in (the tank is cleared at the
+// silent point). No latency.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:20<0,250,0.1>-Pre-delay (ms)
+slider4:50<0,100,1>-Size (%)
+slider5:2<0.2,12,0.01>-Decay (s)
+slider6:1.2<0.5,2,0.01>-Low RT (x)
+slider7:0.55<0.1,1,0.01>-High RT (x)
+slider8:75<0,100,1>-Diffusion (%)
+slider9:30<0,100,1>-Mod (%)
+slider10:0<0,3,1{Hall,Room,Plate,Chamber}>-Program
+slider11:50<0,100,1>-Tension (%)
+slider12:50<0,100,1>-Dwell (%)
+slider13:35<0,100,1>-Drive (%)
+slider14:1<0,1,1{Two,Three}>-Springs
+slider15:25<0,100,1>-Mix (%)
+slider16:0<-24,12,0.1>-Output (dB)
+slider17:0<0,1,1{Analog,Digital}>-Model
+slider18:50<0,100,1>-Drift (%)
+slider19:0<0,100,1>-Band sat (%)
+slider20:30<0,100,1>-Bias (output stage, %)
+slider21:120<40,400,1>-Sat low band (Hz)
+slider22:6000<2000,16000,10>-Sat high band (Hz)
+slider23:-0.3<-24,0,0.1>-Ceiling (dB)
+slider24:1<0,1,1{Off,Clip}>-(unused, output stage)
+slider25:0<0,1,1{Vintage,Studio}>-Converter (digital)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vrb92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+b9_ostm = s92_alloc(4096);
+b9_BD = s92_alloc(8); b9_GL = s92_alloc(8); b9_GM = s92_alloc(8); b9_GH = s92_alloc(8); b9_YY = s92_alloc(8);
+b9_BMS = s92_alloc(32);                                 // the DIGITAL lines' lengths (ms), 4 programs x 8
+b9_ETL = s92_alloc(12); b9_ETR = s92_alloc(12); b9_EGL = s92_alloc(12); b9_EGR = s92_alloc(12);   // early pattern
+b9pL.s92_dlinit(131072); b9pR.s92_dlinit(131072);       // the pre-delay (and the early taps)
+// DIGITAL: eight lines, four diffusers a side
+b9_RD0 = s92_mem;
+b9c0.s92_dlinit(65536); b9c1.s92_dlinit(65536); b9c2.s92_dlinit(65536); b9c3.s92_dlinit(65536);
+b9c4.s92_dlinit(65536); b9c5.s92_dlinit(65536); b9c6.s92_dlinit(65536); b9c7.s92_dlinit(65536);
+b9dl0.s92_dlinit(8192); b9dl1.s92_dlinit(8192); b9dl2.s92_dlinit(8192); b9dl3.s92_dlinit(8192);
+b9dr0.s92_dlinit(8192); b9dr1.s92_dlinit(8192); b9dr2.s92_dlinit(8192); b9dr3.s92_dlinit(8192);
+b9_RD1 = s92_mem;
+// ANALOG: three springs - each a cascade of stretched all-passes (32-sample rings) and a transit line
+b9_NSEC = 20; b9_ca = 1.74;
+b9_RA0 = s92_mem;
+b9_SP0 = s92_alloc(b9_NSEC * 32); b9_SP1 = s92_alloc(b9_NSEC * 32); b9_SP2 = s92_alloc(b9_NSEC * 32);
+b9s0.s92_dlinit(32768); b9s1.s92_dlinit(32768); b9s2.s92_dlinit(32768);
+b9_RA1 = s92_mem;
+
+// ---------- the programs (DIGITAL) ----------
+function b9_row(k, a, b, c, d, e, f, g, h) local(p) (
+  p = b9_BMS + k * 8; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h;
+);
+b9_row(0, 31.1, 37.3, 43.9, 50.3, 57.7, 64.1, 71.9, 79.3);         // HALL
+b9_row(1, 11.3, 13.7, 16.1, 18.9, 21.7, 24.1, 27.3, 30.7);         // ROOM
+b9_row(2, 21.7, 26.3, 30.1, 34.9, 39.7, 44.3, 49.1, 53.9);       // PLATE
+b9_row(3, 17.9, 21.3, 24.7, 28.1, 32.3, 36.1, 40.3, 44.9);         // CHAMBER
+// the early pattern: 12 taps a side (fractions of the program's early span), gains falling with time, signs mixed
+function b9_erset(i, tl, tr) (
+  b9_ETL[i] = tl; b9_ETR[i] = tr;
+  b9_EGL[i] = (1 - 0.7 * tl) ^ 1.5 * ((i * 7) % 3 == 1 ? -1 : 1);
+  b9_EGR[i] = (1 - 0.7 * tr) ^ 1.5 * ((i * 5) % 3 == 2 ? -1 : 1);
+);
+b9_erset(0, 0.071, 0.052); b9_erset(1, 0.128, 0.113); b9_erset(2, 0.193, 0.168); b9_erset(3, 0.262, 0.234);
+b9_erset(4, 0.327, 0.309); b9_erset(5, 0.414, 0.381); b9_erset(6, 0.479, 0.458); b9_erset(7, 0.571, 0.542);
+b9_erset(8, 0.663, 0.631); b9_erset(9, 0.748, 0.722); b9_erset(10, 0.861, 0.829); b9_erset(11, 1.0, 0.951);
+// a program's lengths, crossovers, early span and level, its diffusion and its level trim
+function b9_prog() local(i, p) (
+  p = b9_BMS + b9_pg * 8;
+  i = 0; loop(8, b9_BD[i] = p[i] * srate / 1000; i += 1; );
+  b9_pg == 0 ? ( b9_fl = 220; b9_fh = 4000; b9_ers = 70; b9_erg = 0.55; b9_dfx = 1.0;  b9_pt = 1.0;  ) :     // HALL
+  b9_pg == 1 ? ( b9_fl = 300; b9_fh = 4500; b9_ers = 24; b9_erg = 0.9;  b9_dfx = 0.9;  b9_pt = 1.0;  ) :     // ROOM
+  b9_pg == 2 ? ( b9_fl = 450; b9_fh = 8000; b9_ers = 0;  b9_erg = 0;    b9_dfx = 1.12; b9_pt = 1.0;  ) :     // PLATE
+               ( b9_fl = 250; b9_fh = 6000; b9_ers = 40; b9_erg = 0.8;  b9_dfx = 1.0;  b9_pt = 1.0;  );    // CHAMBER
+  b9_k1 = s92_k(b9_fl, srate); b9_k2 = s92_k(b9_fh, srate);
+  b9_dms = (p[0] + p[7]) * 0.5;
+);
+
+// ---------- the line parts (DIGITAL) ----------
+function b9_clr(a, b) ( memset(a, 0, b - a); );
+// a Schroeder all-pass on a whole number of samples (the diffusers)
+function b9_api(x, d, g) instance(buf, len, w) local(v, y, p) (
+  p = w - d; p < 0 ? p += len; v = buf[p]; y = v - g * x;
+  w += 1; w >= len ? w = 0; buf[w] = x + g * y; y;
+);
+// the three-band loss: the lows (below fl), the middle, the highs (above fh), each with its own gain
+function b9_b3(x, k1, k2, gl, gm, gh) instance(l1, l2) (
+  l1 += (x - l1) * k1; l2 += (x - l2) * k2;
+  gl * l1 + gm * (l2 - l1) + gh * (x - l2);
+);
+// a line: read (the odd lines chorused), the three-band loss
+function b9_rd(i, m) instance(buf, len, w, l1, l2) local(y) (
+  y = m != 0 ? this.s92_dlr3(b9_BD[i] * b9_sz + m) : this.s92_dlr(b9_BD[i] * b9_sz);
+  this.b9_b3(y, b9_k1, b9_k2, b9_GL[i], b9_GM[i], b9_GH[i]);
+);
+function b9_wln(x) instance(buf, len, w) ( this.s92_dlw(abs(x) > 4 ? sign(x) * 4 : x); );
+function b9_fs() instance(l1, l2, lo, hp, fb, o) ( l1 = l2 = lo = hp = fb = o = 0; );
+
+// ---------- the spring (ANALOG) ----------
+// the valve (as Drive92's): the negative half flattens earlier
+function b9_vt(u) ( u >= 0 ? s92_th(0.85 * u) / 0.85 : s92_th(1.7 * u) / 1.7; );
+// one spring: the send plus the loop, the dispersion (b9_NSEC stretched all-passes (a + z^-K) / (1 + a z^-K)), the
+// transit line (d samples), the loss (the highs above the crossover by gh), a DC guard; returns the spring's output
+function b9_spr(x, sp, d, gm, gh) instance(buf, len, w, lo, hp, fb, o) local(v, t, p, r, q, y) (
+  v = x + fb; p = sp; r = (b9_aw - b9_K) & 31; q = b9_aw;
+  loop(b9_NSEC, t = v - b9_a * p[r]; v = b9_a * t + p[r]; p[q] = t; p += 32; );
+  this.s92_dlw(v); y = this.s92_dlr(d); o = y;
+  lo += (y - lo) * b9_kx; y = (lo + (y - lo) * gh) * gm;
+  hp += (y - hp) * b9_khl; y -= hp;
+  fb = -2 * s92_th(0.5 * y);
+  o;
+);
+
+// ---------- the gains: the losses for the current decay ----------
+function b9_gains() local(i, d, tm, tl, th, ta) (
+  tm = max(b9_dec, 0.1); tl = tm * b9_lrt; th = tm * b9_hrt;
+  i = 0; loop(8, d = b9_BD[i] * b9_sz;
+    b9_GM[i] = min(10 ^ (-3 * d / (tm * srate)), 0.9995);
+    b9_GL[i] = min(10 ^ (-3 * d / (tl * srate)), 0.9995);
+    b9_GH[i] = min(10 ^ (-3 * d / (th * srate)), 0.9995);
+    i += 1; );
+  // the springs: the loop is the transit line plus the dispersion's mean delay (K per section)
+  ta = min(max(b9_dec, 0.4), 6);
+  d = b9_sd0 * b9_ts + b9_NSEC * b9_K; b9_sg0 = min(10 ^ (-3 * d / (ta * srate)), 0.9995);
+  d = b9_sd1 * b9_ts + b9_NSEC * b9_K; b9_sg1 = min(10 ^ (-3 * d / (ta * srate)), 0.9995);
+  d = b9_sd2 * b9_ts + b9_NSEC * b9_K; b9_sg2 = min(10 ^ (-3 * d / (ta * srate)), 0.9995);
+  b9_sgh = min(10 ^ (-3 * d / (ta * b9_hrt * srate)) / b9_sg2, 1);
+  // the wet's level: normalised against decay (weighted towards the lows, as pink noise is) and line length
+  tm = tm * (0.45 * b9_lrt + 0.43 + 0.12 * b9_hrt);
+  b9_tnw = b9_mod ? 0.42 * b9_pt * sqrt(b9_dms * b9_sz / 40 / (tm / 1.8))
+                  : b9_ca / sqrt(0.7 / (1 - b9_sg0 * b9_sg0) + 0.3 / (1 - sqr(b9_sg0 * b9_sgh)))   // (the lows and the highs' energy)
+                    * 10 ^ (0.9 * max(0, log(ta / 2) / log(3)) / 20);
+);
+
+// ---------- settings ----------
+function b9_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  b9_tpd = slider3 / 1000 * srate;
+  b9_tsz = 0.6 + 0.8 * slider4 / 100;
+  b9_tdec = slider5; b9_tlrt = slider6; b9_thrt = slider7;
+  b9_tdf = slider8 / 100; b9_tmd = slider9 / 100;
+  b9_tpg = min(max(floor(slider10 + 0.5), 0), 3);
+  b9_tts = 1.25 - 0.5 * slider11 / 100; b9_ta = 0.72 - 0.2 * slider11 / 100;   // TENSION: the transit, the dispersion
+  b9_tdw = 10 ^ ((-6 + 24 * slider12 / 100) / 20);                            // DWELL: the driver's gain
+  b9_tbo = 2 * slider12 / 100;                                                // the boing
+  b9_q1 = slider12 / 100; b9_q2 = slider13 / 100;
+  b9_tlm = 10 ^ ((0.95 - 5.35 * b9_q1 + 6.9 * b9_q1 * b9_q1 + 0.1 - 2.5 * b9_q2 + 4.6 * b9_q2 * b9_q2) / 20);   // the wet held level
+  b9_tdr = 10 ^ ((18 * slider13 / 100) / 20);                                 // DRIVE: the valves' gain
+  b9_tn3 = slider14 >= 0.5;
+  b9_tmix = slider15 / 100; b9_tog = 10 ^ (slider16 / 20);
+  b9_tmo = slider17 >= 0.5;
+  b9_tcv = slider25 >= 0.5;
+  drift_macro(slider18);
+  ost_setup(slider19 / 100, slider20 / 100, slider21, slider22, slider23, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+function b9_cvset() local(w) (
+  // VINTAGE: the converters' band limit (4th-order Butterworth, about 16 kHz) on the send and the return
+  w = min(16000, 0.42 * srate);
+  b9al1.s92_bqset(0, w, 0, 0.5412, srate); b9al2.s92_bqset(0, w, 0, 1.3066, srate);
+  b9ar1.s92_bqset(0, w, 0, 0.5412, srate); b9ar2.s92_bqset(0, w, 0, 1.3066, srate);
+  b9rl1.s92_bqset(0, w, 0, 0.5412, srate); b9rl2.s92_bqset(0, w, 0, 1.3066, srate);
+  b9rr1.s92_bqset(0, w, 0, 0.5412, srate); b9rr2.s92_bqset(0, w, 0, 1.3066, srate);
+  b9_qs = b9_cv ? 524288 : 32768;
+);
+function b9_srinit() (
+  b9_sr = srate;
+  b9_sm = 1 - exp(-1 / (0.02 * srate));
+  b9_kpd = 1 - exp(-1 / (0.08 * srate)); b9_ksz = 1 - exp(-1 / (0.4 * srate));
+  b9_fd = 1 / (0.015 * srate);
+  b9_n0 = floor(4.77 * srate / 1000); b9_n1 = floor(3.59 * srate / 1000); b9_n2 = floor(12.73 * srate / 1000); b9_n3 = floor(9.30 * srate / 1000);
+  b9_n4 = floor(4.31 * srate / 1000); b9_n5 = floor(3.83 * srate / 1000); b9_n6 = floor(11.87 * srate / 1000); b9_n7 = floor(9.91 * srate / 1000);
+  // the springs: K puts the dispersion's first turn near 4.5 kHz; the transit times (ms) at mid tension
+  b9_K = min(max(floor(srate / 9000 + 0.5), 1), 24);
+  b9_sd0 = 36.3 * srate / 1000; b9_sd1 = 44.7 * srate / 1000; b9_sd2 = 40.1 * srate / 1000;
+  b9_kx = s92_k(2600, srate); b9_khl = s92_k(45, srate);
+  // the tank's band limits: the send (high-pass 100 Hz, low-pass 5 kHz) and the return (low-pass 4.6 kHz, high-pass 90 Hz)
+  b9th1.s92_bqset(1, 100, 0, 0.707, srate); b9tl1.s92_bqset(0, 5000, 0, 0.707, srate);
+  b9ol1.s92_bqset(0, 4600, 0, 0.8, srate); b9or1.s92_bqset(0, 4600, 0, 0.8, srate);
+  b9oh1.s92_bqset(1, 90, 0, 0.707, srate); b9oh2.s92_bqset(1, 90, 0, 0.707, srate);
+  b9_kef = s92_kt(0.0005, srate); b9_ker = s92_kt(0.03, srate); b9_kes = s92_kt(0.08, srate); b9_kbl = s92_k(500, srate);
+  ost_init(b9_ostm);
+  b9_prog(); b9_cvset();
+);
+function b9_reset() (
+  b9_clr(b9_RD0, b9_RD1); b9_clr(b9_RA0, b9_RA1);
+  b9c0.b9_fs(); b9c1.b9_fs(); b9c2.b9_fs(); b9c3.b9_fs(); b9c4.b9_fs(); b9c5.b9_fs(); b9c6.b9_fs(); b9c7.b9_fs();
+  b9s0.b9_fs(); b9s1.b9_fs(); b9s2.b9_fs();
+  b9al1.s92_bqclr(); b9al2.s92_bqclr(); b9ar1.s92_bqclr(); b9ar2.s92_bqclr();
+  b9rl1.s92_bqclr(); b9rl2.s92_bqclr(); b9rr1.s92_bqclr(); b9rr2.s92_bqclr();
+  b9th1.s92_bqclr(); b9tl1.s92_bqclr(); b9ol1.s92_bqclr(); b9or1.s92_bqclr(); b9oh1.s92_bqclr(); b9oh2.s92_bqclr();
+);
+in_init();
+b9_mod = b9_tmo = slider17 >= 0.5; b9_pg = b9_tpg = min(max(floor(slider10 + 0.5), 0), 3);
+b9_n3s = b9_tn3 = slider14 >= 0.5; b9_cv = b9_tcv = slider25 >= 0.5;
+b9_update();
+b9_srinit();
+b9_sz = b9_tsz; b9_pd = b9_tpd; b9_dec = b9_tdec; b9_lrt = b9_tlrt; b9_hrt = b9_thrt;
+b9_df = b9_tdf; b9_md = b9_tmd; b9_mix = b9_tmix; b9_og = b9_tog;
+b9_ts = b9_tts; b9_a = b9_ta; b9_dw = b9_tdw; b9_bo = b9_tbo; b9_dr = b9_tdr; b9_lm = b9_tlm;
+b9_gains(); b9_nw = b9_tnw;
+b9_reset(); b9_clr(b9_RD0, b9_RA1);
+b9_fade = 1; b9_fst = 0; b9_hold = 0; b9_pa = 0; b9_pb = 0.25; b9_aw = 0;
+b9_dfA.drift_init(0.7 + rand(0.4)); b9_dfB.drift_init(0.7 + rand(0.4)); b9_dfC.drift_init(0.8 + rand(0.4));
+b9_dfD.drift_init(0.8 + rand(0.4)); b9_dfE.drift_init(0.8 + rand(0.4)); b9_dfF.drift_init(0.8 + rand(0.4));
+b9_sbL = rand(2) - 1; b9_sbR = rand(2) - 1;
+b9L.ost_ch_init(); b9R.ost_ch_init();
+
+// ---------- presets ----------
+function b9_set(pd, sz, dc, lr, hr, df, md, pg, tn, dw, dr, sp, mx, ou, mo, cv) (
+  slider3 = pd; slider4 = sz; slider5 = dc; slider6 = lr; slider7 = hr; slider8 = df; slider9 = md; slider10 = pg;
+  slider11 = tn; slider12 = dw; slider13 = dr; slider14 = sp; slider15 = mx; slider16 = ou; slider17 = mo; slider25 = cv;
+  slider_automate(131068 + 16777216);                   // sliders 3-17 and 25 (TRIM, GUARD, DRIFT and the output stage stay)
+);
+#b9_pm = "Init|Surf Guitar Drip|Dub Spring Splash|Valve Vocal Tank|Electric Piano Tank|Snare Boing|Vocal Hall|Snare Plate|Drum Room|Ballad Hall|Acoustic Chamber|Synth Pad Wash";
+function load_preset(p) (
+  //                pd   sz   dec   lrt   hrt  dif mod pg  ten dwl drv sp  mix  out    mo cv
+  p == 1  ? b9_set( 20,  50,  2.0,  1.2, 0.55, 75, 30, 0,  50, 50, 35, 1, 25,     0,  0, 0) :     // Init
+  p == 2  ? b9_set( 20,  50,  2.6,  1.2, 0.7,  75, 30, 0,  20, 75, 45, 1, 30,  -0.6,  0, 0) :     // Surf Guitar Drip
+  p == 3  ? b9_set( 20,  50,  4.5,  1.2, 0.45, 75, 30, 0,  35, 85, 70, 1, 35,  -1.0,  0, 0) :     // Dub Spring Splash
+  p == 4  ? b9_set( 20,  50,  1.4,  1.2, 0.6,  75, 30, 0,  70, 35, 40, 0, 20,   0.5,  0, 0) :     // Valve Vocal Tank
+  p == 5  ? b9_set( 20,  50,  2.2,  1.2, 0.5,  75, 30, 0,  55, 45, 30, 1, 25,     0,  0, 0) :     // Electric Piano Tank
+  p == 6  ? b9_set( 20,  50,  1.6,  1.2, 0.6,  75, 30, 0,  40, 95, 55, 0, 25,     0,  0, 0) :     // Snare Boing
+  p == 7  ? b9_set( 40,  60,  2.4,  1.2, 0.5,  80, 30, 0,  50, 50, 35, 1, 25,     0,  1, 1) :     // Vocal Hall
+  p == 8  ? b9_set( 10,  50,  1.6,  1.0, 0.7,  90, 20, 2,  50, 50, 35, 1, 25,     0,  1, 0) :     // Snare Plate
+  p == 9  ? b9_set(  2,  40,  0.6,  1.1, 0.6,  60, 15, 1,  50, 50, 35, 1, 25,     0,  1, 1) :     // Drum Room
+  p == 10 ? b9_set( 60,  85,  4.8,  1.4, 0.45, 80, 35, 0,  50, 50, 35, 1, 25,     0,  1, 0) :     // Ballad Hall
+  p == 11 ? b9_set( 15,  55,  1.5,  1.1, 0.65, 70, 20, 3,  50, 50, 35, 1, 25,     0,  1, 1) :     // Acoustic Chamber
+  p == 12 ? b9_set( 30,  90,  6.5,  1.3, 0.5,  90, 80, 0,  50, 50, 35, 1, 30,  -0.5,  1, 0) :     // Synth Pad Wash
+  p == 13 ? (                                               // Reset all to defaults
+    b9_set(20, 50, 2.0, 1.2, 0.55, 75, 30, 0, 50, 50, 35, 1, 25, 0, 0, 0);
+    slider1 = 0; slider2 = 1; slider18 = 50; slider19 = 0; slider20 = 30; slider21 = 120; slider22 = 6000; slider23 = -0.3; slider24 = 1;
+    slider_automate(33554431);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+b9_update();
+
+@block
+srate != b9_sr ? ( b9_srinit(); b9_gains(); );
+b9_update();                                            // knobs moved on the panel do not run @slider
+// the decay's controls and the tension glide at the block rate (about 50 ms), then the losses follow
+b9_kb = 1 - exp(-samplesblock / (0.05 * srate));
+b9_dec += (b9_tdec - b9_dec) * b9_kb; b9_lrt += (b9_tlrt - b9_lrt) * b9_kb; b9_hrt += (b9_thrt - b9_hrt) * b9_kb;
+abs(b9_dec - b9_tdec) < 0.0005 ? b9_dec = b9_tdec;
+b9_gains();
+// DRIFT: ANALOG - the springs' tension and the valves' bias wander; DIGITAL - a trace in the chorus
+b9_di = 0.1 * dm_s * samplesblock / srate;
+b9_wa = b9_mod ? 0.15 : 1;
+b9_wr1 = b9_dfA.drift_tick(b9_di); b9_wr2 = b9_dfB.drift_tick(b9_di);
+b9_wr3 = b9_dfC.drift_tick(b9_di * 0.6); b9_wr4 = b9_dfD.drift_tick(b9_di * 0.6); b9_wr5 = b9_dfE.drift_tick(b9_di * 0.6);
+b9_wr6 = b9_dfF.drift_tick(b9_di * 0.4);
+b9_tw0 = dm_a * 0.0012 * b9_wr3; b9_tw1 = dm_a * 0.0012 * b9_wr4; b9_tw2 = dm_a * 0.0012 * b9_wr5;   // the springs' transit (x)
+b9_tvb = dm_a * (0.03 * b9_wr6 + 0.01 * b9_sbL);                                                     // the valves' bias
+b9_twm = 1 + b9_wa * dm_a * 0.25 * b9_wr1;
+// the chorus (DIGITAL): 0.6 - 1.1 Hz, up to about 8 samples at 48 kHz
+b9_rt = (0.6 + 0.5 * b9_md) * (1 + b9_wa * dm_a * 0.15 * b9_wr2);
+b9_ia = 2 * $pi * b9_rt / srate; b9_ib = b9_ia * 0.77;
+b9a_vi = max(b9a_vi, b9_viL); b9a_vo = max(b9a_vo, b9_voL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+b9_pd += (b9_tpd - b9_pd) * b9_kpd; b9_sz += (b9_tsz - b9_sz) * b9_ksz; b9_ts += (b9_tts - b9_ts) * b9_ksz;
+b9_df += (b9_tdf - b9_df) * b9_sm; b9_md += (b9_tmd - b9_md) * b9_sm;
+b9_mix += (b9_tmix - b9_mix) * b9_sm; b9_og += (b9_tog - b9_og) * b9_sm;
+b9_nw += (b9_tnw - b9_nw) * b9_sm;
+b9_a += (b9_ta - b9_a) * b9_sm; b9_dw += (b9_tdw - b9_dw) * b9_sm; b9_bo += (b9_tbo - b9_bo) * b9_sm; b9_dr += (b9_tdr - b9_dr) * b9_sm; b9_lm += (b9_tlm - b9_lm) * b9_sm;
+b9_w0 += (b9_tw0 - b9_w0) * b9_sm; b9_w1 += (b9_tw1 - b9_w1) * b9_sm; b9_w2 += (b9_tw2 - b9_w2) * b9_sm;
+b9_vb += (b9_tvb - b9_vb) * b9_sm; b9_wm += (b9_twm - b9_wm) * b9_sm;
+// a change of model, program, springs or converter: fade the wet out, switch and clear at the silent point, fade in
+(b9_tmo != b9_mod || b9_tpg != b9_pg || b9_tn3 != b9_n3s || b9_tcv != b9_cv) && b9_fst == 0 ? b9_fst = 1;
+b9_fst == 1 ? ( b9_fade -= b9_fd; b9_fade <= 0 ? (
+  b9_fade = 0; b9_mod = b9_tmo; b9_pg = b9_tpg; b9_n3s = b9_tn3; b9_cv = b9_tcv;
+  b9_prog(); b9_cvset(); b9_reset(); b9_gains(); b9_nw = b9_tnw;
+  b9_hold = 64; b9_fst = 2; ); ) :
+b9_fst == 2 ? ( b9_hold -= 1; b9_hold <= 0 ? b9_fst = 3; ) :
+b9_fst == 3 ? ( b9_fade += b9_fd; b9_fade >= 1 ? ( b9_fade = 1; b9_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD; the send ----------
+in_process(spl0, spl1);
+b9_xl = in_l; b9_xr = in_r;
+b9_viL = max(b9_viL * 0.9995, abs(b9_xl) + abs(b9_xr));
+b9pL.s92_dlw(b9_xl); b9pR.s92_dlw(b9_xr);
+
+b9_mod ? (
+  // ---------- DIGITAL: PRE-DELAY, the converter, the early reflections, diffusion, the eight-line network ----------
+  b9_inl = b9pL.s92_dlr(b9_pd); b9_inr = b9pR.s92_dlr(b9_pd);
+  !b9_cv ? ( b9_inl = b9al2.s92_bq(b9al1.s92_bq(b9_inl)); b9_inr = b9ar2.s92_bq(b9ar1.s92_bq(b9_inr)); );
+  // (the fade also closes the network's input, so the cleared tank starts from a smooth onset, never a step)
+  b9_inl *= b9_fade; b9_inr *= b9_fade;
+  b9_pa += b9_ia; b9_pa > 2 * $pi ? b9_pa -= 2 * $pi;
+  b9_pb += b9_ib; b9_pb > 2 * $pi ? b9_pb -= 2 * $pi;
+  b9_el = b9_er = 0;
+  b9_erg > 0 ? (
+    b9_es = b9_ers * b9_sz * srate / 1000;
+    i_ = 0; loop(12, b9_tt = b9_pd + b9_ETL[i_] * b9_es; b9_el += b9_EGL[i_] * (i_ & 1 ? b9pR.s92_dlr(b9_tt) : b9pL.s92_dlr(b9_tt));
+                     b9_tt = b9_pd + b9_ETR[i_] * b9_es; b9_er += b9_EGR[i_] * (i_ & 1 ? b9pL.s92_dlr(b9_tt) : b9pR.s92_dlr(b9_tt)); i_ += 1; );
+    b9_el *= 0.19 * b9_erg; b9_er *= 0.19 * b9_erg;
+  );
+  b9_g1 = min(0.72 * b9_df * b9_dfx, 0.8);
+  b9_g2 = b9_g1 * 0.85;
+  b9_dl = b9dl3.b9_api(b9dl2.b9_api(b9dl1.b9_api(b9dl0.b9_api(b9_inl, b9_n0, b9_g1), b9_n1, b9_g1), b9_n2, b9_g2), b9_n3, b9_g2);
+  b9_dr2 = b9dr3.b9_api(b9dr2.b9_api(b9dr1.b9_api(b9dr0.b9_api(b9_inr, b9_n4, b9_g1), b9_n5, b9_g1), b9_n6, b9_g2), b9_n7, b9_g2);
+  b9_mc = 8 * b9_md * b9_wm * srate / 48000;
+  b9_YY[0] = b9c0.b9_rd(0, 0); b9_YY[1] = b9c1.b9_rd(1, b9_mc * sin(b9_pa));
+  b9_YY[2] = b9c2.b9_rd(2, 0); b9_YY[3] = b9c3.b9_rd(3, b9_mc * cos(b9_pb));
+  b9_YY[4] = b9c4.b9_rd(4, 0); b9_YY[5] = b9c5.b9_rd(5, -b9_mc * cos(b9_pa));
+  b9_YY[6] = b9c6.b9_rd(6, 0); b9_YY[7] = b9c7.b9_rd(7, -b9_mc * sin(b9_pb));
+  b9_wl = b9_YY[0] - b9_YY[2] + b9_YY[4] - b9_YY[6] + 0.5 * (b9_YY[3] - b9_YY[5]);
+  b9_wr = b9_YY[1] - b9_YY[3] + b9_YY[5] - b9_YY[7] + 0.5 * (b9_YY[2] - b9_YY[4]);
+  // Hadamard 8
+  b9_a0 = b9_YY[0] + b9_YY[1]; b9_b0 = b9_YY[0] - b9_YY[1]; b9_c0 = b9_YY[2] + b9_YY[3]; b9_e0 = b9_YY[2] - b9_YY[3];
+  b9_f0 = b9_YY[4] + b9_YY[5]; b9_g0 = b9_YY[4] - b9_YY[5]; b9_h0 = b9_YY[6] + b9_YY[7]; b9_j0 = b9_YY[6] - b9_YY[7];
+  b9_YY[0] = b9_a0 + b9_c0; b9_YY[2] = b9_a0 - b9_c0; b9_YY[1] = b9_b0 + b9_e0; b9_YY[3] = b9_b0 - b9_e0;
+  b9_YY[4] = b9_f0 + b9_h0; b9_YY[6] = b9_f0 - b9_h0; b9_YY[5] = b9_g0 + b9_j0; b9_YY[7] = b9_g0 - b9_j0;
+  b9_a0 = b9_YY[0]; b9_YY[0] = (b9_a0 + b9_YY[4]) * 0.35355339; b9_YY[4] = (b9_a0 - b9_YY[4]) * 0.35355339;
+  b9_a0 = b9_YY[1]; b9_YY[1] = (b9_a0 + b9_YY[5]) * 0.35355339; b9_YY[5] = (b9_a0 - b9_YY[5]) * 0.35355339;
+  b9_a0 = b9_YY[2]; b9_YY[2] = (b9_a0 + b9_YY[6]) * 0.35355339; b9_YY[6] = (b9_a0 - b9_YY[6]) * 0.35355339;
+  b9_a0 = b9_YY[3]; b9_YY[3] = (b9_a0 + b9_YY[7]) * 0.35355339; b9_YY[7] = (b9_a0 - b9_YY[7]) * 0.35355339;
+  b9c0.b9_wln(b9_YY[0] + b9_dl); b9c1.b9_wln(b9_YY[1] + b9_dr2); b9c2.b9_wln(b9_YY[2] - b9_dl * 0.7); b9c3.b9_wln(b9_YY[3] - b9_dr2 * 0.7);
+  b9c4.b9_wln(b9_YY[4] + b9_dl * 0.5); b9c5.b9_wln(b9_YY[5] + b9_dr2 * 0.5); b9c6.b9_wln(b9_YY[6] - b9_dl * 0.3); b9c7.b9_wln(b9_YY[7] - b9_dr2 * 0.3);
+  b9_wl = b9_wl * b9_nw + b9_el; b9_wr = b9_wr * b9_nw + b9_er;
+  // the return: VINTAGE band-limited; the converter's word length (TPDF dither)
+  !b9_cv ? ( b9_wl = b9rl2.s92_bq(b9rl1.s92_bq(b9_wl)); b9_wr = b9rr2.s92_bq(b9rr1.s92_bq(b9_wr)); );
+  b9_wl = floor(b9_wl * b9_qs + rand(1) - rand(1) + 0.5) / b9_qs; b9_wr = floor(b9_wr * b9_qs + rand(1) - rand(1) + 0.5) / b9_qs;
+) : (
+  // ---------- ANALOG: the valve send, the tank's band, the driver (DWELL, the boing), the springs, the valve return ----------
+  b9_u = (b9_xl + b9_xr) * 0.5 * b9_fade;
+  b9_u = (b9_vt(b9_u * b9_dr + 0.12 + b9_vb) - b9_vt(0.12 + b9_vb)) / b9_dr;
+  b9_u = b9tl1.s92_bq(b9th1.s92_bq(b9_u));
+  // the boing: a hit (the fast envelope well over the slow one) kicks the springs' lows harder
+  b9_ab = abs(b9_u);
+  b9_ef += (b9_ab - b9_ef) * (b9_ab > b9_ef ? b9_kef : b9_ker); b9_es2 += (b9_ab - b9_es2) * b9_kes;
+  b9_tr = min(max(b9_ef / (b9_es2 + 0.00001) - 2, 0), 2);
+  b9_blo += (b9_u - b9_blo) * b9_kbl;
+  b9_u += b9_bo * b9_tr * b9_blo;
+  // the driver coil: DWELL drives it into saturation (level held)
+  b9_u = s92_th(b9_u * b9_dw * 1.6) / (b9_dw * 1.6);
+  b9_o0 = b9s0.b9_spr(b9_u, b9_SP0, b9_sd0 * b9_ts * (1 + b9_w0), b9_sg0, b9_sgh);
+  b9_o1 = b9s1.b9_spr(-b9_u, b9_SP1, b9_sd1 * b9_ts * (1 + b9_w1), b9_sg1, b9_sgh);
+  b9_n3s ? (
+    b9_o2 = b9s2.b9_spr(b9_u, b9_SP2, b9_sd2 * b9_ts * (1 + b9_w2), b9_sg2, b9_sgh);
+    b9_wl = (b9_o0 + 0.6 * b9_o2) * 0.857; b9_wr = (b9_o1 - 0.6 * b9_o2) * 0.857;
+  ) : ( b9_wl = b9_o0; b9_wr = b9_o1; );
+  b9_aw = (b9_aw + 1) & 31;
+  b9_wl = b9oh1.s92_bq(b9ol1.s92_bq(b9_wl)) * b9_nw * b9_lm; b9_wr = b9oh2.s92_bq(b9or1.s92_bq(b9_wr)) * b9_nw * b9_lm;
+  // the valve recovery stage
+  b9_rg = sqrt(b9_dr);
+  b9_wl = (b9_vt(b9_wl * b9_rg + 0.1) - b9_vt(0.1)) / b9_rg; b9_wr = (b9_vt(b9_wr * b9_rg + 0.1) - b9_vt(0.1)) / b9_rg;
+);
+
+// ---------- the fade, MIX (send law), OUTPUT, the house output stage ----------
+b9_wl *= b9_fade; b9_wr *= b9_fade;
+b9_gd = min(1, 2 - 2 * b9_mix); b9_gw = min(1, 2 * b9_mix);
+b9_yl = b9_xl * b9_gd + b9_wl * b9_gw; b9_yr = b9_xr * b9_gd + b9_wr * b9_gw;
+b9_voL = max(b9_voL * 0.9995, abs(b9_yl) + abs(b9_yr));
+b9_yl = b9L.ost_band(b9_yl) * b9_og; b9_yr = b9R.ost_band(b9_yr) * b9_og;
+ost_out(b9_yl, b9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider17);
+s92_fonts();
+s92_face(960, 366);
+gb_dg = slider17 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "VRB92", "SERIES 92", "STUDIO REVERB", #b9_pm, 17);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the LED ladders, the trim, GUARD ----------
+s92_mod(20, 62, 166, 292, "INPUT");
+b9mI.s92_edge(30, 94, 146, 46, b9a_vi * 2.83, "IN");
+b9mO.s92_edge(30, 148, 146, 46, b9a_vo * 2.83, "OUT");
+b9a_vi *= 0.6; b9a_vo *= 0.6;
+s92_off = 0; s92_knob(66, 280, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(144, 238, "GUARD");
+s92_key(120, 250, 48, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(174 * sc, 262 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+
+// ---------- SPRING TANK (ANALOG) ----------
+s92_mod(198, 62, 150, 292, "SPRING TANK");
+s92_off = gb_dg;
+s92_knob(238, 126, 20, 11, 0, 100, 50, 0, "TENSION", "%.0f%%", 0);
+s92_knob(308, 126, 20, 12, 0, 100, 50, 0, "DWELL", "%.0f%%", 0);
+s92_knob(238, 218, 20, 13, 0, 100, 35, 0, "DRIVE", "%.0f%%", 0);
+s92_off = 0;
+s92_smallc(308, 192, "SPRINGS");
+s92_key(286, 204, 20, 24, slider14 < 0.5 && !gb_dg, "2") ? s92_set(14, 0);
+s92_key(310, 204, 20, 24, slider14 >= 0.5 && !gb_dg, "3") ? s92_set(14, 1);
+s92_smallc(273, 300, gb_dg ? "ANALOG ONLY" : "VALVE SEND · RETURN");
+s92_smallc(273, 330, gb_dg ? "OUT OF PATH" : "DISPERSIVE SPRINGS");
+
+// ---------- PROGRAM (DIGITAL) ----------
+s92_mod(360, 62, 236, 292, "PROGRAM");
+gi_ = 0; loop(4, pk_pitem("HALL|ROOM|PLATE|CHAMBER", gi_ + 1, #gt_);
+  s92_key(370 + gi_ * 54, 92, gi_ == 3 ? 62 : 50, 24, floor(slider10 + 0.5) == gi_ && gb_dg, #gt_) ? s92_set(10, gi_); gi_ += 1; );
+s92_off = !gb_dg;
+s92_knob(406, 160, 18, 3, 0, 250, 20, 0, "PRE-DELAY", "%.0f ms", 0);
+s92_knob(480, 160, 18, 4, 0, 100, 50, 0, "SIZE", "%.0f%%", 0);
+s92_knob(406, 244, 18, 8, 0, 100, 75, 0, "DIFFUSION", "%.0f%%", 0);
+s92_knob(480, 244, 18, 9, 0, 100, 30, 0, "MOD", "%.0f%%", 0);
+s92_off = 0;
+s92_smallc(556, 140, "CONVERTER");
+s92_key(526, 152, 60, 24, slider25 < 0.5 && gb_dg, "VINTAGE") ? s92_set(25, 0);
+s92_key(526, 182, 60, 24, slider25 >= 0.5 && gb_dg, "STUDIO") ? s92_set(25, 1);
+s92_smallc(556, 226, gb_dg ? (slider25 < 0.5 ? "16 KHZ" : "FULL BAND") : "");
+s92_smallc(556, 242, gb_dg ? (slider25 < 0.5 ? "16-BIT" : "20-BIT") : "");
+s92_smallc(478, 306, gb_dg ? "EIGHT-LINE NETWORK" : "DIGITAL ONLY");
+s92_smallc(478, 330, gb_dg ? "TPDF DITHER" : "OUT OF PATH");
+
+// ---------- DECAY: the LCD, DECAY, LOW RT, HIGH RT (LOW brown, MID green, HIGH red) ----------
+s92_mod(608, 62, 150, 292, "DECAY");
+gp_ = floor(slider10 + 0.5);
+gb_dg ? sprintf(#gl_, "%s %.1fs", gp_ == 0 ? "HALL" : gp_ == 1 ? "ROOM" : gp_ == 2 ? "PLATE" : "CHMBR", slider5)
+      : sprintf(#gl_, "%d SPR %.1fs", slider14 >= 0.5 ? 3 : 2, min(max(slider5, 0.4), 6));
+s92_lcd(620, 94, 126, 26, #gl_);
+s92_kc = S92_C_HMF; s92_knob(683, 182, 26, 5, 0.2, 12, 2, 1, "DECAY", "%.2f s", 0);
+s92_off = !gb_dg; s92_kc = S92_C_LF; s92_knob(645, 284, 17, 6, 0.5, 2, 1.2, 1, "LOW RT", "x%.2f", 0); s92_off = 0;
+s92_kc = S92_C_HF; s92_knob(721, 284, 17, 7, 0.1, 1, 0.55, 1, "HIGH RT", "x%.2f", 0);
+s92_kc = 0;
+
+// ---------- OUTPUT: DRIFT, SAT; MIX and OUTPUT on faders ----------
+s92_mod(770, 62, 170, 292, "OUTPUT");
+s92_knob(806, 126, 18, 18, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(806, 230, 13, 19, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(826 * sc, 216 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fc = S92_F_BLUE; s92_fader(864, 106, 130, 15, 0, 100, 25, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(912, 106, 130, 16, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s92_smallc(855, 330, "SEND-LAW MIX");
+
+pk_end();
+ui_end();

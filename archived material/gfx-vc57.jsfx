@@ -1,0 +1,351 @@
+desc:GFX VC57 [vocoder]
+//tags: vocoder channel vocoder filter bank valve buzz carrier side-chain midi robot voice modulation series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// VC57 (Series 57). The 1957 counterpart of VC81: the valve channel vocoder of the electronic music
+// studios of the late 50s - a bank of band-pass filters analyses the voice, a rectifier and a smoothing filter on
+// each band follow its level, and the same bank, fed with a buzz (or any sound), is opened band by band to match.
+// I/O  inputs 1/2 = the MODULATOR (a voice ...; summed to mono), inputs 3/4 = the CARRIER when EXT is chosen
+//      (route a synth, an organ ... to channels 3/4). Stereo out. MIDI notes play the BUZZ and are passed on.
+// CARRIER  EXT (channels 3/4) or BUZZ: the studio's relaxation generator, six voices played from MIDI - SHAPE from a
+//      round sawtooth to a narrow pulse train (a buzz, very rich), TUNE, OCTAVE, GLIDE, HISS (a breath of noise in
+//      the carrier, for the unvoiced sounds); HOLD keeps the chord sounding after the keys are up.
+// FILTER BANK  10, 14 or 20 bands from 120 Hz to 7.5 kHz (fourth-order band-passes, as on the valve banks).
+//      RESPONSE how quickly the bands follow the voice (8 - 60 Hz smoothing: slow and smooth .. quick and clear).
+//      EMPHASIS lifts the voice's top before the analysis (more articulate). SIBILANCE passes the voice's own
+//      consonants (above 5 kHz) straight through. SHIFT moves the carrier's bands against the voice's (-6 .. +6
+//      bands: larger or smaller "throat").
+// MIX  between the voice (0 %) and the vocoder (100 %). OUTPUT, the house output stage (CLIP always on).
+// ULM / COPENHAGEN (the face): ULM - steeper, narrower bands and quicker followers: precise and articulate.
+//   COPENHAGEN - wider, overlapping bands and softer followers: warmer, more blended. Level matched.
+// DRIFT (0 - 100 %, 50 % = standard): the buzz generator's pitch wanders and the valve filters' centres drift a
+//   little, each on its own.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:1<0,1,1{Ext,Buzz}>-Carrier
+slider4:40<0,100,1>-Buzz shape (%)
+slider5:0<-12,12,0.01>-Buzz tune (st)
+slider6:0<-1,1,1>-Buzz octave
+slider7:0<0,100,1>-Glide (%)
+slider8:15<0,100,1>-Hiss (%)
+slider9:0<0,1,1{Off,On}>-Hold
+slider10:1<0,2,1{10,14,20}>-Bands
+slider11:25<8,60,0.1>-Response (Hz)
+slider12:40<0,100,1>-Emphasis (%)
+slider13:30<0,100,1>-Sibilance (%)
+slider14:0<-6,6,1>-Shift (bands)
+slider15:100<0,100,1>-Mix (%)
+slider16:0<-24,12,0.1>-Output (dB)
+slider17:50<0,100,1>-Drift (%)
+slider18:0<0,100,1>-Band sat (%)
+slider19:30<0,100,1>-Bias (output stage, %)
+slider20:120<40,400,1>-Sat low band (Hz)
+slider21:6000<2000,16000,10>-Sat high band (Hz)
+slider22:-0.3<-24,0,0.1>-Ceiling (dB)
+slider23:0<0,1,1{Ulm,Copenhagen}>-Face
+
+in_pin:Modulator L
+in_pin:Modulator R
+in_pin:Carrier L
+in_pin:Carrier R
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vc57";
+ext_noinit = 1;
+s57_mem = 0;
+
+// ---------- the filter bank: per band, an analysis pair, and a synthesis pair per output side ----------
+// coefficients per band (5 each, shared by the analysis and both synthesis filters of the band), and the states
+vc_NB = 20;
+vc_CF = s57_alloc(20 * 5);                              // b0 b2 a1 a2 (b1 = 0) .. and the band's gain
+vc_SA = s57_alloc(20 * 4); vc_SL = s57_alloc(20 * 8); vc_SQ = s57_alloc(20 * 8);
+vc_EN = s57_alloc(20);                                  // the band envelopes
+vc_DF = s57_alloc(20);                                  // the bands' drift offsets
+vc_DSP = s57_alloc(20);                                 // the panel's copy
+vc_DS0 = s57_alloc(20);                                 // the bands' wander
+vc_MQ = s57_alloc(1024);
+vc_VO = s57_alloc(6 * 16);                              // the buzz voices: 0 note (-1 free), 1 gate, 2 phase, 3 freq, 4 target freq, 5 env, 6 key down
+
+function vc_bpset(i, f, q) local(w, al, a0, c) (
+  c = vc_CF + i * 5;
+  w = 2 * $pi * min(f, 0.45 * srate) / srate; al = sin(w) / (2 * q); a0 = 1 + al;
+  c[0] = al / a0; c[1] = -al / a0; c[2] = -2 * cos(w) / a0; c[3] = (1 - al) / a0;
+);
+// a band-pass biquad on state s (2 slots), coefficients c: y = b0 x + z1; z1 = -a1 y + z2; z2 = b2 x - a2 y
+function vc_bq(x, c, s) local(y) (
+  y = c[0] * x + s[0]; s[0] = -c[2] * y + s[1]; s[1] = c[1] * x - c[3] * y; y;
+);
+
+function vc_bands() local(i, n, r, f, q, lo, hi) (
+  n = vc_n; lo = 120; hi = 7500;
+  r = (hi / lo) ^ (1 / (n - 1));
+  q = 1 / (sqrt(r) - 1 / sqrt(r)) * (vc_fc ? 0.85 : 1.35);
+  i = 0; loop(n,
+    f = lo * r ^ i * (1 + vc_DF[i]);
+    vc_bpset(i, f, q);
+    i += 1; );
+  // the band gain: a fourth-order band times its envelope; more bands = less each (normalised by measurement)
+  vc_bg = (vc_fc ? 5.0 : 4.4) * 5.6 * sqrt(20 / n) * (n == 10 ? 0.67 : n == 14 ? 1.08 : 1.57);
+  vc_bands_n = n; vc_bands_fc = vc_fc;
+);
+function vc_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  vc_tcar = slider3 >= 0.5;
+  vc_shape = slider4 / 100; vc_tune = 2 ^ (slider5 / 12 + slider6);
+  vc_gl = slider7 / 100; vc_hiss = slider8 / 100; vc_holdk = slider9 >= 0.5;
+  vc_tn = slider10 == 0 ? 10 : slider10 == 1 ? 14 : 20;
+  vc_ke = s57_k(slider11 * (vc_fc ? 0.7 : 1.15), srate);
+  vc_emp = slider12 / 100; vc_sib = slider13 / 100; vc_sh = slider14;
+  vc_tmix = slider15 / 100; vc_tog = 10 ^ (slider16 / 20);
+  vc_tfc = slider23 >= 0.5;
+  drift_macro(slider17);
+  ost_setup(slider18 / 100, slider19 / 100, slider20, slider21, slider22, 1);
+);
+function vc_srinit() (
+  vc_sr = srate; vc_sm = s57_kt(0.02, srate); vc_fd = 1 / (0.008 * srate);
+  vc_bands();
+  vcE.s57_bqset(5, 2500, 9, 0.7, srate);                // the emphasis shelf (scaled by EMPHASIS)
+  vcH.s57_bqset(1, 5000, 0, 0.7, srate); vcH2.s57_bqset(1, 5000, 0, 0.7, srate);
+  vcN.s57_bqset(1, 3000, 0, 0.7, srate);
+  vcC.s57_bqset(1, 60, 0, 0.7, srate); vcD.s57_bqset(1, 60, 0, 0.7, srate);
+  ost_init(0);
+);
+
+in_init();
+vc_fc = vc_tfc = slider23 >= 0.5; vc_n = vc_tn = slider10 == 0 ? 10 : slider10 == 1 ? 14 : 20; vc_car = vc_tcar = slider3 >= 0.5;
+vc_update(); vc_srinit();
+vc_p = vc_VO; loop(6, vc_p[0] = -1; vc_p += 16; );
+vc_dfB.drift_init(0.8 + rand(0.4));
+vco.ost_ch_init(); vcp.ost_ch_init();
+vc_mix = vc_tmix; vc_og = vc_tog; vc_fade = 1; vc_fst = 0; vc_bend = 1;
+
+function vc_set(car, shp, tn, oc, gl, hs, bd, rs, em, sb, sh, mx) (
+  slider3 = car; slider4 = shp; slider5 = tn; slider6 = oc; slider7 = gl; slider8 = hs;
+  slider10 = bd; slider11 = rs; slider12 = em; slider13 = sb; slider14 = sh; slider15 = mx;
+  slider_automate(32508);                               // sliders 3 - 8, 10 - 15
+);
+#vc_pm = "Init|Studio Voice|Buzz Choir|Ten-Channel Classic|Twenty-Channel Clarity|Robot Announcer|Deep Throat|Small Throat|Whisper|Soft Ensemble|External Carrier|Organ Talk";
+function load_preset(p) (
+  //                car shp  tn  oc  gl  hs  bd  rs  em  sb  sh  mx
+  p == 1  ? vc_set(1, 40,   0,  0,  0, 15,  1, 25, 40, 30,  0, 100) :     // Init
+  p == 2  ? vc_set(1, 55,   0,  0, 10, 20,  2, 30, 55, 45,  0, 100) :     // Studio Voice
+  p == 3  ? vc_set(1, 20,   0,  0, 20, 10,  1, 18, 35, 25,  0, 100) :     // Buzz Choir
+  p == 4  ? vc_set(1, 60,   0,  0,  0, 15,  0, 25, 30, 20,  0, 100) :     // Ten-Channel Classic
+  p == 5  ? vc_set(1, 50,   0,  0,  0, 20,  2, 45, 60, 50,  0, 100) :     // Twenty-Channel Clarity
+  p == 6  ? vc_set(1, 90,   0, -1,  0,  5,  1, 35, 50, 15,  0, 100) :     // Robot Announcer
+  p == 7  ? vc_set(1, 50,   0, -1, 10, 10,  2, 25, 40, 30, -4, 100) :     // Deep Throat
+  p == 8  ? vc_set(1, 50,   0,  0,  0, 20,  2, 30, 50, 40,  4, 100) :     // Small Throat
+  p == 9  ? vc_set(1, 40,   0,  0,  0,100,  2, 30, 50, 60,  0, 100) :     // Whisper
+  p == 10 ? vc_set(1, 15,   0,  0, 30, 15,  1, 12, 30, 20,  0,  85) :     // Soft Ensemble
+  p == 11 ? vc_set(0, 40,   0,  0,  0, 10,  2, 30, 45, 35,  0, 100) :     // External Carrier
+  p == 12 ? vc_set(1, 30,   0,  1,  0,  5,  1, 22, 35, 20,  2, 100) :     // Organ Talk
+  p == 13 ? (
+    vc_set(1, 40, 0, 0, 0, 15, 1, 25, 40, 30, 0, 100);
+    slider1 = 0; slider2 = 1; slider9 = 0; slider16 = 0; slider17 = 50; slider18 = 0; slider19 = 30; slider20 = 120; slider21 = 6000; slider22 = -0.3;
+    slider_automate(4194303);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+vc_update();
+
+@block
+srate != vc_sr ? vc_srinit();
+vc_update();
+(vc_tn != vc_n || vc_tfc != vc_fc || vc_tcar != vc_car) && vc_fst == 0 ? vc_fst = 1;
+// DRIFT: the buzz's pitch, the filters' centres (each band its own slow wander; the coefficients follow per block)
+vc_di = 0.12 * dm_s * samplesblock / srate;
+vc_dbz = 2 ^ (dm_a * 0.15 / 12 * vc_dfB.drift_tick(vc_di));
+vc_dt += samplesblock;
+vc_dt > srate * 0.1 ? (
+  vc_dt = 0;
+  i_ = 0; loop(vc_n, vc_DS0[i_] += (rand(2) - 1) * 0.15; vc_DS0[i_] *= 0.97; vc_DF[i_] = dm_a * 0.012 * vc_DS0[i_]; i_ += 1; );
+  vc_bands();
+);
+// MIDI: notes into the queue (sample offsets), everything passed on
+vc_qn = 0;
+while (midirecv(vc_mo, vc_m1, vc_m2, vc_m3)) (
+  vc_st = vc_m1 & 0xF0;
+  vc_qn < 250 ? (
+    vc_ty = vc_st == 0x90 ? (vc_m3 > 0 ? 1 : 0) : vc_st == 0x80 ? 0 : vc_st == 0xB0 && (vc_m2 == 120 || vc_m2 == 123) ? 2 : vc_st == 0xE0 ? 3 : -1;
+    vc_ty >= 0 ? ( vc_MQ[vc_qn * 4] = vc_mo; vc_MQ[vc_qn * 4 + 1] = vc_ty; vc_MQ[vc_qn * 4 + 2] = vc_m2; vc_MQ[vc_qn * 4 + 3] = vc_m3; vc_qn += 1; );
+  );
+  midisend(vc_mo, vc_m1, vc_m2, vc_m3);
+);
+vc_qr = 0; vc_spos = 0;
+// HOLD let go: release the voices whose keys are up
+!vc_holdk ? ( vc_p = vc_VO; loop(6, vc_p[0] >= 0 && !vc_p[6] ? vc_p[1] = 0; vc_p += 16; ); );
+vc_kd = s57_kt(0.004 + vc_gl * 0.4, srate);
+vc_ka = s57_kt(0.006, srate); vc_kr = s57_kt(0.15, srate);
+// the panel
+i_ = 0; loop(vc_n, vc_DSP[i_] = max(vc_DSP[i_] * 0.85, vc_EN[i_]); i_ += 1; );
+vca_mi = 1; vc_mn = 0; vc_p = vc_VO; loop(6, vc_p[0] >= 0 ? vc_mn += 1; vc_p += 16; );
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- the MIDI queue ----------
+while (vc_qr < vc_qn && vc_MQ[vc_qr * 4] <= vc_spos) (
+  vc_ty = vc_MQ[vc_qr * 4 + 1]; vc_nt = vc_MQ[vc_qr * 4 + 2]; vc_vv = vc_MQ[vc_qr * 4 + 3];
+  vc_ty == 1 ? (
+    // a free voice (or the quietest), the last pitch for the glide
+    vc_bp_ = -1; vc_bl = 10; vc_p = vc_VO; vc_i = 0;
+    loop(6, vc_p[0] < 0 ? ( vc_bp_ = vc_i; vc_bl = -1; ) : ( vc_bl >= 0 && vc_p[5] < vc_bl && !vc_p[1] ? ( vc_bl = vc_p[5]; vc_bp_ = vc_i; ); ); vc_p += 16; vc_i += 1; );
+    vc_bp_ < 0 ? ( vc_bl = 10; vc_p = vc_VO; vc_i = 0; loop(6, vc_p[5] < vc_bl ? ( vc_bl = vc_p[5]; vc_bp_ = vc_i; ); vc_p += 16; vc_i += 1; ); );
+    vc_p = vc_VO + vc_bp_ * 16;
+    vc_p[4] = 440 * 2 ^ ((vc_nt - 69) / 12);
+    vc_p[0] < 0 || vc_gl <= 0 ? vc_p[3] = vc_last > 0 && vc_gl > 0 ? vc_last : vc_p[4];
+    vc_p[0] = vc_nt; vc_p[1] = 1; vc_p[6] = 1; vc_p[7] = 0.4 + 0.6 * vc_vv / 127; vc_last = vc_p[4];
+  ) : vc_ty == 0 ? (
+    vc_p = vc_VO; loop(6, vc_p[0] == vc_nt ? ( vc_p[6] = 0; !vc_holdk ? vc_p[1] = 0; ); vc_p += 16; );
+  ) : vc_ty == 2 ? (
+    vc_p = vc_VO; loop(6, vc_p[1] = 0; vc_p[6] = 0; vc_p += 16; );
+  ) : vc_ty == 3 ? ( vc_bend = 2 ^ (((vc_vv * 128 + vc_nt) - 8192) / 8192 * 2 / 12); );
+  vc_qr += 1;
+);
+vc_spos += 1;
+
+vc_mix += (vc_tmix - vc_mix) * vc_sm; vc_og += (vc_tog - vc_og) * vc_sm;
+vc_fst == 1 ? ( vc_fade -= vc_fd; vc_fade <= 0 ? (
+  vc_fade = 0; vc_n = vc_tn; vc_fc = vc_tfc; vc_car = vc_tcar; vc_update(); vc_bands();
+  memset(vc_SA, 0, 80); memset(vc_SL, 0, 160); memset(vc_SQ, 0, 160); memset(vc_EN, 0, 20);
+  vc_hold = 64; vc_fst = 2; ); ) :
+vc_fst == 2 ? ( vc_hold -= 1; vc_hold <= 0 ? vc_fst = 3; ) :
+vc_fst == 3 ? ( vc_fade += vc_fd; vc_fade >= 1 ? ( vc_fade = 1; vc_fst = 0; ); );
+
+// ---------- the modulator ----------
+in_process(spl0, spl1);
+vc_m = (in_l + in_r) * 0.5;
+vc_me = vc_m + (vcE.s57_bq(vc_m) - vc_m) * vc_emp;      // EMPHASIS
+vc_sb = vcH2.s57_bq(vcH.s57_bq(vc_m));                  // the consonants
+
+// ---------- the carrier ----------
+vc_car ? (
+  // the buzz: six relaxation voices (a sawtooth with its edge smoothed, narrowing into a pulse train)
+  vc_cb = 0; vc_p = vc_VO;
+  loop(6,
+    vc_p[0] >= 0 ? (
+      vc_p[3] += (vc_p[4] - vc_p[3]) * vc_kd;
+      vc_p[5] += ((vc_p[1] ? vc_p[7] : 0) - vc_p[5]) * (vc_p[1] ? vc_ka : vc_kr);
+      vc_dtp = vc_p[3] * vc_tune * vc_bend * vc_dbz / srate;
+      vc_p[2] += vc_dtp; vc_p[2] >= 1 ? vc_p[2] -= 1;
+      vc_t = vc_p[2];
+      // a sawtooth (polyBLEP at the reset)
+      vc_s = 2 * vc_t - 1;
+      vc_t < vc_dtp ? ( vc_u = vc_t / vc_dtp; vc_s -= vc_u + vc_u - vc_u * vc_u - 1; ) :
+      vc_t > 1 - vc_dtp ? ( vc_u = (vc_t - 1) / vc_dtp; vc_s -= vc_u * vc_u + vc_u + vc_u + 1; );
+      // the buzz: the sawtooth's ramp bent into a narrow pulse (SHAPE)
+      vc_b = (vc_s * (1 - vc_shape) + vc_shape * 1.6 * vc_s ^ 7) / (1 - 0.29 * vc_shape);   // (about level)
+      vc_cb += vc_b * vc_p[5];
+      !vc_p[1] && vc_p[5] < 0.0005 ? vc_p[0] = -1;
+    );
+    vc_p += 16; );
+  vc_cn = vcN.s57_bq(rand(2) - 1);
+  vc_cl = vc_cr = vc_cb * 0.5 + vc_cn * vc_hiss * 0.2;
+) : (
+  vc_cl = vcC.s57_bq(spl2); vc_cr = vcD.s57_bq(spl3);
+);
+
+// ---------- the bank: analyse, follow, open the carrier's bands ----------
+vc_ol = 0; vc_or = 0; vc_i = 0;
+loop(vc_n,
+  vc_c = vc_CF + vc_i * 5;
+  vc_a = vc_bq(vc_bq(vc_me, vc_c, vc_SA + vc_i * 4), vc_c, vc_SA + vc_i * 4 + 2);
+  vc_EN[vc_i] += (abs(vc_a) - vc_EN[vc_i]) * vc_ke;
+  // SHIFT: the carrier's band j is opened by the voice's band j - shift
+  vc_j = vc_i - vc_sh; vc_j = min(max(vc_j, 0), vc_n - 1);
+  vc_g = vc_EN[vc_j] * vc_bg;
+  vc_ol += vc_bq(vc_bq(vc_cl, vc_c, vc_SL + vc_i * 8), vc_c, vc_SL + vc_i * 8 + 2) * vc_g;
+  vc_or += vc_bq(vc_bq(vc_cr, vc_c, vc_SQ + vc_i * 8), vc_c, vc_SQ + vc_i * 8 + 2) * vc_g;
+  vc_i += 1; );
+vc_ol += vc_sb * vc_sib * 1.5; vc_or += vc_sb * vc_sib * 1.5;
+
+vc_yl = (in_l + (vc_ol * vc_fade - in_l) * vc_mix); vc_yr = (in_r + (vc_or * vc_fade - in_r) * vc_mix);
+vc_yl = vco.ost_band(vc_yl) * vc_og; vc_yr = vcp.ost_band(vc_yr) * vc_og;
+ost_out(vc_yl, vc_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider23);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "VC57", "SERIES 57", "CHANNEL VOCODER", #vc_pm, 23);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 4);
+s57_small(30, 378, "VOICE · CARRIER"); s57_small(330, 378, "ANALYSIS"); s57_small(634, 378, "SYNTHESIS"); s57_small(892, 378, "OUT");
+
+// ---------- CARRIER ----------
+s57_plate(20, 68, 300, 292);
+s57_title(32, 76, "CARRIER");
+s57_key(32, 100, 64, 22, slider3 < 0.5, "EXT") ? s57_set(3, 0);
+s57_key(100, 100, 64, 22, slider3 >= 0.5, "BUZZ") ? s57_set(3, 1);
+s57_key(240, 100, 64, 22, slider9 >= 0.5, "HOLD") ? s57_set(9, slider9 >= 0.5 ? 0 : 1);
+gfx_setfont(13); ui_col(S57_DIM); s57_t(176, 105, "MIDI");
+pk_led(226 * sc, 111 * sc, 3.5 * sc, vc_mn > 0, S57_KEYC);
+s57_knob(76, 196, 22, 4, 0, 100, 40, 0, "SHAPE", "%.0f%%", 0);
+s57_small(28, 214, "SAW"); s57_small(102, 214, "BUZZ");
+s57_knob(170, 196, 22, 5, -12, 12, 0, 0, "TUNE", "%+.2f st", 0);
+s57_knob(264, 196, 22, 6, -1, 1, 0, 0, "OCTAVE", "%+.0f", 1);
+s57_knob(116, 300, 18, 7, 0, 100, 0, 0, "GLIDE", "%.0f%%", 0);
+s57_knob(224, 300, 18, 8, 0, 100, 15, 0, "HISS", "%.0f%%", 0);
+slider3 < 0.5 ? ( ui_cola(S57_PLATE, 0.55); s57_r(24, 136, 292, 210); gfx_setfont(11); ui_col(S57_INK); s57_tc(170, 250, "EXT: THE CARRIER ON CHANNELS 3 / 4"); );
+
+// ---------- FILTER BANK ----------
+s57_well(336, 68, 380, 292);
+s57_title(348, 76, "FILTER BANK");
+m_ = 0; loop(3, s57_key(544 + m_ * 56, 74, 50, 20, slider10 == m_, m_ == 0 ? "10" : m_ == 1 ? "14" : "20") ? s57_set(10, m_); m_ += 1; );
+// the band lamps: an amber window, one bar per band
+ui_col(S57_INK); s57_rr(348, 104, 356, 96, 3);
+ui_col(S57_AMBD); s57_r(354, 109, 344, 86);
+i_ = 0; loop(8, ui_cola(S57_AMBW, 0.12); s57_r(354 + i_ * 6, 109 + i_ * 2, 344 - i_ * 12, 86 - i_ * 4); i_ += 1; );
+n_ = slider10 == 0 ? 10 : slider10 == 1 ? 14 : 20; bw_ = 330 / n_;
+i_ = 0; loop(n_,
+  v_ = min(1, sqrt(vc_DSP[i_] * 40));
+  ui_cola(S57_INK, 0.18); s57_r(361 + i_ * bw_, 118, bw_ - 4, 68);
+  ui_col(S57_NDL); s57_r(361 + i_ * bw_, 186 - 68 * v_, bw_ - 4, 68 * v_);
+  i_ += 1; );
+gfx_setfont(13); ui_col(S57_INK); s57_t(362, 186, "120"); s57_t(660, 186, "7.5k");
+ui_cola(0xFFFFFF, 0.08); s57_r(354, 109, 344, 34);
+s57_knob(394, 268, 22, 11, 8, 60, 25, 1, "RESPONSE", "%.0f Hz", 0);
+s57_knob(484, 268, 22, 12, 0, 100, 40, 0, "EMPHASIS", "%.0f%%", 0);
+s57_knob(574, 268, 22, 13, 0, 100, 30, 0, "SIBILANCE", "%.0f%%", 0);
+s57_knob(664, 268, 22, 14, -6, 6, 0, 0, "SHIFT", "%+.0f", 1);
+
+// ---------- IN / OUT ----------
+s57_plate(732, 68, 208, 292);
+s57_title(744, 76, "IN · OUT");
+s57_knob(782, 140, 16, 1, -24, 12, 0, 0, "VOICE", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(886, 120, "GUARD");
+s57_key(862, 130, 48, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(918 * sc, 140 * sc, 3 * sc, 1, S57_ORNG); ); in_grd = 0;
+s57_knob(782, 234, 20, 15, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s57_knob(886, 234, 20, 16, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(782, 316, 13, 17, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(886, 316, 13, 18, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(914 * sc, 300 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

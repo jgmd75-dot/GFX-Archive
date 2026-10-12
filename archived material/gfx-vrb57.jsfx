@@ -1,0 +1,329 @@
+desc:GFX VRB57 [reverb]
+//tags: reverb room hall studio spring valve vintage space series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// VRB57 (Series 57). The 1957 counterpart of VRB81: the reverberation a late-50s studio could reach for, behind a
+// valve send amplifier.
+//   STUDIO  the live room: a speaker and microphones in a studio of wood and plaster - strong early reflections,
+//           a short, warm tail.
+//   HALL    a concert hall borrowed as a chamber: a long, even, darker tail with a slow build.
+//   SPRING  the organ's two-spring reverb unit: the springs' dispersion gives the "drip" (the chirp of a sharp
+//           sound), each spring its own length; TENSION sets how much they drip.
+//   PRE-DELAY 0 - 200 ms. DECAY 0.3 - 8 s (SPRING: how long the springs ring). SIZE (STUDIO / HALL) or TENSION
+//   (SPRING). DAMP: the top dies faster (the air, the plaster). LOW: the low end's decay against the middle's.
+//   WIDTH: the two microphones (or springs) from mono to wide. DRIVE: the valve send amplifier (2x oversampled).
+//   MIX (the dry stays at full up to 50 %), OUTPUT, the house output stage (straight through: a mix tool).
+// ULM / COPENHAGEN (the face): ULM - brighter, denser, clearer. COPENHAGEN - darker and softer, a little more
+//   low-mid warmth; the springs drip more gently. Level matched; presets leave the face alone.
+// DRIFT (0 - 100 %, 50 % = standard): the microphones (and the springs' hangers) move a hair - the tail shimmers
+//   very slightly, and is never quite the same twice.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:0<0,2,1{Studio,Hall,Spring}>-Algorithm
+slider4:12<0,200,0.1>-Pre-delay (ms)
+slider5:1.6<0.3,8,0.01>-Decay (s)
+slider6:50<0,100,1>-Size / tension (%)
+slider7:40<0,100,1>-Damp (%)
+slider8:0<-100,100,1>-Low
+slider9:70<0,100,1>-Width (%)
+slider10:20<0,100,1>-Drive (%)
+slider11:25<0,100,1>-Mix (%)
+slider12:0<-24,12,0.1>-Output (dB)
+slider13:50<0,100,1>-Drift (%)
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:0<0,1,1{Ulm,Copenhagen}>-Face
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vrb57";
+ext_noinit = 1;
+s57_mem = 0;
+vr_HB = s57_alloc(64); s57_hbdesign(vr_HB, 63, 8);
+vru.s57_upinit(63, vr_HB, 64); vrd.s57_dninit(63, vr_HB, 64);
+vrP.s57_dlinit(65536);                                  // the pre-delay
+// the room: 8 lines
+vr_LN = s57_alloc(8); vr_DL = s57_alloc(8); vr_GN = s57_alloc(8); vr_GL = s57_alloc(8); vr_YY = s57_alloc(8); vr_LP = s57_alloc(8); vr_HP = s57_alloc(8);
+vrc0.s57_dlinit(32768); vrc1.s57_dlinit(32768); vrc2.s57_dlinit(32768); vrc3.s57_dlinit(32768);
+vrc4.s57_dlinit(32768); vrc5.s57_dlinit(32768); vrc6.s57_dlinit(32768); vrc7.s57_dlinit(32768);
+vra0.s57_dlinit(4096); vra1.s57_dlinit(4096); vra2.s57_dlinit(4096); vra3.s57_dlinit(4096);
+vra4.s57_dlinit(4096); vra5.s57_dlinit(4096);
+// the springs: a dispersive all-pass chain and a delay in each loop
+vr_NAP = 16;
+vr_AS1 = s57_alloc(16 * 2); vr_AS2 = s57_alloc(16 * 2);
+vrs1.s57_dlinit(16384); vrs2.s57_dlinit(16384);
+
+function vr_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  vr_talg = slider3; vr_tfc = slider19 >= 0.5;
+  vr_tpd = slider4 / 1000 * srate;
+  vr_drv = slider10 / 100;
+  vr_tmix = slider11 / 100; vr_tog = 10 ^ (slider12 / 20);
+  vr_wid = slider9 / 100;
+  drift_macro(slider13);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 0);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+// the room's lines and losses (STUDIO / HALL); the springs' loop (SPRING)
+function vr_room() local(i, sz, dec, damp, low, lo, hi) (
+  vr_l3 = slider3; vr_l5 = slider5; vr_l6 = slider6; vr_l7 = slider7; vr_l8 = slider8;
+  dec = slider5;
+  vr_alg == 0 ? (
+    vr_LN[0] = 17.3; vr_LN[1] = 21.1; vr_LN[2] = 24.7; vr_LN[3] = 27.9; vr_LN[4] = 31.3; vr_LN[5] = 34.9; vr_LN[6] = 38.3; vr_LN[7] = 43.1;
+    sz = 0.6 + 0.8 * slider6 / 100;
+  ) : (
+    vr_LN[0] = 41.3; vr_LN[1] = 49.7; vr_LN[2] = 57.1; vr_LN[3] = 63.7; vr_LN[4] = 71.9; vr_LN[5] = 79.3; vr_LN[6] = 87.1; vr_LN[7] = 97.3;
+    sz = 0.7 + 0.6 * slider6 / 100;
+  );
+  // DAMP: the top's decay; LOW: the lows' decay against the middle's
+  damp = (vr_fc ? 5500 : 9000) * 2 ^ (-slider7 / 100 * 2.2) * (vr_alg == 1 ? 0.75 : 1);
+  vr_kd = s57_k(damp, srate);
+  low = 2 ^ (slider8 / 100);
+  vr_kl = s57_k(vr_alg == 1 ? 250 : 350, srate);
+  i = 0; loop(8,
+    vr_DL[i] = vr_LN[i] * sz * srate / 1000;
+    vr_GN[i] = 10 ^ (-3 * vr_DL[i] / (dec * srate));
+    vr_GL[i] = 10 ^ (-3 * vr_DL[i] / (dec * low * srate)) / vr_GN[i];   // the extra gain for the lows (as a ratio)
+    i += 1; );
+  // the springs: the loop's delay and gain, the dispersion (TENSION)
+  vr_sd1 = 0.0331 * srate; vr_sd2 = 0.0397 * srate;
+  vr_sg1 = 10 ^ (-3 * 0.0331 / dec); vr_sg2 = 10 ^ (-3 * 0.0397 / dec);
+  vr_sa = -(0.45 + 0.35 * slider6 / 100) * (vr_fc ? 0.9 : 1);
+  vrSL.s57_bqset(0, vr_fc ? 3800 : 5000, 0, 0.7, srate); vrSR.s57_bqset(0, vr_fc ? 3800 : 5000, 0, 0.7, srate);
+  vrSH.s57_bqset(1, 90, 0, 0.7, srate); vrSI.s57_bqset(1, 90, 0, 0.7, srate);
+  // the output's colour
+  vrOL.s57_bqset(3, vr_fc ? 350 : 2500, vr_fc ? 1.5 : 1, 0.8, srate); vrOR.s57_bqset(3, vr_fc ? 350 : 2500, vr_fc ? 1.5 : 1, 0.8, srate);
+  vr_og2 = vr_alg == 2 ? 0.9 : (0.62 / sqrt(max(dec, 0.3) / 1.6) * (vr_alg == 1 ? 1.4 : 1));
+);
+function vr_srinit() (
+  vr_sr = srate; vr_sm = s57_kt(0.03, srate); vr_kpd = s57_kt(0.08, srate); vr_fd = 1 / (0.012 * srate);
+  vr_room(); ost_init(0);
+);
+
+in_init();
+vr_alg = vr_talg = slider3; vr_fc = vr_tfc = slider19 >= 0.5;
+vr_update(); vr_srinit();
+vr_dfA.drift_init(0.6 + rand(0.4)); vr_dfB.drift_init(0.7 + rand(0.4));
+vro.ost_ch_init(); vrp.ost_ch_init();
+vr_mix = vr_tmix; vr_og = vr_tog; vr_pd = vr_tpd; vr_fade = 1; vr_fst = 0;
+
+function vr_set(al, pd, dc, sz, dp, lo, wi, dr, mx) (
+  slider3 = al; slider4 = pd; slider5 = dc; slider6 = sz; slider7 = dp; slider8 = lo; slider9 = wi; slider10 = dr; slider11 = mx;
+  slider_automate(2044);                                // sliders 3 - 11
+);
+#vr_pm = "Init|Small Studio|Big Studio|Concert Hall|Dark Hall|Vocal Room|Drum Room|Organ Spring|Surf Spring|Gentle Spring|Long Hall|Driven Spring";
+function load_preset(p) (
+  //                al   pd   dec  sz  dmp  low wid drv mix
+  p == 1  ? vr_set(0,   12, 1.6,  50, 40,   0, 70, 20, 25) :     // Init
+  p == 2  ? vr_set(0,    5, 0.8,  25, 45,   0, 60, 15, 22) :     // Small Studio
+  p == 3  ? vr_set(0,   18, 2.2,  90, 35,  10, 80, 20, 25) :     // Big Studio
+  p == 4  ? vr_set(1,   30, 2.8,  60, 45,  10, 80, 15, 25) :     // Concert Hall
+  p == 5  ? vr_set(1,   35, 3.5,  70, 75,  30, 85, 20, 25) :     // Dark Hall
+  p == 6  ? vr_set(0,   40, 1.4,  45, 50, -20, 60, 15, 20) :     // Vocal Room
+  p == 7  ? vr_set(0,    0, 0.9,  60, 30, -10, 90, 35, 25) :     // Drum Room
+  p == 8  ? vr_set(2,    0, 2.0,  50, 40,   0, 70, 25, 25) :     // Organ Spring
+  p == 9  ? vr_set(2,    0, 2.6,  95, 20, -20, 60, 40, 32) :     // Surf Spring
+  p == 10 ? vr_set(2,   10, 1.4,  20, 60,   0, 70, 10, 22) :     // Gentle Spring
+  p == 11 ? vr_set(1,   50, 6.5,  80, 55,  20, 90, 15, 25) :     // Long Hall
+  p == 12 ? vr_set(2,    0, 2.2,  70, 35,   0, 60, 85, 28) :     // Driven Spring
+  p == 13 ? (
+    vr_set(0, 12, 1.6, 50, 40, 0, 70, 20, 25);
+    slider1 = 0; slider2 = 1; slider12 = 0; slider13 = 50; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3;
+    slider_automate(262143);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+vr_update();
+
+@block
+srate != vr_sr ? vr_srinit();
+vr_update();
+(vr_talg != vr_alg || vr_tfc != vr_fc) && vr_fst == 0 ? vr_fst = 1;
+(slider5 != vr_l5 || slider6 != vr_l6 || slider7 != vr_l7 || slider8 != vr_l8) && vr_fst == 0 ? vr_room();
+vr_di = 0.12 * dm_s * samplesblock / srate;
+vr_dma = dm_a * 0.8 * vr_dfA.drift_tick(vr_di); vr_dmb = dm_a * 0.8 * vr_dfB.drift_tick(vr_di);
+vra_lv = max(vra_lv, vr_lvm); vr_lvm = 0;
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+vr_mix += (vr_tmix - vr_mix) * vr_sm; vr_og += (vr_tog - vr_og) * vr_sm; vr_pd += (vr_tpd - vr_pd) * vr_kpd;
+vr_fst == 1 ? ( vr_fade -= vr_fd; vr_fade <= 0 ? (
+  vr_fade = 0; vr_alg = vr_talg; vr_fc = vr_tfc; vr_room();
+  memset(vr_LP, 0, 8); memset(vr_HP, 0, 8); memset(vr_AS1, 0, 32); memset(vr_AS2, 0, 32);
+  vr_hold = 64; vr_fst = 2; ); ) :
+vr_fst == 2 ? ( vr_hold -= 1; vr_hold <= 0 ? vr_fst = 3; ) :
+vr_fst == 3 ? ( vr_fade += vr_fd; vr_fade >= 1 ? ( vr_fade = 1; vr_fst = 0; ); );
+
+in_process(spl0, spl1);
+vr_xl = in_l; vr_xr = in_r;
+// the valve send amplifier (2x)
+vr_s = (vr_xl + vr_xr) * 0.5;
+vr_k = 1 + 5 * vr_drv;
+vru.s57_up(vr_s);
+vr_s = vrd.s57_dn(s57_th(vru.o0 * vr_k) / vr_k, s57_th(vru.o1 * vr_k) / vr_k) * (1 + 0.4 * vr_drv);
+vrP.s57_dlw(vr_s);
+vr_in = vrP.s57_dlr(max(vr_pd - 31, 1));                // (the oversampler's 31 samples come off the pre-delay)
+
+vr_alg <= 1 ? (
+  // ---------- STUDIO / HALL: diffusion, then the room ----------
+  vr_g1 = vr_alg == 0 ? 0.62 : 0.7;
+  vr_il = vra1.s57_ap(vra0.s57_ap(vr_in, 113, vr_g1), 167, vr_g1);
+  vr_il = vra2.s57_ap(vr_il, 239, vr_g1 * 0.9);
+  vr_ir = vra4.s57_ap(vra3.s57_ap(vr_in, 131, vr_g1), 197, vr_g1);
+  vr_ir = vra5.s57_ap(vr_ir, 271, vr_g1 * 0.9);
+  vr_YY[0] = vrc0.s57_dlr(vr_DL[0]); vr_YY[1] = vrc1.s57_dlr(vr_DL[1] + vr_dma * 4);
+  vr_YY[2] = vrc2.s57_dlr(vr_DL[2]); vr_YY[3] = vrc3.s57_dlr(vr_DL[3]);
+  vr_YY[4] = vrc4.s57_dlr(vr_DL[4] - vr_dmb * 4); vr_YY[5] = vrc5.s57_dlr(vr_DL[5]);
+  vr_YY[6] = vrc6.s57_dlr(vr_DL[6]); vr_YY[7] = vrc7.s57_dlr(vr_DL[7]);
+  // the losses: the top (DAMP) and the lows (LOW), per line
+  i_ = 0; loop(8,
+    vr_LP[i_] += (vr_YY[i_] - vr_LP[i_]) * vr_kd;
+    vr_HP[i_] += (vr_LP[i_] - vr_HP[i_]) * vr_kl;
+    vr_YY[i_] = (vr_LP[i_] + vr_HP[i_] * (vr_GL[i_] - 1)) * vr_GN[i_];
+    i_ += 1; );
+  vr_wl = vr_YY[0] - vr_YY[2] + vr_YY[4] - vr_YY[6] * 0.7;
+  vr_wr = vr_YY[1] - vr_YY[3] + vr_YY[5] - vr_YY[7] * 0.7;
+  // Hadamard 8
+  vr_a = vr_YY[0] + vr_YY[1]; vr_b = vr_YY[0] - vr_YY[1]; vr_c = vr_YY[2] + vr_YY[3]; vr_e = vr_YY[2] - vr_YY[3];
+  vr_f = vr_YY[4] + vr_YY[5]; vr_g = vr_YY[4] - vr_YY[5]; vr_h = vr_YY[6] + vr_YY[7]; vr_j = vr_YY[6] - vr_YY[7];
+  vr_YY[0] = vr_a + vr_c; vr_YY[2] = vr_a - vr_c; vr_YY[1] = vr_b + vr_e; vr_YY[3] = vr_b - vr_e;
+  vr_YY[4] = vr_f + vr_h; vr_YY[6] = vr_f - vr_h; vr_YY[5] = vr_g + vr_j; vr_YY[7] = vr_g - vr_j;
+  vr_a = vr_YY[0]; vr_YY[0] = (vr_a + vr_YY[4]) * 0.35355339; vr_YY[4] = (vr_a - vr_YY[4]) * 0.35355339;
+  vr_a = vr_YY[1]; vr_YY[1] = (vr_a + vr_YY[5]) * 0.35355339; vr_YY[5] = (vr_a - vr_YY[5]) * 0.35355339;
+  vr_a = vr_YY[2]; vr_YY[2] = (vr_a + vr_YY[6]) * 0.35355339; vr_YY[6] = (vr_a - vr_YY[6]) * 0.35355339;
+  vr_a = vr_YY[3]; vr_YY[3] = (vr_a + vr_YY[7]) * 0.35355339; vr_YY[7] = (vr_a - vr_YY[7]) * 0.35355339;
+  // STUDIO: the early reflections are strong (the room's walls are close): a share of the input goes straight out
+  vr_er = vr_alg == 0 ? 0.35 : 0.08;
+  vrc0.s57_dlw(vr_YY[0] + vr_il); vrc1.s57_dlw(vr_YY[1] + vr_ir); vrc2.s57_dlw(vr_YY[2] + vr_il * 0.6); vrc3.s57_dlw(vr_YY[3] - vr_ir * 0.6);
+  vrc4.s57_dlw(vr_YY[4] - vr_il * 0.4); vrc5.s57_dlw(vr_YY[5] + vr_ir * 0.4); vrc6.s57_dlw(vr_YY[6]); vrc7.s57_dlw(vr_YY[7]);
+  vr_wl += vr_il * vr_er; vr_wr += vr_ir * vr_er;
+) : (
+  // ---------- SPRING: two springs, each a delay with a dispersive chain (the drip) in its loop ----------
+  vr_u = vr_in * 0.7 + vr_fb1;
+  i_ = 0; vr_p = vr_AS1;
+  loop(vr_NAP, vr_v = vr_sa * vr_u + vr_p[0]; vr_p[0] = vr_u - vr_sa * vr_v; vr_u = vr_v; vr_p += 2; );
+  vrs1.s57_dlw(vr_u);
+  vr_o1 = vrs1.s57_dlr(vr_sd1 + vr_dma * 3);
+  vr_fb1 = vrSH.s57_bq(vrSL.s57_bq(vr_o1)) * vr_sg1;
+  vr_u = vr_in * 0.7 + vr_fb2;
+  i_ = 0; vr_p = vr_AS2;
+  loop(vr_NAP, vr_v = vr_sa * 0.95 * vr_u + vr_p[0]; vr_p[0] = vr_u - vr_sa * 0.95 * vr_v; vr_u = vr_v; vr_p += 2; );
+  vrs2.s57_dlw(vr_u);
+  vr_o2 = vrs2.s57_dlr(vr_sd2 - vr_dmb * 3);
+  vr_fb2 = vrSI.s57_bq(vrSR.s57_bq(vr_o2)) * vr_sg2;
+  vr_wl = vrSL2.s57_lp1(vr_o1, 0.6); vr_wr = vrSR2.s57_lp1(vr_o2, 0.6);
+);
+// WIDTH, the output colour, the level
+vr_m = (vr_wl + vr_wr) * 0.5; vr_sd = (vr_wl - vr_wr) * 0.5 * vr_wid;
+vr_wl = vrOL.s57_bq(vr_m + vr_sd) * vr_og2 * vr_fade; vr_wr = vrOR.s57_bq(vr_m - vr_sd) * vr_og2 * vr_fade;
+vr_lvm = max(vr_lvm, abs(vr_wl) + abs(vr_wr));
+vr_gd = min(1, 2 - 2 * vr_mix); vr_gw = min(1, 2 * vr_mix);
+vr_yl = vr_xl * vr_gd + vr_wl * vr_gw; vr_yr = vr_xr * vr_gd + vr_wr * vr_gw;
+vr_yl = vro.ost_band(vr_yl) * vr_og; vr_yr = vrp.ost_band(vr_yr) * vr_og;
+ost_out(vr_yl, vr_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider19);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "VRB57", "SERIES 57", "REVERBERATION", #vr_pm, 19);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 4);
+s57_small(30, 378, "IN"); s57_small(330, 378, "SEND AMP"); s57_small(634, 378, slider3 == 2 ? "SPRINGS" : "ROOM"); s57_small(892, 378, "OUT");
+
+// ---------- the room (or the springs) ----------
+s57_plate(20, 68, 340, 292);
+s57_title(32, 76, "REVERBERATION");
+m_ = 0; loop(3, s57_key(32 + m_ * 106, 100, 100, 24, slider3 == m_, m_ == 0 ? "STUDIO" : m_ == 1 ? "HALL" : "SPRING") ? s57_set(3, m_); m_ += 1; );
+// the window: the decay drawn (the pre-delay gap, the build, the tail), or the two springs
+ui_col(S57_INK); s57_rr(32, 136, 316, 176, 4);
+ui_col(S57_AMBD); s57_r(38, 142, 304, 164);
+i_ = 0; loop(10, ui_cola(S57_AMBW, 0.12); s57_r(38 + i_ * 6, 142 + i_ * 3, 304 - i_ * 12, 164 - i_ * 6); i_ += 1; );
+slider3 <= 1 ? (
+  // time axis: 0 .. 4 s (or the decay if longer)
+  tm_ = max(4, slider5 * 1.2); x0_ = 50; x1_ = 330; yb_ = 290; yt_ = 160;
+  ui_cola(S57_INK, 0.5); s57_r(x0_, yb_, x1_ - x0_, 1);
+  i_ = 0; loop(floor(tm_) + 1, s57_r(x0_ + (x1_ - x0_) * i_ / tm_, yb_, 1, 4); i_ += 1; );
+  gfx_setfont(13); ui_col(S57_INK); s57_t(x0_, yb_ + 4, "0"); sprintf(#t_, "%.0f s", tm_); s57_t(x1_ - 24, yb_ + 4, #t_);
+  // the envelope: 60 dB down at DECAY
+  i_ = 0; px_ = x0_; py_ = yb_;
+  loop(140,
+    t_ = i_ / 140 * tm_;
+    v_ = t_ < slider4 / 1000 ? 0 : (1 - exp(-(t_ - slider4 / 1000) / (slider3 == 1 ? 0.06 : 0.015))) * 10 ^ (-3 * (t_ - slider4 / 1000) / slider5);
+    v_ = max(v_, 0.001);
+    y_ = yb_ - (yb_ - yt_) * (1 + log10(v_) / 3);
+    nx_ = x0_ + (x1_ - x0_) * t_ / tm_;
+    i_ > 0 ? ( ui_col(S57_NDL); s57_ln(px_, py_, nx_, y_, 1.6); );
+    px_ = nx_; py_ = y_; i_ += 1; );
+  // the early reflections (STUDIO strong, HALL faint)
+  i_ = 0; loop(6, t_ = slider4 / 1000 + 0.004 + i_ * 0.007 * (0.6 + 0.8 * slider6 / 100);
+    ui_col(S57_INK); s57_r(x0_ + (x1_ - x0_) * t_ / tm_, yt_ + (slider3 == 0 ? 8 : 40) + i_ * 8, 1.5, yb_ - yt_ - (slider3 == 0 ? 8 : 40) - i_ * 8); i_ += 1; );
+  gfx_setfont(13); ui_col(S57_INK); s57_t(50, 148, slider3 == 0 ? "THE LIVE ROOM" : "THE HALL");
+) : (
+  // the springs, stretched between their transducers; they tremble with the level
+  i_ = 0; loop(2,
+    sy_ = 200 + i_ * 54;
+    ui_col(S57_INK); s57_rr(52, sy_ - 12, 18, 24, 2); s57_rr(310, sy_ - 12, 18, 24, 2);
+    j_ = 0; loop(60, xa_ = 70 + j_ * 4; xb_ = xa_ + 4; am_ = 7 + min(vra_lv * 20, 5) * sin(time_precise() * 30 + j_ * 0.4 + i_);
+      ui_col(0x9EA3AA); s57_ln(xa_, sy_ - am_ * (j_ & 1 ? 1 : -1), xb_, sy_ + am_ * (j_ & 1 ? 1 : -1), 1.4); j_ += 1; );
+    i_ += 1; );
+  gfx_setfont(13); ui_col(S57_INK); s57_t(50, 148, "TWO SPRINGS");
+);
+vra_lv *= 0.7;
+
+// ---------- the controls ----------
+s57_well(376, 68, 340, 292);
+s57_title(388, 76, "DECAY");
+s57_knob(436, 150, 22, 4, 0, 200, 12, 0, "PRE-DELAY", "%.0f ms", 0);
+s57_knob(546, 150, 26, 5, 0.3, 8, 1.6, 1, "DECAY", "%.2f s", 0);
+s57_knob(656, 150, 22, 6, 0, 100, 50, 0, slider3 == 2 ? "TENSION" : "SIZE", "%.0f%%", 0);
+s57_knob(436, 270, 22, 7, 0, 100, 40, 0, "DAMP", "%.0f%%", 0);
+s57_knob(546, 270, 22, 8, -100, 100, 0, 0, "LOW", "%+.0f", 0);
+s57_knob(656, 270, 22, 9, 0, 100, 70, 0, "WIDTH", "%.0f%%", 0);
+
+// ---------- IN / OUT ----------
+s57_plate(732, 68, 208, 292);
+s57_title(744, 76, "IN · OUT");
+s57_knob(782, 140, 16, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(886, 120, "GUARD");
+s57_key(862, 130, 48, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(918 * sc, 140 * sc, 3 * sc, 1, S57_ORNG); ); in_grd = 0;
+s57_knob(782, 234, 18, 10, 0, 100, 20, 0, "DRIVE", "%.0f%%", 0);
+s57_knob(886, 234, 18, 11, 0, 100, 25, 0, "MIX", "%.0f%%", 0);
+s57_knob(782, 316, 13, 12, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(840, 316, 13, 13, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(898, 316, 13, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

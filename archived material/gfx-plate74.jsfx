@@ -1,0 +1,371 @@
+desc:GFX Plate74 [OB plate]
+//tags: reverb plate steel valve transformer broadcast remote damper series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// PLATE74 (Series 74: the OB remote and broadcast series): the plate reverb from a remote studio - a heavy sheet of
+// steel in its frame, a driver at one point, two contact pickups, a damper on a screw - with two models on one switch.
+//   input -> TRIM / GUARD -> the send (L + R, mono, as the plates were fed) -> 2x oversampling ->
+//   OB:    the VALVE DRIVE AMPLIFIER (soft, slightly lopsided saturation, more with DRIVE) into the plate
+//   CLEAN: a flat line driver (no saturation; DRIVE is out of the path)
+//   -> back to 1x -> PRE-DELAY -> the plate (a figure-eight tank of diffusers and delays: the dense, instant build of a
+//   plate, no slap) -> the two pickups, spaced by WIDTH ->
+//   OB:    the pickups' mild colour (a little presence around 2.8 kHz) -> LOW CUT / HIGH CUT -> the OUTPUT IRON (the
+//          balanced output transformer: the lows bloom and thicken, more with DRIVE; the very top softens)
+//   CLEAN: flat pickups -> LOW CUT / HIGH CUT -> a transformerless line output
+//   -> MIX (a send law: the dry stays at full up to 50 %) -> OUTPUT -> the house output stage (band SAT, CLIP always on).
+// OB's plate is the denser, more metallic one (tighter diffusion, less smear in the tank), its send band-limited by
+// the drive amplifier; CLEAN's plate is full bandwidth, a little smoother and brighter. The two are level matched,
+// and the wet level holds steady across the DAMPER and PLATE settings.
+//   DAMPER  the damper's position, read as the decay time: 0.7 s (closed) to 5.5 s (open).
+//   PRE-DELAY  0 - 250 ms.  PLATE  SMALL / MEDIUM / LARGE (a larger plate is a little slower to build and darker).
+//   DRIVE  the valve drive amplifier (OB only).  LOW CUT 20 - 400 Hz, HIGH CUT 2 - 20 kHz (12 dB / oct each).
+//   WIDTH  the pickups' spacing: 0 = both together (mono), 100 % = the full width of the plate.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the plate's tension and the pickups' gain wander slowly - the
+// tail's movement breathes; on CLEAN only a trace remains.
+// Changing the model or the plate size fades the return out, clears the plate and fades it back in (the dry is not
+// touched).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:2.2<0.7,5.5,0.01>-Damper (decay, s)
+slider4:20<0,250,0.1>-Pre-delay (ms)
+slider5:1<0,2,1{Small,Medium,Large}>-Plate
+slider6:30<0,100,1>-Drive (%)
+slider7:100<20,400,1>-Low cut (Hz)
+slider8:12000<2000,20000,10>-High cut (Hz)
+slider9:80<0,100,1>-Width (%)
+slider10:25<0,100,1>-Mix (%)
+slider11:0<-24,12,0.1>-Output (dB)
+slider12:0<0,1,1{OB,Clean}>-Model
+slider13:50<0,100,1>-Wander (%)
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-plate74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+t4_HB = s74_alloc(64); s74_hbdesign(t4_HB, 63, 8);
+t4u.s74_upinit(63, t4_HB, 64); t4d.s74_dninit(63, t4_HB, 64);
+t4_ostm = s74_alloc(4096);
+t4P.s74_dlinit(65536);                                  // the pre-delay
+// the plate's tank (lengths at 29761 Hz, the classic figure-eight; room for LARGE at 192 kHz)
+t4i1.s74_dlinit(2048); t4i2.s74_dlinit(2048); t4i3.s74_dlinit(4096); t4i4.s74_dlinit(4096);
+t4m1.s74_dlinit(8192); t4d1.s74_dlinit(65536); t4a1.s74_dlinit(16384); t4d2.s74_dlinit(32768);
+t4m2.s74_dlinit(8192); t4d3.s74_dlinit(65536); t4a2.s74_dlinit(32768); t4d4.s74_dlinit(32768);
+function t4_clr() instance(buf, len) ( memset(buf, 0, len); );
+
+// ---------- the stages ----------
+// the valve drive amplifier: a triode-ish curve, a little lopsided (even harmonics), level held as DRIVE rises
+function t4_valve(x) local(k) (
+  k = 1 + 6 * t4_drv * t4_drv + 1.5 * t4_drv;
+  (s74_th(x * k + 0.12) - s74_th(0.12)) / k * t4_vg;
+);
+// the output iron: the lows bloom (and thicken with DRIVE), the very top softens
+function t4_iron(x) instance(lo, hf) (
+  lo += (x - lo) * t4_kio;
+  x = (x - lo) + 1.3 * s74_th(lo * t4_ki) / t4_ki;
+  hf += (x - hf) * t4_khf;
+  hf;
+);
+function t4_ironclr() instance(lo, hf) ( lo = hf = 0; );
+
+// ---------- the wet level, normalised per model and plate (dB, measured on pink noise) ----------
+function t4_wnorm() local(d) (
+  d = t4_mod ? (t4_pl == 0 ? -2.92 : t4_pl == 1 ? -1.96 : -1.84) : (t4_pl == 0 ? -4.47 : t4_pl == 1 ? -3.79 : -3.40);
+  t4_wn = 10 ^ (d / 20);
+);
+
+// ---------- settings ----------
+function t4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  t4_tpd = slider4 / 1000 * srate;
+  t4_tdrv = slider6 / 100; t4_tvg = 10 ^ ((0.8 + 1.2 * t4_tdrv + 1.6 * t4_tdrv * t4_tdrv) / 20);   // the drive's level makeup
+  t4_twid = slider9 / 100;
+  t4_tmix = slider10 / 100; t4_tog = 10 ^ (slider11 / 20);
+  t4_tmo = slider12 >= 0.5; t4_tpl = min(max(floor(slider5 + 0.5), 0), 2);
+  t4_rt = min(max(slider3, 0.7), 5.5);
+  drift_macro(slider13);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+// the plate: its size, the tank's damping and diffusion (OB: denser, more metallic; CLEAN: full bandwidth)
+function t4_plate() local(f) (
+  t4_sz = (t4_pl == 0 ? 0.74 : t4_pl == 1 ? 1 : 1.3) * srate / 29761;
+  t4_half = (672 + 4453 + 1800 + 3720 + 908 + 4217 + 2656 + 3163) * 0.5 * t4_sz / srate;   // one half of the eight (s)
+  f = t4_pl == 0 ? 1.12 : t4_pl == 1 ? 1 : 0.88;
+  t4_kd = s74_k((t4_mod ? 11500 : 9000) * f, srate);
+  t4_kb = s74_k(t4_mod ? 20000 : 11000, srate);
+  t4_gi1 = t4_mod ? 0.75 : 0.78; t4_gi2 = t4_mod ? 0.625 : 0.67; t4_gdf = t4_mod ? 0.5 : 0.58;
+  t4_exb = t4_mod ? 12 : 8;
+  t4_wnorm();
+);
+function t4_cuts() (
+  t4lcL.s74_bqset(1, t4_lcf, 0, 0.707, srate); t4lcR.s74_bqset(1, t4_lcf, 0, 0.707, srate);
+  t4hcL.s74_bqset(0, t4_hcf, 0, 0.707, srate); t4hcR.s74_bqset(0, t4_hcf, 0, 0.707, srate);
+);
+// the decay: the damping is applied twice in each half of the eight, so -60 dB per RT needs 10^(-1.5 * half / RT)
+function t4_dset() local(l) (
+  t4_tdec = 10 ^ (-1.5 * t4_half / t4_rt);
+  l = log(t4_rt / 2.2); t4_twg = t4_wn * 10 ^ (-(2.19 * l + 0.74 * l * l) / 20);   // a longer tail is not louder
+);
+function t4_tankclr() (
+  t4i1.t4_clr(); t4i2.t4_clr(); t4i3.t4_clr(); t4i4.t4_clr(); t4m1.t4_clr(); t4d1.t4_clr(); t4a1.t4_clr(); t4d2.t4_clr();
+  t4m2.t4_clr(); t4d3.t4_clr(); t4a2.t4_clr(); t4d4.t4_clr();
+  t4_bw = t4_lA = t4_lB = t4_bL = t4_bR = 0;
+  t4pkL.s74_bqclr(); t4pkR.s74_bqclr(); t4irL.t4_ironclr(); t4irR.t4_ironclr();
+);
+function t4_srinit() (
+  t4_sr = srate; t4_sm = s74_kt(0.02, srate); t4_kpd = s74_kt(0.08, srate); t4_fd = 1 / (0.012 * srate);
+  t4_kio = s74_k(160, srate); t4_khf = s74_k(16000, srate);
+  t4pkL.s74_bqset(3, 2800, 1.5, 0.9, srate); t4pkR.s74_bqset(3, 2800, 1.5, 0.9, srate);
+  t4_lcf = slider7; t4_hcf = slider8; t4_cuts();
+  t4_plate(); t4_dset();
+  ost_init(t4_ostm);
+);
+in_init();
+t4_update();
+t4_mod = t4_tmo; t4_pl = t4_tpl;
+t4_srinit();
+t4_dfT.drift_init(0.6 + rand(0.4)); t4_dfM.drift_init(0.8 + rand(0.4));
+t4_dgL.drift_init(0.8 + rand(0.4)); t4_dgR.drift_init(0.8 + rand(0.4));
+t4_sgL = rand(2) - 1; t4_sgR = rand(2) - 1;
+t4oL.ost_ch_init(); t4oR.ost_ch_init();
+t4_dec = t4_tdec; t4_wg = t4_twg; t4_mix = t4_tmix; t4_og = t4_tog; t4_pd = t4_tpd; t4_drv = t4_tdrv; t4_vg = t4_tvg; t4_wid = t4_twid;
+t4_ki = 1 + 3 * t4_drv; t4_fade = 1; t4_fst = 0; t4_hold = 0; t4_gwL = t4_gwR = 1; t4_ex = t4_exb * t4_sz; t4_mi = 0.8 / srate;
+
+// ---------- presets ----------
+function t4_set(dm, pd, pl, dr, lc, hc, wi, mx, ou, mo) (
+  slider3 = dm; slider4 = pd; slider5 = pl; slider6 = dr; slider7 = lc; slider8 = hc; slider9 = wi; slider10 = mx;
+  slider11 = ou; slider12 = mo;
+  slider_automate(4092);                                // sliders 3 - 12 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#t4_pm = "Init|Announcer Plate|Studio A Vocal|Radio Drama Steel|Concert Relay|Choir Hall Plate|Snare Steel|Truck Drum Plate|Driven Iron Plate|Clean Vocal Plate|Clean Long Steel|Clean Short Plate";
+function load_preset(p) (
+  //               dmp    pd  pl  drv   lc     hc    wid  mix   out  mo
+  p == 1  ? t4_set(2.2,   20,  1,   30,  100,  12000,   80,  25,     0,  0) :     // Init
+  p == 2  ? t4_set(1.2,   10,  0,   25,  220,   8000,   60,  15,   0.8,  0) :     // Announcer Plate
+  p == 3  ? t4_set(2.4,   60,  1,   30,  160,  10000,   85,  22,   0.3,  0) :     // Studio A Vocal
+  p == 4  ? t4_set(1.6,   15,  0,   45,  180,   7000,   70,  25,   0.3,  0) :     // Radio Drama Steel
+  p == 5  ? t4_set(3.0,   30,  2,   25,  100,  11000,  100,  25,     0,  0) :     // Concert Relay
+  p == 6  ? t4_set(4.6,   45,  2,   20,   90,   9000,  100,  28,  -0.3,  0) :     // Choir Hall Plate
+  p == 7  ? t4_set(1.4,    0,  1,   45,  200,  12000,   90,  25,     0,  0) :     // Snare Steel
+  p == 8  ? t4_set(1.9,   10,  1,   55,  140,  10000,   85,  22,   0.2,  0) :     // Truck Drum Plate
+  p == 9  ? t4_set(2.6,   20,  1,   90,  120,   9000,   80,  25,   0.1,  0) :     // Driven Iron Plate
+  p == 10 ? t4_set(2.2,   50,  1,   30,  150,  16000,   85,  22,   0.2,  1) :     // Clean Vocal Plate
+  p == 11 ? t4_set(5.0,   35,  2,   30,   60,  20000,  100,  25,  -0.1,  1) :     // Clean Long Steel
+  p == 12 ? t4_set(0.9,    5,  0,   30,  180,  18000,   70,  25,   0.3,  1) :     // Clean Short Plate
+  p == 13 ? (                                               // Reset all to defaults
+    t4_set(2.2, 20, 1, 30, 100, 12000, 80, 25, 0, 0);
+    slider1 = 0; slider2 = 1; slider13 = 50; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3; slider19 = 1;
+    slider_automate(524287);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+t4_update();
+
+@block
+srate != t4_sr ? t4_srinit();
+t4_update();                                            // knobs moved on the panel do not run @slider
+t4_dset();
+// LOW CUT / HIGH CUT: the corners glide (about 20 ms)
+(t4_lcf != slider7 || t4_hcf != slider8) ? (
+  t4_kc = 1 - exp(-samplesblock / (0.02 * srate));
+  t4_lcf += (slider7 - t4_lcf) * t4_kc; abs(slider7 - t4_lcf) < 0.05 ? t4_lcf = slider7;
+  t4_hcf += (slider8 - t4_hcf) * t4_kc; abs(slider8 - t4_hcf) < 1 ? t4_hcf = slider8;
+  t4_cuts();
+);
+// WANDER: on OB the plate's tension (the tank's movement) and the pickups' gain wander; on CLEAN only a trace
+t4_di = 0.12 * dm_s * samplesblock / srate;
+t4_wa = dm_a * (t4_mod ? 0.2 : 1);
+t4_ex = t4_exb * (1 + 0.3 * t4_wa * t4_dfT.drift_tick(t4_di)) * t4_sz;
+t4_mi = (t4_mod ? 0.9 : 0.7) * (1 + 0.15 * t4_wa * t4_dfM.drift_tick(t4_di)) / srate;
+t4_gwL = 1 + t4_wa * (0.012 * t4_dgL.drift_tick(t4_di) + 0.005 * t4_sgL);
+t4_gwR = 1 + t4_wa * (0.012 * t4_dgR.drift_tick(t4_di) + 0.005 * t4_sgR);
+t4a_vi = max(t4a_vi, t4_viL); t4a_vo = max(t4a_vo, t4_vL);
+t4a_lv = max(t4a_lv, t4_lvm); t4_lvm = 0;
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+t4_mix += (t4_tmix - t4_mix) * t4_sm; t4_og += (t4_tog - t4_og) * t4_sm; t4_pd += (t4_tpd - t4_pd) * t4_kpd;
+t4_drv += (t4_tdrv - t4_drv) * t4_sm; t4_vg += (t4_tvg - t4_vg) * t4_sm; t4_wid += (t4_twid - t4_wid) * t4_sm;
+t4_dec += (t4_tdec - t4_dec) * t4_sm; t4_wg += (t4_twg - t4_wg) * t4_sm;
+t4_ki = 1 + 3 * t4_drv;
+// a change of model or plate: fade the return out, switch and clear the plate at the silent point, wait, fade in
+(t4_tmo != t4_mod || t4_tpl != t4_pl) && t4_fst == 0 ? t4_fst = 1;
+t4_fst == 1 ? ( t4_fade -= t4_fd; t4_fade <= 0 ? (
+  t4_fade = 0; t4_mod = t4_tmo; t4_pl = t4_tpl;
+  t4_plate(); t4_dset(); t4_dec = t4_tdec; t4_wg = t4_twg; t4_ex = t4_exb * t4_sz;
+  t4_tankclr();
+  t4_hold = 64; t4_fst = 2; ); ) :
+t4_fst == 2 ? ( t4_hold -= 1; t4_hold <= 0 ? t4_fst = 3; ) :
+t4_fst == 3 ? ( t4_fade += t4_fd; t4_fade >= 1 ? ( t4_fade = 1; t4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+t4_xl = in_l; t4_xr = in_r;
+t4_viL = max(t4_viL * 0.9995, abs(t4_xl) + abs(t4_xr));
+
+// ---------- the send: the valve drive amplifier (OB) or the flat line driver (CLEAN), 2x ----------
+t4_s = (t4_xl + t4_xr) * 0.5;
+t4u.s74_up(t4_s);
+t4_mod ? ( t4_q0 = t4u.o0; t4_q1 = t4u.o1; ) : ( t4_q0 = t4_valve(t4u.o0); t4_q1 = t4_valve(t4u.o1); );
+t4_s = t4d.s74_dn(t4_q0, t4_q1);
+t4_lvm = max(t4_lvm, abs(t4_s));
+// the pre-delay (less the oversampling's 31 samples)
+t4P.s74_dlw(t4_s);
+t4_in = t4P.s74_dlr(max(t4_pd - 31, 1));
+
+// ---------- the plate: the bandwidth in, the input diffusers, the figure eight ----------
+t4_bw += (t4_in - t4_bw) * t4_kb;
+t4_u = t4i1.s74_ap(t4_bw, 142 * t4_sz, t4_gi1); t4_u = t4i2.s74_ap(t4_u, 107 * t4_sz, t4_gi1);
+t4_u = t4i3.s74_ap(t4_u, 379 * t4_sz, t4_gi2); t4_u = t4i4.s74_ap(t4_u, 277 * t4_sz, t4_gi2);
+t4_ph += t4_mi; t4_ph >= 1 ? t4_ph -= 1;
+t4_a = t4_u + t4_bR * t4_dec;
+t4_a = t4m1.s74_ap(t4_a, 672 * t4_sz + t4_ex * sin(2 * $pi * t4_ph), -0.7);
+t4d1.s74_dlw(t4_a); t4_a = t4d1.s74_dlr(4453 * t4_sz);
+t4_lA += (t4_a - t4_lA) * t4_kd; t4_a = t4_lA * t4_dec;
+t4_a = t4a1.s74_ap(t4_a, 1800 * t4_sz, t4_gdf);
+t4d2.s74_dlw(t4_a); t4_bL = t4d2.s74_dlr(3720 * t4_sz);
+t4_b = t4_u + t4_bL * t4_dec;
+t4_b = t4m2.s74_ap(t4_b, 908 * t4_sz + t4_ex * cos(2 * $pi * t4_ph), -0.7);
+t4d3.s74_dlw(t4_b); t4_b = t4d3.s74_dlr(4217 * t4_sz);
+t4_lB += (t4_b - t4_lB) * t4_kd; t4_b = t4_lB * t4_dec;
+t4_b = t4a2.s74_ap(t4_b, 2656 * t4_sz, t4_gdf);
+t4d4.s74_dlw(t4_b); t4_bR = t4d4.s74_dlr(3163 * t4_sz);
+
+// ---------- the pickups: taps round the tank, spaced by WIDTH ----------
+t4_wl = t4d3.s74_dlr(266 * t4_sz) + t4d3.s74_dlr(2974 * t4_sz) - t4a2.s74_dlr(1913 * t4_sz) + t4d4.s74_dlr(1996 * t4_sz) - t4d1.s74_dlr(1990 * t4_sz) - t4a1.s74_dlr(187 * t4_sz) - t4d2.s74_dlr(1066 * t4_sz);
+t4_wr = t4d1.s74_dlr(353 * t4_sz) + t4d1.s74_dlr(3627 * t4_sz) - t4a1.s74_dlr(1228 * t4_sz) + t4d2.s74_dlr(2673 * t4_sz) - t4d3.s74_dlr(2111 * t4_sz) - t4a2.s74_dlr(335 * t4_sz) - t4d4.s74_dlr(121 * t4_sz);
+t4_m = (t4_wl + t4_wr) * 0.5; t4_sd = (t4_wl - t4_wr) * 0.5 * t4_wid; t4_wl = t4_m + t4_sd; t4_wr = t4_m - t4_sd;
+// OB: the pickups' colour; the cuts; OB: the output iron
+!t4_mod ? ( t4_wl = t4pkL.s74_bq(t4_wl); t4_wr = t4pkR.s74_bq(t4_wr); );
+t4_wl = t4hcL.s74_bq(t4lcL.s74_bq(t4_wl)); t4_wr = t4hcR.s74_bq(t4lcR.s74_bq(t4_wr));
+!t4_mod ? ( t4_wl = t4irL.t4_iron(t4_wl); t4_wr = t4irR.t4_iron(t4_wr); );
+t4_wl *= t4_wg * t4_gwL * t4_fade; t4_wr *= t4_wg * t4_gwR * t4_fade;
+
+// ---------- MIX (a send law), OUTPUT and the house output stage ----------
+t4_gd = min(1, 2 - 2 * t4_mix); t4_gw = min(1, 2 * t4_mix);
+t4_yl = t4_xl * t4_gd + t4_wl * t4_gw; t4_yr = t4_xr * t4_gd + t4_wr * t4_gw;
+t4_vL = max(t4_vL * 0.9995, abs(t4_yl) + abs(t4_yr));
+t4_yl = t4oL.ost_band(t4_yl) * t4_og; t4_yr = t4oR.ost_band(t4_yr) * t4_og;
+ost_out(t4_yl, t4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider12);
+s74_fonts();
+s74_face(960, 366);
+t4_cln = slider12 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "PLATE74", "SERIES 74", "OB PLATE", #t4_pm, 12);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 200, 292, "INPUT");
+t4mI.s74_edge(26, 92, 176, 62, t4a_vi * 2.83, "IN");
+t4mO.s74_edge(26, 162, 176, 62, t4a_vo * 2.83, "OUT");
+t4a_vi *= 0.6; t4a_vo *= 0.6;
+s74_off = 0; s74_knob(68, 288, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(160, 262, "GUARD");
+s74_lens(134, 274, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(194 * sc, 286 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- THE PLATE: the steel in its frame, DAMPER, PRE-DELAY, WIDTH, the size ----------
+s74_mod(226, 62, 340, 292, "THE PLATE");
+// the frame and the sheet (its width follows the size), the springs, the driver, the pickups, the damper's shadow
+fx_ = 240; fy_ = 92; fw_ = 312; fh_ = 84;
+ui_cola(0x000000, 0.4); s74_r(fx_ + 1, fy_ + 2, fw_, fh_);
+ui_col(0x101112); s74_r(fx_, fy_, fw_, fh_);
+pw_ = (fw_ - 16) * (slider5 < 0.5 ? 0.66 : slider5 < 1.5 ? 0.83 : 1); px_ = fx_ + 8 + (fw_ - 16 - pw_) * 0.5; py_ = fy_ + 10; ph_ = fh_ - 32;
+ui_col(0x2A2D30); s74_r(fx_ + 4, fy_ + 4, fw_ - 8, fh_ - 22);
+i_ = 0; loop(5, ui_col(0x5A5F63); s74_ln(px_ + 12 + i_ * (pw_ - 24) / 4, fy_ + 4, px_ + 12 + i_ * (pw_ - 24) / 4, py_, 1);
+  s74_ln(px_ + 12 + i_ * (pw_ - 24) / 4, py_ + ph_, px_ + 12 + i_ * (pw_ - 24) / 4, fy_ + fh_ - 18, 1); i_ += 1; );
+ui_col(0x8E9397); s74_r(px_, py_, pw_, ph_);
+gl_ = min(t4a_lv * 3, 1);
+i_ = 0; loop(8, ui_cola(0xFFFFFF, 0.05 + 0.04 * (i_ & 1) + gl_ * 0.05 * sin(time_precise() * 17 + i_)); s74_r(px_ + i_ * pw_ / 8, py_, pw_ / 16, ph_); i_ += 1; );
+t4a_lv *= 0.8;
+dc_ = log(5.5 / min(max(slider3, 0.7), 5.5)) / log(5.5 / 0.7);
+dw_ = 12 + (pw_ * 0.62) * dc_;
+ui_cola(0x2C2418, 0.3 + 0.35 * dc_); s74_r(px_ + pw_ - dw_, py_ + 3, dw_, ph_ - 6);
+ui_col(S74_INK); s74_r(px_ + pw_ - dw_ - 2, py_ + 3, 2, ph_ - 6);
+ui_col(S74_HAZ); gfx_circle((px_ + pw_ * 0.25) * sc, (py_ + ph_ * 0.5) * sc, 5 * sc, 1, 1);
+ui_col(0x16181A); gfx_circle((px_ + pw_ * 0.25) * sc, (py_ + ph_ * 0.5) * sc, 2 * sc, 1, 1);
+sp_ = 4 + 15 * slider9 / 100;
+ui_col(0x16181A); gfx_circle((px_ + pw_ * 0.55) * sc, (py_ + ph_ * 0.5 - sp_) * sc, 3.5 * sc, 1, 1); gfx_circle((px_ + pw_ * 0.55) * sc, (py_ + ph_ * 0.5 + sp_) * sc, 3.5 * sc, 1, 1);
+// the read-out strip: decay, size, pre-delay
+sprintf(#t4_ro, "DECAY %.1f S  ·  %s  ·  PRE %.0f MS", slider3, slider5 < 0.5 ? "SMALL" : slider5 < 1.5 ? "MEDIUM" : "LARGE", slider4);
+gfx_setfont(13); ui_col(S74_LAMP); s74_tc(fx_ + fw_ * 0.5, fy_ + fh_ - 9, #t4_ro);
+s74_knob(298, 250, 30, 3, 0.7, 5.5, 2.2, 1, "DAMPER", "%.1f s", 0);
+s74_small(246, 282, "0.7"); s74_small(334, 282, "5.5");
+s74_knob(428, 226, 18, 4, 0, 250, 20, 0, "PRE-DELAY", "%.0f ms", 0);
+s74_knob(512, 226, 18, 9, 0, 100, 80, 0, "WIDTH", "%.0f%%", 0);
+s74_smallc(470, 292, "PLATE");
+i_ = 0; loop(3, pk_pitem("SMALL|MEDIUM|LARGE", i_ + 1, #t_);
+  s74_lens(382 + i_ * 60, 302, 56, 26, floor(slider5 + 0.5) == i_, #t_) ? s74_set(5, i_); i_ += 1; );
+
+// ---------- VALVE · IRON: OB only ----------
+s74_mod(578, 62, 130, 292, "VALVE · IRON");
+s74_off = t4_cln;
+s74_knob(643, 152, 30, 6, 0, 100, 30, 0, "DRIVE", "%.0f%%", 0);
+s74_off = 0;
+// the drive amplifier's valve: the heater glows on OB, brighter as the send drives it
+vx_ = 643; vy_ = 262;
+ui_cola(0x000000, 0.4); s74_rr(vx_ - 15, vy_ - 34, 32, 62, 14);
+ui_col(0x1E2122); s74_rr(vx_ - 16, vy_ - 36, 32, 62, 14);
+ui_col(0x3B3F42); s74_r(vx_ - 9, vy_ - 22, 18, 30);
+ui_col(0x16181A); s74_r(vx_ - 6, vy_ - 19, 12, 24);
+gv_ = t4_cln ? 0 : min(1, 0.35 + gl_ * (0.6 + slider6 / 100));
+gv_ > 0 ? ( i_ = 0; loop(4, ui_cola(0xFF8A2A, gv_ * 0.2); gfx_circle(vx_ * sc, (vy_ - 7) * sc, (3 + i_ * 3) * sc, 1, 1); i_ += 1; );
+  ui_cola(0xFFD080, gv_); s74_r(vx_ - 1.5, vy_ - 17, 3, 20); );
+ui_col(0x8C9296); s74_r(vx_ - 13, vy_ + 22, 26, 6);
+ui_cola(0xFFFFFF, 0.08); s74_rr(vx_ - 13, vy_ - 33, 8, 40, 4);
+t4_cln ? ( s74_smallc(643, 330, "OUT OF PATH ON CLEAN"); ) : ( s74_smallc(643, 330, "DRIVE AMP · OUTPUT IRON"); );
+
+// ---------- RETURN: the cuts, WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(720, 62, 226, 292, "RETURN");
+s74_kc = S74_C_HPF; s74_knob(754, 128, 16, 7, 20, 400, 100, 1, "LOW CUT", "%.0f Hz", 0);
+s74_kc = S74_C_LPF; s74_knob(754, 240, 16, 8, 2000, 20000, 12000, 1, "HIGH CUT", "%.0f Hz", 0);
+s74_kc = 0;
+s74_knob(814, 128, 16, 13, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(814, 240, 13, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(836 * sc, 222 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(866, 106, 150, 10, 0, 100, 25, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(914, 106, 150, 11, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(784, 318, "CUTS 12 DB / OCT");
+
+pk_end();
+ui_end();

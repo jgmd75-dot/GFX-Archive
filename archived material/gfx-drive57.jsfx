@@ -1,0 +1,408 @@
+desc:GFX Drive57 [valve drive]
+//tags: saturation distortion valve tube triode pentode transformer drive series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// DRIVE57 (Series 57: mid-century modernist hi-fi and valve audio): two valve gain stages and an output
+// transformer, run oversampled.
+//   input -> TRIM / GUARD -> 2x or 4x oversampling (linear-phase half-bands) ->
+//   V1 PREAMP: DRIVE into a TRIODE or PENTODE curve (the triode clips softly and unevenly - even harmonics; the
+//     pentode has more gain, a sharper, more even knee - odd harmonics) -> the coupling capacitor ->
+//   V2 SUMMING: its own DRIVE and TRIODE / PENTODE, its headroom and bias following the supply as it SAGs under
+//     load (a slow follower of V2's input: the stage breathes and compresses as it is pushed) ->
+//   the OUTPUT IRON: the core saturates the lows first, the top softens (IRON) -> back to 1x ->
+//   TONE (a tilt, dark to bright, about 900 Hz) -> MIX (with the dry signal, delayed to match) -> OUTPUT ->
+//   the house output stage (band SAT, CLIP always on).
+// BIAS sets both valves' operating point, COLD (cleaner, then a sudden edge) to HOT (earlier, warmer, more even
+// harmonics). Every stage is level matched: turning DRIVE changes the colour far more than the loudness.
+// DRIFT (0-100 %, 50 % = the standard amount): the heaters wander - each valve's bias and gain drift slowly, and
+// the left and right channels never quite match.
+// ULM / COPENHAGEN (the face, in the header): the look and the voice. ULM - a tight, lean low end, a firm knee,
+// quick sag recovery, a little upper-mid presence. COPENHAGEN - a hotter bias and softer knee, rounder iron lows,
+// a soft top, a slow swelling sag. Level matched; presets leave it alone; switching fades out and back in.
+// 2x / 4x: the oversampling (4x by default). The latency is the same in both (37 samples, reported), so changing
+// it only fades the sound out and back in.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:8<0,30,0.1>-V1 drive (dB)
+slider4:0<0,1,1{Triode,Pentode}>-V1 valve
+slider5:4<0,24,0.1>-V2 drive (dB)
+slider6:0<0,1,1{Triode,Pentode}>-V2 valve
+slider7:50<0,100,1>-Bias (cold to hot, %)
+slider8:30<0,100,1>-Sag (%)
+slider9:40<0,100,1>-Iron (%)
+slider10:0<-6,6,0.1>-Tone (dark to bright, dB)
+slider11:100<0,100,1>-Mix (%)
+slider12:0<-24,12,0.1>-Output (dB)
+slider13:1<0,1,1{2x,4x}>-Oversampling
+slider14:50<0,100,1>-Drift (%)
+slider15:0<0,100,1>-Band sat (%)
+slider16:30<0,100,1>-Bias (output stage, %)
+slider17:120<40,400,1>-Sat low band (Hz)
+slider18:6000<2000,16000,10>-Sat high band (Hz)
+slider19:-0.3<-24,0,0.1>-Ceiling (dB)
+slider20:1<0,1,1{Off,Clip}>-(unused, output stage)
+slider21:0<0,1,1{Ulm,Copenhagen}>-Face
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-drive57";
+ext_noinit = 1;
+
+// ---------- memory ----------
+nextmem = 0;
+function alloc(n) local(p) ( p = nextmem; nextmem += n; memset(p, 0, n); p; );
+d7_H1 = alloc(64); d7_H2 = alloc(32);
+d7_MK = alloc(32);                                      // the makeup tables: triode, pentode (11 points each, dB)
+d7_ostm = alloc(4096);
+d7_DRY = alloc(256);                                    // the dry signal's delay (L at 0, R at 128)
+
+// ---------- oversampling: linear-phase half-bands (Kaiser windowed), polyphase (as in Drive81) ----------
+function d7_bi0(x) local(s, t, k) ( s = 1; t = 1; k = 1; loop(30, t *= sqr(x / (2 * k)); s += t; k += 1; ); s; );
+function d7_hbdesign(h, n, beta) local(c, t, k, w, x, se, i0) (
+  c = (n - 1) / 2; i0 = d7_bi0(beta); t = 0;
+  loop(n,
+    k = t - c; x = 2 * t / (n - 1) - 1;
+    w = d7_bi0(beta * sqrt(max(0, 1 - x * x))) / i0;
+    h[t] = k == 0 ? 0.5 : sin($pi * k / 2) / ($pi * k) * w;
+    t += 1;
+  );
+  se = 0; t = 0; loop((n + 1) / 2, se += h[2 * t]; t += 1; );
+  t = 0; loop((n + 1) / 2, h[2 * t] *= 0.5 / se; t += 1; );
+);
+function d7_upinit(n, h, sz) instance(buf, sz2, w, hu, np, mm, dd) local(j) (
+  buf = alloc(2 * sz); sz2 = sz; w = 0; mm = (n + 1) / 2; np = mm / 2; dd = ((n - 1) / 2 - 1) / 2;
+  hu = alloc(np); j = 0; loop(np, hu[j] = 2 * h[2 * j]; j += 1; );
+);
+function d7_up(x) instance(buf, sz2, w, hu, np, mm, dd, o0, o1) local(j, s, p) (
+  w += 1; w >= sz2 ? w = 0; buf[w] = x; buf[w + sz2] = x;
+  p = buf + w + sz2; s = 0; j = 0;
+  loop(np, s += hu[j] * (p[-j] + p[j + 1 - mm]); j += 1; );
+  o0 = s; o1 = p[-dd];
+);
+function d7_dninit(n, h, sz) instance(buf, sz2, w, hu, np, mm, cc) local(j) (
+  buf = alloc(2 * sz); sz2 = sz; w = 0; mm = (n + 1) / 2; np = mm / 2; cc = (n - 1) / 2;
+  hu = alloc(np); j = 0; loop(np, hu[j] = h[2 * j]; j += 1; );
+);
+function d7_dn(x0, x1) instance(buf, sz2, w, hu, np, mm, cc) local(j, s, p) (
+  w += 1; w >= sz2 ? w = 0; buf[w] = x0; buf[w + sz2] = x0;
+  w += 1; w >= sz2 ? w = 0; buf[w] = x1; buf[w + sz2] = x1;
+  p = buf + w + sz2 - 1; s = 0; j = 0;
+  loop(np, s += hu[j] * (p[-2 * j] + p[2 * (j + 1 - mm)]); j += 1; );
+  s + 0.5 * p[-cc];
+);
+function d7_flush() instance(buf, sz2) ( memset(buf, 0, 2 * sz2); );
+d7_hbdesign(d7_H1, 63, 8); d7_hbdesign(d7_H2, 23, 7);
+d7u1L.d7_upinit(63, d7_H1, 64); d7u1R.d7_upinit(63, d7_H1, 64); d7d1L.d7_dninit(63, d7_H1, 64); d7d1R.d7_dninit(63, d7_H1, 64);
+d7u2L.d7_upinit(23, d7_H2, 16); d7u2R.d7_upinit(23, d7_H2, 16); d7d2L.d7_dninit(23, d7_H2, 32); d7d2R.d7_dninit(23, d7_H2, 32);
+d7_LAT = 37;                                            // the 4x chain's latency at 1x; the 2x chain is delayed to match
+d7_L2X = 6;                                             // (the 2x chain is 31 samples: 6 more make it 37)
+d7_X2 = alloc(16);                                      // the 2x chain's extra delay (L at 0, R at 8)
+
+// ---------- the valves ----------
+// tanh (Pade 3/2), exactly 1 with zero slope at +/-3
+function d7_th(x) ( x = min(max(x, -3), 3); x * (27 + x * x) / (27 + 9 * x * x); );
+// TRIODE: soft, and uneven - the grid conducts on the positive side, the cut-off comes later on the negative
+// (even harmonics). PENTODE: a sharper, more even knee (odd harmonics).
+function d7_tri(u) ( u >= 0 ? d7_th(u) : d7_th(0.6 * u) / 0.6; );
+function d7_pen(u) ( u >= 0 ? d7_th(1.35 * u) / 1.35 : d7_th(1.2 * u) / 1.2; );
+function d7_valve(u, pen) ( pen ? d7_pen(u) : d7_tri(u); );
+// the makeup that keeps each stage level matched at -18 dBFS (dB, for DRIVE 0 .. 30 in 3 dB steps; measured)
+function d7_row(k, a, b, c, d, e, f, g, h, i, j, l) local(p) (
+  p = d7_MK + k * 11; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l;
+);
+d7_row(0, 0.04, -2.92, -5.84, -8.69, -11.4, -13.88, -16.01, -17.67, -18.81, -19.49, -19.86);
+d7_row(1, -4.8, -7.51, -9.97, -12.04, -13.58, -14.55, -15.07, -15.37, -15.56, -15.69, -15.78);
+function d7_mk(pen, d) local(p, i, f, q) (
+  p = min(max(d, 0), 30) / 3; i = min(floor(p), 9); f = p - i; q = d7_MK + pen * 11;
+  10 ^ ((q[i] * (1 - f) + q[i + 1] * f) / 20);
+);
+
+// ---------- one channel at the oversampled rate: V1, the coupling cap, V2 with its sag, the iron ----------
+function d7_ch(x) instance(hp, e, lo, hf) local(u, y, b2, g2) (
+  // V1
+  u = x * d7_g1 * d7_vin * d7_dg + d7_b + d7_vb + d7_db;
+  y = (d7_valve(u, d7_p1) - d7_valve(d7_b + d7_vb + d7_db, d7_p1)) * d7_m1;
+  // the coupling capacitor (a gentle high-pass, about 12 Hz)
+  hp += (y - hp) * d7_khp; y -= hp;
+  // V2: the supply sags under load - the gain drops and the bias moves as the stage is pushed
+  e += (abs(y) - e) * (abs(y) > e ? d7_ksa : d7_ksr);
+  g2 = d7_g2 / (1 + d7_sag * e * 1.6); b2 = d7_b + d7_vb + d7_db + d7_sag * e * 0.3;
+  u = y * g2 * d7_dg + b2;
+  y = (d7_valve(u, d7_p2) - d7_valve(b2, d7_p2)) * d7_m2 * (1 + d7_sag * e * 0.8);
+  // the output iron: the core saturates the lows first; the top softens as it is driven
+  lo += (y - lo) * d7_klo;
+  y = (y - lo) + d7_th(lo * d7_ig * d7_igf) / (d7_ig * d7_igf);
+  hf += (y - hf) * d7_khf;
+  hf;
+);
+
+// ---------- settings ----------
+function d7_k(f, fs) ( 1 - exp(-2 * $pi * min(f, 0.45 * fs) / fs); );
+function d7_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  d7_tg1 = 10 ^ (slider3 / 20) * (slider4 >= 0.5 ? 1.8 : 1); d7_p1t = slider4 >= 0.5;
+  d7_tg2 = 10 ^ (slider5 / 20) * (slider6 >= 0.5 ? 1.8 : 1); d7_p2t = slider6 >= 0.5;
+  d7_tm1 = d7_mk(slider4 >= 0.5, slider3); d7_tm2 = d7_mk(slider6 >= 0.5, slider5);
+  d7_tb = (slider7 - 50) / 50 * 0.35;
+  d7_sag = slider8 / 100;
+  d7_tig = 1 + 3 * slider9 / 100;
+  d7_khf = d7_k(19000 * (1 - 0.45 * slider9 / 100), d7_fso);          // the iron's top end softens as IRON rises
+  d7_tilt = slider10; d7_tmix = slider11 / 100; d7_tog = 10 ^ (slider12 / 20);
+  d7_tos = slider13 >= 0.5; d7_tfc = slider21 >= 0.5;
+  drift_macro(slider14);
+  ost_setup(slider15 / 100, slider16 / 100, slider17, slider18, slider19, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = d7_LAT;
+);
+// the TONE tilt: a first-order shelf pair around 900 Hz (at 1x)
+function d7_tiltset() local(g, w, k) (
+  d7_tl = d7_tilt;
+  g = 10 ^ (d7_tilt / 40);                               // half the tilt each way
+  w = tan($pi * 900 / srate);
+  // a high shelf of g^2 relative to the lows, normalised to unity at 900 Hz
+  k = (w - 1) / (w + 1);
+  d7_ta = k; d7_tlo = 1 / g; d7_thi = g;
+);
+// ---------- the face's voicing ----------
+// ULM: German studio precision - a tight, lean low end (the coupling and the iron set higher), a firm knee, quick
+//   sag recovery, a slightly forward upper-mid.
+// COPENHAGEN: Danish home hi-fi - a softer, warmer knee (the valves biased a little hotter, driven a touch less),
+//   rounder blooming lows (the iron saturates lower and sooner), a soft top, a slow sag that swells.
+function d7_bq(f, gdb, q, shelf) local(A, w, cs, sn, al, a0) (
+  A = 10 ^ (gdb / 40); w = 2 * $pi * f / srate; cs = cos(w); sn = sin(w); al = sn / (2 * q);
+  !shelf ? (
+    a0 = 1 + al / A; d7_e0 = (1 + al * A) / a0; d7_e1 = -2 * cs / a0; d7_e2 = (1 - al * A) / a0; d7_e3 = -2 * cs / a0; d7_e4 = (1 - al / A) / a0;
+  ) : (
+    al = 2 * sqrt(A) * al;
+    a0 = (A + 1) - (A - 1) * cs + al;
+    d7_e0 = A * ((A + 1) + (A - 1) * cs + al) / a0; d7_e1 = -2 * A * ((A - 1) + (A + 1) * cs) / a0; d7_e2 = A * ((A + 1) + (A - 1) * cs - al) / a0;
+    d7_e3 = 2 * ((A - 1) - (A + 1) * cs) / a0; d7_e4 = ((A + 1) - (A - 1) * cs - al) / a0;
+  );
+);
+function d7_voice() (
+  !d7_fc ? (
+    d7_khp = d7_k(28, d7_fso); d7_klo = d7_k(140, d7_fso); d7_igf = 0.85;
+    d7_ksa = 1 - exp(-1 / (0.008 * d7_fso)); d7_ksr = 1 - exp(-1 / (0.12 * d7_fso));
+    d7_vb = 0; d7_vin = 1; d7_vmk = 1.245; d7_bq(2800, 1.2, 0.8, 0);
+  ) : (
+    d7_khp = d7_k(8, d7_fso); d7_klo = d7_k(80, d7_fso); d7_igf = 1.35;
+    d7_ksa = 1 - exp(-1 / (0.03 * d7_fso)); d7_ksr = 1 - exp(-1 / (0.5 * d7_fso));
+    d7_vb = 0.08; d7_vin = 0.9; d7_vmk = 1.357; d7_bq(6500, -2.5, 0.7, 1);
+  );
+);
+function d7_srinit() (
+  d7_sr = srate; d7_os = d7_tos; d7_fso = (d7_os ? 4 : 2) * srate;
+  d7_voice();
+  d7_sm = 1 - exp(-1 / (0.02 * srate));
+  d7_fd = 1 / (0.006 * srate);
+  ost_init(d7_ostm);
+  d7_tiltset();
+);
+d7_tilt = 0; d7_tos = 1; d7_fc = d7_tfc = slider21 >= 0.5;
+in_init();
+d7_srinit();
+d7_dfL.drift_init(0.8 + rand(0.4)); d7_dfR.drift_init(0.8 + rand(0.4)); d7_dgL.drift_init(0.8 + rand(0.4)); d7_dgR.drift_init(0.8 + rand(0.4));
+d7_sbL = rand(2) - 1; d7_sbR = rand(2) - 1; d7_sgL = rand(2) - 1; d7_sgR = rand(2) - 1;
+d7L.ost_ch_init(); d7R.ost_ch_init();
+d7_update();
+d7_g1 = d7_tg1; d7_g2 = d7_tg2; d7_m1 = d7_tm1; d7_m2 = d7_tm2; d7_b = d7_tb; d7_ig = d7_tig; d7_mix = d7_tmix; d7_og = d7_tog;
+d7_p1 = d7_p1t; d7_p2 = d7_p2t; d7_fade = 1; d7_fst = 0; d7_hold = 0; d7_dw = 0; d7_pw = 0;
+d7_vL = d7_vR = d7_viL = d7_viR = 0;
+
+// ---------- presets ----------
+function d7_set(tr, d1, v1, d2, v2, bi, sg, ir, tn, mx, ou) (
+  slider1 = tr; slider3 = d1; slider4 = v1; slider5 = d2; slider6 = v2; slider7 = bi; slider8 = sg; slider9 = ir;
+  slider10 = tn; slider11 = mx; slider12 = ou;
+  slider_automate(4095);                                // sliders 1-12 (GUARD, 2x / 4x, DRIFT and the output stage stay)
+);
+#d7_pm = "Init|Warm Glow|Hi-Fi Polish|Triode Bus|Pentode Crunch|Vocal Valve|Bass Iron|Cold Bias Edge|Hot Bias Bloom|Parallel Fire|Sagging Supply|Full Melt";
+d7_npre = 12;
+function load_preset(p) (
+  p == 1  ? d7_set(0,  8, 0,  4, 0, 50, 30, 40,    0, 100, 0) :     // Init
+  p == 2  ? d7_set(0, 10, 0,  6, 0, 60, 35, 55, -0.8, 100, 0) :     // Warm Glow
+  p == 3  ? d7_set(0,  4, 0,  2, 0, 45, 15, 25,  1.2, 100, 0) :     // Hi-Fi Polish
+  p == 4  ? d7_set(0,  6, 0,  8, 0, 55, 45, 50,    0, 100, 0) :     // Triode Bus
+  p == 5  ? d7_set(0, 18, 1, 10, 1, 45, 30, 35,  0.8, 100, -3.3) :     // Pentode Crunch
+  p == 6  ? d7_set(0, 12, 0,  6, 1, 55, 25, 30,  1.5, 100, -1.1) :     // Vocal Valve
+  p == 7  ? d7_set(0, 14, 0,  8, 0, 60, 40, 90, -1.5, 100, 0) :     // Bass Iron
+  p == 8  ? d7_set(0, 16, 1,  6, 0, 15, 20, 30,  0.5, 100, -1.2) :     // Cold Bias Edge
+  p == 9  ? d7_set(0, 14, 0,  8, 0, 88, 40, 45, -0.5, 100, 1.4) :     // Hot Bias Bloom
+  p == 10 ? d7_set(0, 26, 1, 16, 1, 50, 30, 40,  1.0,  35, -1.9) :     // Parallel Fire
+  p == 11 ? d7_set(0, 12, 0, 14, 0, 55, 95, 50,    0, 100, 0) :     // Sagging Supply
+  p == 12 ? d7_set(0, 30, 1, 24, 1, 70, 70, 80, -1.0, 100, -5.2) :    // Full Melt
+  p == 13 ? (                                                       // Reset all to defaults
+    d7_set(0, 8, 0, 4, 0, 50, 30, 40, 0, 100, 0);
+    slider2 = 1; slider13 = 1; slider14 = 50; slider15 = 0; slider16 = 30; slider17 = 120; slider18 = 6000; slider19 = -0.3; slider20 = 1;
+    slider_automate(1048575);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+d7_update();
+
+@block
+srate != d7_sr ? d7_srinit();
+d7_update();                                            // knobs moved on the panel do not run @slider
+// DRIFT: each valve's heater wanders - bias and gain - and the two channels never quite match
+d7_di = 0.12 * dm_s * samplesblock / srate;
+d7_dbL = dm_a * (0.035 * d7_dfL.drift_tick(d7_di) + 0.012 * d7_sbL); d7_dbR = dm_a * (0.035 * d7_dfR.drift_tick(d7_di) + 0.012 * d7_sbR);
+d7_dgLv = 1 + dm_a * (0.03 * d7_dgL.drift_tick(d7_di) + 0.01 * d7_sgL); d7_dgRv = 1 + dm_a * (0.03 * d7_dgR.drift_tick(d7_di) + 0.01 * d7_sgR);
+d7_tilt != d7_tl ? d7_tiltset();
+// the panel's meters
+d7a_vi = max(d7a_vi, d7_viL); d7a_vo = max(d7a_vo, d7_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+d7_g1 += (d7_tg1 - d7_g1) * d7_sm; d7_g2 += (d7_tg2 - d7_g2) * d7_sm;
+d7_m1 += (d7_tm1 - d7_m1) * d7_sm; d7_m2 += (d7_tm2 - d7_m2) * d7_sm;
+d7_b += (d7_tb - d7_b) * d7_sm; d7_ig += (d7_tig - d7_ig) * d7_sm;
+d7_mix += (d7_tmix - d7_mix) * d7_sm; d7_og += (d7_tog - d7_og) * d7_sm;
+// a change of valve or of the oversampling: fade out, switch at the silent point, wait for the new chain, fade in
+(d7_p1t != d7_p1 || d7_p2t != d7_p2 || d7_tos != d7_os || d7_tfc != d7_fc) && d7_fst == 0 ? d7_fst = 1;
+d7_fst == 1 ? ( d7_fade -= d7_fd; d7_fade <= 0 ? (
+  d7_fade = 0; d7_p1 = d7_p1t; d7_p2 = d7_p2t;
+  d7_tfc != d7_fc ? ( d7_fc = d7_tfc; d7_voice(); );
+  d7_tos != d7_os ? ( d7_os = d7_tos; d7_fso = (d7_os ? 4 : 2) * srate; d7_srinit();
+                      d7u1L.d7_flush(); d7u1R.d7_flush(); d7d1L.d7_flush(); d7d1R.d7_flush();
+                      d7u2L.d7_flush(); d7u2R.d7_flush(); d7d2L.d7_flush(); d7d2R.d7_flush(); memset(d7_X2, 0, 16); );
+  d7_hold = d7_LAT + 8; d7_fst = 2; ); ) :
+d7_fst == 2 ? ( d7_hold -= 1; d7_hold <= 0 ? d7_fst = 3; ) :
+d7_fst == 3 ? ( d7_fade += d7_fd; d7_fade >= 1 ? ( d7_fade = 1; d7_fst = 0; ); );
+
+// ---------- input: TRIM and GUARD ----------
+in_process(spl0, spl1);
+d7_xl = in_l; d7_xr = in_r;
+d7_viL = max(d7_viL * 0.9995, abs(d7_xl) + abs(d7_xr));
+// the dry signal, delayed to line up with the oversampled chain
+d7_DRY[d7_dw] = d7_xl; d7_DRY[128 + d7_dw] = d7_xr;
+d7_dr = (d7_dw - d7_LAT) & 127; d7_yld = d7_DRY[d7_dr]; d7_yrd = d7_DRY[128 + d7_dr]; d7_dw = (d7_dw + 1) & 127;
+
+// ---------- the valves, oversampled ----------
+d7_dg = d7_dgLv; d7_db = d7_dbL;
+d7_os ? (
+  // 4x: up, up, the valves, down, down (the 2x stream runs one 2x sample late, as in Drive81)
+  d7u1L.d7_up(d7_xl); d7u1R.d7_up(d7_xr);
+  d7_a1l = d7u1L.o0; d7_a1r = d7u1R.o0;
+  d7u2L.d7_up(d7_p1l); d7u2R.d7_up(d7_p1r);
+  d7_p1l = d7u1L.o1; d7_p1r = d7u1R.o1;
+  d7_dg = d7_dgLv; d7_db = d7_dbL; d7_q0l = d7cL.d7_ch(d7u2L.o0); d7_q1l = d7cL.d7_ch(d7u2L.o1);
+  d7_dg = d7_dgRv; d7_db = d7_dbR; d7_q0r = d7cR.d7_ch(d7u2R.o0); d7_q1r = d7cR.d7_ch(d7u2R.o1);
+  d7_h0l = d7d2L.d7_dn(d7_q0l, d7_q1l); d7_h0r = d7d2R.d7_dn(d7_q0r, d7_q1r);
+  d7u2L.d7_up(d7_a1l); d7u2R.d7_up(d7_a1r);
+  d7_dg = d7_dgLv; d7_db = d7_dbL; d7_q0l = d7cL.d7_ch(d7u2L.o0); d7_q1l = d7cL.d7_ch(d7u2L.o1);
+  d7_dg = d7_dgRv; d7_db = d7_dbR; d7_q0r = d7cR.d7_ch(d7u2R.o0); d7_q1r = d7cR.d7_ch(d7u2R.o1);
+  d7_h1l = d7d2L.d7_dn(d7_q0l, d7_q1l); d7_h1r = d7d2R.d7_dn(d7_q0r, d7_q1r);
+  d7_yl = d7d1L.d7_dn(d7_h0l, d7_h1l); d7_yr = d7d1R.d7_dn(d7_h0r, d7_h1r);
+) : (
+  // 2x: up, the valves, down; then delayed to the 4x chain's latency
+  d7u1L.d7_up(d7_xl); d7u1R.d7_up(d7_xr);
+  d7_dg = d7_dgLv; d7_db = d7_dbL; d7_q0l = d7cL.d7_ch(d7u1L.o0); d7_q1l = d7cL.d7_ch(d7u1L.o1);
+  d7_dg = d7_dgRv; d7_db = d7_dbR; d7_q0r = d7cR.d7_ch(d7u1R.o0); d7_q1r = d7cR.d7_ch(d7u1R.o1);
+  d7_yl = d7d1L.d7_dn(d7_q0l, d7_q1l); d7_yr = d7d1R.d7_dn(d7_q0r, d7_q1r);
+  d7_X2[d7_pw] = d7_yl; d7_X2[8 + d7_pw] = d7_yr;
+  d7_pr = (d7_pw - d7_L2X) & 7; d7_yl = d7_X2[d7_pr]; d7_yr = d7_X2[8 + d7_pr]; d7_pw = (d7_pw + 1) & 7;
+);
+
+// ---------- the face's voice EQ (ULM: a little upper-mid presence; COPENHAGEN: a soft top) ----------
+d7_o = d7_e0 * d7_yl + d7_vl1; d7_vl1 = d7_e1 * d7_yl - d7_e3 * d7_o + d7_vl2; d7_vl2 = d7_e2 * d7_yl - d7_e4 * d7_o; d7_yl = d7_o * d7_vmk;
+d7_o = d7_e0 * d7_yr + d7_vr1; d7_vr1 = d7_e1 * d7_yr - d7_e3 * d7_o + d7_vr2; d7_vr2 = d7_e2 * d7_yr - d7_e4 * d7_o; d7_yr = d7_o * d7_vmk;
+// ---------- TONE: the tilt (a first-order split at 900 Hz: the lows down and the highs up, or the other way) ----------
+d7_tilt != 0 ? (
+  d7_tzl = d7_ta * d7_yl + d7_tsl; d7_tsl = d7_yl - d7_ta * d7_tzl;      // allpass
+  d7_lpl = (d7_yl + d7_tzl) * 0.5; d7_yl = d7_lpl * d7_tlo + (d7_yl - d7_lpl) * d7_thi;
+  d7_tzr = d7_ta * d7_yr + d7_tsr; d7_tsr = d7_yr - d7_ta * d7_tzr;
+  d7_lpr = (d7_yr + d7_tzr) * 0.5; d7_yr = d7_lpr * d7_tlo + (d7_yr - d7_lpr) * d7_thi;
+);
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+d7_yl = (d7_yld + (d7_yl - d7_yld) * d7_mix) * d7_fade; d7_yr = (d7_yrd + (d7_yr - d7_yrd) * d7_mix) * d7_fade;
+d7_vL = max(d7_vL * 0.9995, abs(d7_yl) + abs(d7_yr));
+d7_yl = d7L.ost_band(d7_yl) * d7_og; d7_yr = d7R.ost_band(d7_yr) * d7_og;
+ost_out(d7_yl, d7_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider21);
+s57_fonts();
+s57_face(960, 400);
+
+// ---------- the header: the name, the presets, the face, the size ----------
+k_ = s57_header(960, "DRIVE57", "SERIES 57", "VALVE DRIVE", #d7_pm, 21);
+k_ > 0 ? load_preset(k_);
+
+// ---------- the signal path, printed in signal orange along the foot ----------
+ui_col(S57_ORNG); s57_r(24, 372, 912, 1.5);
+i_ = 0; loop(6, gfx_circle((24 + i_ * 182.4) * sc, 372.7 * sc, 2.6 * sc, 1, 1); i_ += 1; );
+s57_small(30, 378, "IN"); s57_small(262, 378, "V1 PREAMP"); s57_small(446, 378, "V2 SUMMING"); s57_small(632, 378, "OUTPUT IRON"); s57_small(892, 378, "OUT");
+
+// ---------- left: the meters and the input (a raised plate) ----------
+s57_plate(20, 68, 214, 292);
+s57_title(32, 76, "LEVEL");
+d7mI.s57_edge(32, 98, 190, 66, d7a_vi * 2.83, "IN");
+d7mO.s57_edge(32, 172, 190, 66, d7a_vo * 2.83, "OUT");
+d7a_vi *= 0.6; d7a_vo *= 0.6;
+// INPUT: the trim, its GUARD on a click of the LED (the house input)
+s57_knob(76, 300, 20, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(170, 268, "GUARD");
+s57_key(144, 280, 52, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(206 * sc, 290 * sc, 3.5 * sc, 1, S57_ORNG); ); in_grd = 0;
+s57_small(144, 312, "EASES HOT");
+s57_small(144, 324, "SOURCES DOWN");
+
+// ---------- the valves (a recessed well) ----------
+s57_well(250, 68, 380, 292);
+ui_cola(S57_INK, 0.35); s57_r(440, 76, 1, 276);
+s57_title(262, 76, "V1  PREAMP"); s57_title(452, 76, "V2  SUMMING");
+// the valves glow with their drive
+s57_valve(300, 150, 1.3, min(slider3 / 30, 1) * 0.85 + 0.15);
+s57_valve(490, 150, 1.3, min(slider5 / 24, 1) * 0.85 + 0.15);
+s57_toggle(388, 140, 4, "TRIODE", "PENTODE");
+s57_toggle(578, 140, 6, "TRIODE", "PENTODE");
+s57_knob(345, 280, 30, 3, 0, 30, 8, 0, "DRIVE", "%.1f dB", 0);
+s57_knob(535, 280, 30, 5, 0, 24, 4, 0, "DRIVE", "%.1f dB", 0);
+
+// ---------- right: the supply, the iron, the tone, the mix and the output (a raised plate) ----------
+s57_plate(646, 68, 294, 292);
+s57_title(658, 76, "SUPPLY  ·  IRON  ·  OUTPUT");
+s57_knob(696, 136, 20, 7, 0, 100, 50, 0, "BIAS", "%.0f%%", 0);
+s57_small(645, 152, "COLD"); s57_small(719, 152, "HOT");
+s57_knob(792, 136, 20, 8, 0, 100, 30, 0, "SAG", "%.0f%%", 0);
+s57_knob(888, 136, 20, 9, 0, 100, 40, 0, "IRON", "%.0f%%", 0);
+s57_knob(696, 236, 20, 10, -6, 6, 0, 0, "TONE", "%+.1f dB", 0);
+s57_small(645, 252, "DARK"); s57_small(719, 252, "BRIGHT");
+s57_knob(792, 236, 20, 11, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s57_knob(888, 236, 20, 12, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+// 2x / 4x, DRIFT, the house output stage's SAT
+gfx_setfont(13); ui_col(S57_INK); s57_tc(696, 300, "OVERSAMPLING");
+s57_key(664, 310, 30, 20, slider13 < 0.5, "2x") ? s57_set(13, 0);
+s57_key(698, 310, 30, 20, slider13 >= 0.5, "4x") ? s57_set(13, 1);
+s57_knob(792, 322, 13, 14, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(888, 322, 13, 15, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(924 * sc, 304 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

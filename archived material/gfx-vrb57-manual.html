@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX VRB57 - manual</title><meta name="description" content="Series 57's reverb: the live studio, a concert hall borrowed as a chamber, or the organ's two-spring unit, behind a valve send amplifier.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-vrb57">
+<div class="cat">Modulation &amp; space</div><h1>VRB57</h1>
+<p class="tagline">Series 57's reverb: the live studio, a concert hall borrowed as a chamber, or the organ's two-spring unit, behind a valve send amplifier.</p>
+<div class="shot"><img src="img/gfx-vrb57.webp" alt="The VRB57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-vrb57-cph.webp" alt="The VRB57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>VRB57 is the Series 57 counterpart of VRB81: the reverberation a late-50s studio could reach for, behind a valve send amplifier.</p><p>STUDIO is the live room, wood and plaster, with strong early reflections and a short, warm tail. HALL is a concert hall borrowed as a chamber: a long, even, darker tail with a slow build. SPRING is the organ's two-spring reverb unit; the springs' dispersion gives the "drip", the chirp of a sharp sound, and TENSION sets how much they drip.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Natural rooms on vocals, drums and instruments</li><li>Long, dark hall tails</li><li>Spring reverb on guitars and organs</li><li>Surf and rockabilly drip</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert VRB57 on a track, or on a send with MIX at 100%. It opens on Init: a medium studio.</li><li>Pick STUDIO, HALL or SPRING.</li><li>Set DECAY for the length and PRE-DELAY to separate it from the source; the window draws the decay.</li><li>Shape it with DAMP (the top) and LOW (the bottom); WIDTH sets the stereo spread.</li><li>Push DRIVE for a gritty valve send, especially on the springs.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>REVERBERATION</h3><dl class="ctl"><dt>STUDIO / HALL / SPRING</dt><dd>The algorithm. Changing it fades the reverb out and back in.</dd><dt>The window</dt><dd>STUDIO and HALL: the decay drawn in dB against time - the pre-delay gap, the early reflections, the tail. SPRING: the two springs, trembling with the level.</dd></dl>
+<h3>DECAY</h3><dl class="ctl"><dt>PRE-DELAY</dt><dd>0 - 200 ms (12 ms).</dd><dt>DECAY</dt><dd>0.3 - 8 s (1.6 s); with SPRING, how long the springs ring.</dd><dt>SIZE / TENSION</dt><dd>The room's size (STUDIO, HALL), or the springs' drip (SPRING), 0 - 100% (50%).</dd><dt>DAMP</dt><dd>The top dies faster: the air and the plaster, 0 - 100% (40%).</dd><dt>LOW</dt><dd>The low end's decay against the middle's, -100 to +100 (0).</dd><dt>WIDTH</dt><dd>The two microphones (or springs) from mono to wide, 0 - 100% (70%).</dd></dl>
+<h3>IN &middot; OUT</h3><dl class="ctl"><dt>INPUT</dt><dd>Trim before everything, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard (on by default). Its LED lights while it works.</dd><dt>DRIVE</dt><dd>The valve send amplifier, 0 - 100% (20%). Oversampled 2x.</dd><dt>MIX</dt><dd>Dry to reverb, 0 - 100% (25%). The dry stays at full level up to 50%.</dd><dt>OUTPUT</dt><dd>The output level, -24 to +12 dB (0 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the microphones and the springs' hangers move a hair - the tail shimmers very slightly.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). As a mix tool it passes straight through otherwise.</dd></dl>
+<h3>The signal path</h3><p>The line along the foot: IN, SEND AMP, ROOM (or SPRINGS), OUT.</p>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>Brighter, denser and clearer.</dd><dt>COPENHAGEN</dt><dd>Darker and softer, with a little more low-mid warmth; the springs drip more gently.</dd></dl>
+<h2>Presets</h2><p>A preset sets the algorithm, PRE-DELAY, DECAY, SIZE / TENSION, DAMP, LOW, WIDTH, DRIVE and MIX; the face, INPUT, GUARD, OUTPUT, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness.</p><dl class="ctl"><dt>Init</dt><dd>A medium studio.</dd><dt>Small Studio</dt><dd>A short, close room.</dd><dt>Big Studio</dt><dd>A large live room.</dd><dt>Concert Hall</dt><dd>A hall with a 30 ms pre-delay.</dd><dt>Dark Hall</dt><dd>A long, dark hall.</dd><dt>Vocal Room</dt><dd>A studio with a 40 ms pre-delay and less low end.</dd><dt>Drum Room</dt><dd>A short, wide, driven room.</dd><dt>Organ Spring</dt><dd>The classic organ springs.</dd><dt>Surf Spring</dt><dd>High tension, driven: lots of drip.</dd><dt>Gentle Spring</dt><dd>Low tension, damped.</dd><dt>Long Hall</dt><dd>A 6.5 s hall.</dd><dt>Driven Spring</dt><dd>The send amp pushed into the springs.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>On a send, set MIX to 100%.</li><li>Snare and guitar through SPRING with high TENSION give the classic drip; lower it for a smoother spring.</li><li>A PRE-DELAY of 20 - 40 ms keeps a vocal clear in front of the room.</li><li>COPENHAGEN's darker rooms sit further back in a mix.</li></ul>
+<p class="file">File: gfx-vrb57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

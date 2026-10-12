@@ -1,0 +1,358 @@
+desc:GFX DLY74 [OB delay]
+//tags: delay echo bbd bucket-brigade analog digital ping-pong compander broadcast series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// DLY74 (Series 74: the OB remote and broadcast series): the stereo delay from an outside-broadcast truck, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> (+ the feedback) -> LOW CUT and HIGH CUT (in the loop: every repeat is filtered again)
+//   OB:    a bucket-brigade line (two 4096-stage chips per side). The compander squeezes the signal 2:1 on the way in
+//          and expands it 1:2 on the way out, and breathes as it does; the anti-alias and reconstruction low-passes
+//          close as the delay lengthens (the clock slows), and the clock is sampled for real, so long times turn dark
+//          and gritty; the clock bleeds faintly through, its whine following the delay time (CLOCK BLEED); the loop
+//          saturates gently; a slight wow is always there. Moving TIME bends the pitch, as a real BBD does.
+//   CLEAN: pristine digital lines, full bandwidth, cubic-interpolated; a change of TIME crossfades to the new time
+//          (no pitch bend); the loop is clean, with a soft limit only near full scale. CLOCK BLEED is out of the path.
+//   -> MODE: MONO (the input summed, one echo in the middle), STEREO (left and right, each feeding itself),
+//      PING-PONG (the input summed into the left, the repeats crossing from side to side)
+//   -> WIDTH (of the repeats) -> MIX (send law: the dry stays full up to 50 %, the echo full from 50 %) -> OUTPUT
+//   -> the house output stage (band SAT, CLIP always on).
+// TIME  20 - 2000 ms; SYNC locks it to the tempo (1/16 .. one bar, with dotted and triplet values).
+// FEEDBACK  0 - 100 %: near the top the repeats run on; a soft limit in the loop keeps it stable.
+// MOD  the delay's modulation (chorus-like wobble): mainly OB (the clock's wow), a trace on CLEAN.
+// WANDER (0 - 100 %, 50 % = the standard amount): on OB the clock drifts and the compander's tracking wanders, the
+//   two sides never quite matched; on CLEAN only a trace of time wander.
+// OB and CLEAN are level matched. Changing the model or the mode fades the echo out and back in (a model change
+// clears the lines).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:375<20,2000,1>-Time (ms)
+slider4:0<0,1,1{Off,On}>-Sync
+slider5:3<0,8,1{1/16,1/8 T,1/8,1/8 D,1/4 T,1/4,1/4 D,1/2,1 bar}>-Sync note
+slider6:35<0,100,1>-Feedback (%)
+slider7:1<0,2,1{Mono,Stereo,Ping-pong}>-Mode
+slider8:9000<1000,20000,10>-High cut (Hz)
+slider9:60<20,1000,1>-Low cut (Hz)
+slider10:20<0,100,1>-Mod (%)
+slider11:30<0,100,1>-Clock bleed (%)
+slider12:100<0,100,1>-Width (%)
+slider13:30<0,100,1>-Mix (%)
+slider14:0<-24,12,0.1>-Output (dB)
+slider15:0<0,1,1{OB,Clean}>-Model
+slider16:50<0,100,1>-Wander (%)
+slider17:0<0,100,1>-Band sat (%)
+slider18:30<0,100,1>-Bias (output stage, %)
+slider19:120<40,400,1>-Sat low band (Hz)
+slider20:6000<2000,16000,10>-Sat high band (Hz)
+slider21:-0.3<-24,0,0.1>-Ceiling (dB)
+slider22:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-dly74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+l4_ostm = s74_alloc(4096);
+l4_LEN = 2.1 * 192000 + 64;                             // 2 s of delay + the modulation, up to 192 kHz
+l4L.s74_dlinit(l4_LEN); l4R.s74_dlinit(l4_LEN);
+
+l4_N = 8192;                                            // the BBD stages per side (two 4096-stage chips)
+l4_R = 0.25;                                            // the compander's reference level
+
+// ---------- one side of the delay ----------
+// OB: the compressor (2:1), the BBD's input clip, the anti-alias filter, the clock's sample and hold, the line, the
+// reconstruction filter, the clock bleed and the hiss, the expander (1:2). d = the delay in samples.
+function l4_ob(x, d) instance(ec, ee, ph, hv, cph, aa, r1, r2) local(g, u, v) (
+  ec += (abs(x) - ec) * l4_kc;
+  g = min(sqrt(l4_R / max(ec, 0.0001)), 30);
+  u = x * g; u = 1.1 * s74_th(u / 1.1);
+  u = aa.s74_bq(u);
+  l4_hs ? ( ph += 0.5 * l4_N / d; ph >= 1 ? ( ph -= floor(ph); hv = u; ); u = hv; );
+  this.s74_dlw(u);
+  v = this.s74_dlr3(d);
+  v = r2.s74_bq(r1.s74_bq(v));
+  cph += 0.5 * l4_N / d; cph -= floor(cph);
+  u = 2 * cph - 1; v += l4_bl * 4 * u * (1 - abs(u)) + l4_hss * (rand(2) - 1);   // the clock (a rounded wave) and the hiss
+  ee += (abs(v) - ee) * l4_kc;
+  v * ee / (l4_R * l4_trk) * l4_mko;
+);
+// CLEAN: the line, read at the current time; while the time changes, a raised-cosine crossfade to the new one
+function l4_cl(x, m) instance(ca, cb, cx, xg) local(a, b, w) (
+  this.s74_dlw(x);
+  !xg && abs(l4_Dt - ca) > 0.5 ? ( cb = l4_Dt; xg = 1; cx = 0; );
+  a = this.s74_dlr3(ca + m);
+  xg ? (
+    b = this.s74_dlr3(cb + m); cx += l4_kx; w = 0.5 - 0.5 * cos($pi * min(cx, 1));
+    a += (b - a) * w;
+    cx >= 1 ? ( ca = cb; xg = 0; );
+  );
+  a;
+);
+// the loop's limits: OB a gentle saturation, CLEAN a soft limit near full scale only
+function l4_sat(y) ( 0.9 * s74_th(y / 0.9); );
+function l4_lim(y) local(a) ( a = abs(y); a > 0.8 ? sign(y) * (0.8 + 0.2 * s74_th((a - 0.8) / 0.2)) : y; );
+function l4_clr() (
+  memset(l4L.buf, 0, l4L.len); memset(l4R.buf, 0, l4R.len);
+  l4L.ec = l4L.ee = l4R.ec = l4R.ee = 0; l4L.hv = l4R.hv = 0;
+  l4L.hc.s74_bqclr(); l4L.lc.s74_bqclr(); l4R.hc.s74_bqclr(); l4R.lc.s74_bqclr();
+  l4L.aa.s74_bqclr(); l4L.r1.s74_bqclr(); l4L.r2.s74_bqclr(); l4R.aa.s74_bqclr(); l4R.r1.s74_bqclr(); l4R.r2.s74_bqclr();
+  l4L.ca = l4L.cb = l4R.ca = l4R.cb = l4_Dt; l4L.xg = l4R.xg = 0;
+  l4_D = l4_Dt; l4_fbl = l4_fbr = 0;
+);
+
+// ---------- settings ----------
+function l4_beats(n) ( n == 0 ? 0.25 : n == 1 ? 1 / 3 : n == 2 ? 0.5 : n == 3 ? 0.75 : n == 4 ? 2 / 3 : n == 5 ? 1 : n == 6 ? 1.5 : n == 7 ? 2 : 4; );
+function l4_ms() ( slider4 >= 0.5 ? min(max(60000 / max(tempo, 20) * l4_beats(slider5), 20), 2000) : min(max(slider3, 20), 2000); );
+function l4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  l4_Dt = l4_ms() / 1000 * srate;
+  l4_tfb = slider6 / 100 * 1.04;
+  l4_tmd = slider7;
+  l4_thc = slider8; l4_tlc = slider9;
+  l4_tmod = slider10 / 100;
+  l4_tbl = slider11 / 100;
+  l4_twd = slider12 / 100; l4_tmix = slider13 / 100; l4_tog = 10 ^ (slider14 / 20);
+  l4_tmo = slider15 >= 0.5;
+  drift_macro(slider16);
+  ost_setup(slider17 / 100, slider18 / 100, slider19, slider20, slider21, 1);   // output stage: CLIP, always on
+);
+// the loop's filters: OB a little softer (Q 0.6), CLEAN Butterworth
+function l4_cutset() local(q) (
+  q = l4_mo ? 0.707 : 0.6;
+  l4L.hc.s74_bqset(0, l4_hcf, 0, q, srate); l4R.hc.s74_bqset(0, l4_hcf, 0, q, srate);
+  l4L.lc.s74_bqset(1, l4_lcf, 0, q, srate); l4R.lc.s74_bqset(1, l4_lcf, 0, q, srate);
+);
+// the BBD's filters follow its clock: f_clk = N / (2 T); the filters sit at 0.36 f_clk (at most 16 kHz)
+function l4_bbdset(d) instance(aa, r1, r2) local(fc) (
+  fc = min(max(0.36 * 0.5 * l4_N / d * srate, 300), min(16000, 0.45 * srate));
+  aa.s74_bqset(0, fc, 0, 0.8, srate); r1.s74_bqset(0, fc, 0, 0.54, srate); r2.s74_bqset(0, fc, 0, 1.31, srate);
+);
+function l4_srinit() (
+  l4_sr = srate;
+  l4_sm = s74_kt(0.02, srate);                          // the glides
+  l4_kg = s74_kt(0.12, srate);                          // OB: the clock's slew (the pitch bend)
+  l4_kc = s74_kt(0.01, srate);                          // the compander's rectifiers (10 ms)
+  l4_kx = 1 / (0.05 * srate);                           // CLEAN: the 50 ms crossfade
+  l4_fd = 1 / (0.01 * srate);
+  ost_init(l4_ostm);
+  l4_hcf = l4_thc; l4_lcf = l4_tlc; l4_cutset();
+);
+
+in_init();
+l4_tmo = slider15 >= 0.5;
+l4_update();
+l4_mo = l4_tmo; l4_md = l4_tmd;
+l4_srinit();
+l4_mko = 1.263;                                         // OB: the makeup that matches CLEAN (measured on pink noise)
+l4_trk = 1;
+l4dcL.drift_init(0.8 + rand(0.4)); l4dcR.drift_init(0.8 + rand(0.4)); l4dtL.drift_init(0.8 + rand(0.4)); l4dtR.drift_init(0.8 + rand(0.4));
+l4dw.drift_init(0.7 + rand(0.3));
+l4L.ost_ch_init(); l4R.ost_ch_init();
+l4_clr();
+l4_fb = l4_tfb; l4_mod = l4_tmod; l4_wd = l4_twd; l4_mix = l4_tmix; l4_og = l4_tog; l4_bla = l4_tbl;
+l4_fade = 1; l4_fst = 0; l4_hold = 0; l4_lph = 0;
+l4_bl = 0; l4_hss = 0; l4_hs = 0;
+
+// ---------- presets ----------
+function l4_set(tm, sy, nt, fb, md, hc, lc, mo, bl, wd, mx, ou, ml) (
+  slider3 = tm; slider4 = sy; slider5 = nt; slider6 = fb; slider7 = md; slider8 = hc; slider9 = lc;
+  slider10 = mo; slider11 = bl; slider12 = wd; slider13 = mx; slider14 = ou; slider15 = ml;
+  slider_automate(32764);                               // sliders 3 - 15 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#l4_pm = "Init|Truck Slap|Commentary Echo|Stadium PA|Field Ping-Pong|Dub Wagon|Clock Whine|Warbled Relay|Runaway Uplink|Satellite Hop|Clean Quarter|Telemetry Ping";
+function load_preset(p) (
+  //                time sy nt  fb md    hc    lc  mod bl  wd  mix  out  model
+  p == 1  ? l4_set( 375, 0, 3,  35, 1,  9000,  60, 20, 30, 100, 30,    0, 0) :     // Init
+  p == 2  ? l4_set( 110, 0, 3,   8, 0,  7000, 120, 10, 20,   0, 32,  0.2, 0) :     // Truck Slap
+  p == 3  ? l4_set( 260, 0, 3,  30, 1,  5500, 200, 15, 25,  70, 24,  0.5, 0) :     // Commentary Echo
+  p == 4  ? l4_set( 180, 0, 3,  45, 1,  6000, 150, 25, 30, 100, 28,    0, 0) :     // Stadium PA
+  p == 5  ? l4_set( 375, 1, 3,  45, 2,  8000,  90, 20, 30, 100, 30,    0, 0) :     // Field Ping-Pong
+  p == 6  ? l4_set( 600, 1, 5,  78, 1,  3000, 140, 30, 35,  90, 28, -0.8, 0) :     // Dub Wagon
+  p == 7  ? l4_set( 900, 0, 3,  55, 0,  9000,  80, 35, 85,  60, 30,  0.5, 0) :     // Clock Whine
+  p == 8  ? l4_set( 320, 0, 3,  40, 1,  7000, 100, 80, 30, 100, 30,    0, 0) :     // Warbled Relay
+  p == 9  ? l4_set( 450, 0, 3, 100, 2,  5000, 180, 30, 40, 100, 20, -3.4, 0) :     // Runaway Uplink
+  p == 10 ? l4_set( 280, 0, 3,  30, 1, 14000,  60, 10, 30, 100, 30,    0, 1) :     // Satellite Hop
+  p == 11 ? l4_set( 500, 1, 5,  35, 1, 12000,  80, 10, 30, 100, 28,    0, 1) :     // Clean Quarter
+  p == 12 ? l4_set( 375, 1, 3,  50, 2, 16000,  60,  5, 30, 100, 30,    0, 1) :     // Telemetry Ping
+  p == 13 ? (                                               // Reset all to defaults
+    l4_set(375, 0, 3, 35, 1, 9000, 60, 20, 30, 100, 30, 0, 0);
+    slider1 = 0; slider2 = 1; slider16 = 50; slider17 = 0; slider18 = 30; slider19 = 120; slider20 = 6000; slider21 = -0.3; slider22 = 1;
+    slider_automate(4194303);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+l4_update();
+
+@block
+srate != l4_sr ? l4_srinit();
+l4_update();                                            // knobs moved on the panel do not run @slider
+// the loop's filters glide (about 20 ms)
+l4_kb = 1 - exp(-samplesblock / (0.02 * srate));
+abs(l4_hcf - l4_thc) > 0.5 || abs(l4_lcf - l4_tlc) > 0.05 ? (
+  l4_hcf += (l4_thc - l4_hcf) * l4_kb; l4_lcf += (l4_tlc - l4_lcf) * l4_kb;
+  abs(l4_hcf - l4_thc) <= 0.5 ? l4_hcf = l4_thc; abs(l4_lcf - l4_tlc) <= 0.05 ? l4_lcf = l4_tlc;
+  l4_cutset();
+);
+// WANDER: on OB the clock drifts (each side its own) and the compander's tracking wanders; on CLEAN a trace
+l4_di = 0.12 * dm_s * samplesblock / srate;
+l4_wc = l4_mo ? 0.0001 : 0.0025;
+l4_dvL = l4_wc * dm_a * l4dcL.drift_tick(l4_di); l4_dvR = l4_wc * dm_a * l4dcR.drift_tick(l4_di);
+l4_tkL = 1 + (l4_mo ? 0 : 0.03 * dm_a * l4dtL.drift_tick(l4_di)); l4_tkR = 1 + (l4_mo ? 0 : 0.03 * dm_a * l4dtR.drift_tick(l4_di));
+l4_wdr = l4dw.drift_tick(l4_di * 2);
+// OB: the BBD's filters and the clock's sample and hold follow the delay; the clock bleed's level (faded out as the
+// clock rises out of reach)
+l4L.l4_bbdset(l4_D * (1 + l4_dvL)); l4R.l4_bbdset(l4_D * (1 + l4_dvR));
+l4_fck = 0.5 * l4_N / max(l4_D, 1) * srate;
+l4_hs = !l4_mo && l4_fck < 0.98 * srate;
+l4_blv = l4_mo ? 0 : 0.006 * min(max((0.45 * srate - l4_fck) / (0.1 * srate), 0), 1);
+l4_hss = l4_mo ? 0 : 0.00025;
+l4a_vi = max(l4a_vi, l4_viL); l4a_vo = max(l4a_vo, l4_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+l4_fb += (l4_tfb - l4_fb) * l4_sm; l4_mod += (l4_tmod - l4_mod) * l4_sm; l4_wd += (l4_twd - l4_wd) * l4_sm;
+l4_mix += (l4_tmix - l4_mix) * l4_sm; l4_og += (l4_tog - l4_og) * l4_sm; l4_bla += (l4_tbl - l4_bla) * l4_sm;
+l4_bl = l4_blv * l4_bla;
+// OB: the clock slews to the new time (the pitch bends), at most 0.6 samples per sample
+l4_dd = (l4_Dt - l4_D) * l4_kg; l4_D += min(max(l4_dd, -0.6), 0.6);
+// a change of model or mode: fade the echo (and what goes into the lines) out, switch at the silent point, wait, fade back in
+(l4_tmo != l4_mo || l4_tmd != l4_md) && l4_fst == 0 ? l4_fst = 1;
+l4_fst == 1 ? ( l4_fade -= l4_fd; l4_fade <= 0 ? (
+  l4_fade = 0;
+  l4_tmo != l4_mo ? ( l4_mo = l4_tmo; l4_clr(); l4_cutset(); );
+  l4_md = l4_tmd; l4_hold = 64; l4_fst = 2; ); ) :
+l4_fst == 2 ? ( l4_hold -= 1; l4_hold <= 0 ? l4_fst = 3; ) :
+l4_fst == 3 ? ( l4_fade += l4_fd; l4_fade >= 1 ? ( l4_fade = 1; l4_fst = 0; ); );
+
+// ---------- input ----------
+in_process(spl0, spl1);
+l4_xl = in_l; l4_xr = in_r;
+l4_viL = max(l4_viL * 0.9995, abs(l4_xl) + abs(l4_xr));
+l4_xm = (l4_xl + l4_xr) * 0.5;
+// into the lines: faded with the echo when the model or the mode changes (no step is ever written into a line)
+l4_jl = l4_xl * l4_fade; l4_jr = l4_xr * l4_fade; l4_jm = l4_xm * l4_fade;
+
+// ---------- the modulation: the clock's wow (OB) / a gentle sine (CLEAN), the sides 90 degrees apart ----------
+l4_lph += (0.55 + 0.1 * l4_wdr) / srate; l4_lph >= 1 ? l4_lph -= 1;
+l4_mdp = l4_mo ? 0.35 * l4_mod * (0.0003 + 0.002 * l4_D / srate) * srate
+               : (0.00012 + l4_mod * (0.0004 + 0.004 * l4_D / srate)) * srate;
+l4_ml = l4_mdp * sin(2 * $pi * l4_lph); l4_mr = l4_mdp * cos(2 * $pi * l4_lph);
+
+// ---------- what goes into the lines: the input and the feedback, through the loop's filters ----------
+l4_md == 2 ? ( l4_il = l4_jm + l4_fbr; l4_ir = l4_fbl; ) :           // PING-PONG: the repeats cross
+l4_md == 1 ? ( l4_il = l4_jl + l4_fbl; l4_ir = l4_jr + l4_fbr; ) :   // STEREO
+             ( l4_il = l4_jm + l4_fbl; l4_ir = l4_jm + l4_fbr; );    // MONO
+l4_il = l4L.lc.s74_bq(l4L.hc.s74_bq(l4_il)); l4_ir = l4R.lc.s74_bq(l4R.hc.s74_bq(l4_ir));
+
+// ---------- the lines ----------
+l4_mo ? (
+  l4_wl = l4L.l4_cl(l4_il, 2 + l4_ml + l4_dvL * l4_Dt); l4_wr = l4R.l4_cl(l4_ir, 2 + l4_mr + l4_dvR * l4_Dt);
+  l4_fbl = l4_lim(l4_wl * l4_fb) * l4_fade; l4_fbr = l4_lim(l4_wr * l4_fb) * l4_fade;
+) : (
+  l4_trk = l4_tkL; l4_wl = l4L.l4_ob(l4_il, max(l4_D * (1 + l4_dvL) + l4_ml, 4));
+  l4_trk = l4_tkR; l4_wr = l4R.l4_ob(l4_ir, max(l4_D * (1 + l4_dvR) + l4_mr, 4));
+  l4_fbl = l4_sat(l4_wl * l4_fb) * l4_fade; l4_fbr = l4_sat(l4_wr * l4_fb) * l4_fade;
+);
+l4_md == 0 ? ( l4_wl = l4_wr = (l4_wl + l4_wr) * 0.5; );
+
+// ---------- WIDTH, MIX (send law), the fade, OUTPUT and the house output stage ----------
+l4_em = (l4_wl + l4_wr) * 0.5; l4_es = (l4_wl - l4_wr) * 0.5 * l4_wd;
+l4_gd = min(1, 2 - 2 * l4_mix); l4_gw = min(1, 2 * l4_mix) * l4_fade;
+l4_yl = l4_xl * l4_gd + (l4_em + l4_es) * l4_gw; l4_yr = l4_xr * l4_gd + (l4_em - l4_es) * l4_gw;
+l4_vL = max(l4_vL * 0.9995, abs(l4_yl) + abs(l4_yr));
+l4_yl = l4L.ost_band(l4_yl) * l4_og; l4_yr = l4R.ost_band(l4_yr) * l4_og;
+ost_out(l4_yl, l4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider15);
+s74_fonts();
+s74_face(960, 366);
+l4_cln = slider15 >= 0.5;
+l4_syn = slider4 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "DLY74", "SERIES 74", "OB DELAY", #l4_pm, 15);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 160, 292, "INPUT");
+l4mI.s74_edge(24, 94, 140, 62, l4a_vi * 2.83, "IN");
+l4mO.s74_edge(24, 164, 140, 62, l4a_vo * 2.83, "OUT");
+l4a_vi *= 0.6; l4a_vo *= 0.6;
+s74_knob(58, 284, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(128, 250, "GUARD");
+s74_lens(104, 260, 48, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(160 * sc, 272 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- TIME: the time, SYNC and its note, the mode ----------
+s74_mod(186, 62, 256, 292, "TIME");
+s74_off = l4_syn;
+s74_knob(252, 160, 42, 3, 20, 2000, 375, 1, "TIME", "%.0f ms", 0);
+s74_off = 0;
+s74_lens(314, 94, 122, 22, l4_syn, "SYNC") ? s74_set(4, l4_syn ? 0 : 1);
+i_ = 0; loop(9, pk_pitem("1/16|1/8T|1/8|1/8D|1/4T|1/4|1/4D|1/2|BAR", i_ + 1, #t_);
+  s74_lens(314 + (i_ % 3) * 42, 124 + floor(i_ / 3) * 28, 38, 22, l4_syn && slider5 == i_, #t_) ? ( s74_set(5, i_); s74_set(4, 1); );
+  i_ += 1; );
+sprintf(#t_, "%.0f MS", l4_ms());
+gfx_setfont(13); ui_col(l4_syn ? S74_LAMP : S74_DIM); s74_tc(375, 222, #t_);
+s74_smallc(314, 252, "MODE");
+s74_lens(200, 264, 74, 26, slider7 == 0, "MONO") ? s74_set(7, 0);
+s74_lens(280, 264, 74, 26, slider7 == 1, "STEREO") ? s74_set(7, 1);
+s74_lens(360, 264, 74, 26, slider7 == 2, "PING-PONG") ? s74_set(7, 2);
+s74_smallc(314, 330, "20 - 2000 MS  ·  SYNC TO TEMPO");
+
+// ---------- REPEATS: the feedback and its filters (HIGH CUT black, LOW CUT yellow) ----------
+s74_mod(454, 62, 148, 292, "REPEATS");
+s74_knob(528, 146, 30, 6, 0, 100, 35, 0, "FEEDBACK", "%.0f%%", 0);
+s74_kc = S74_C_LPF; s74_knob(492, 262, 18, 8, 1000, 20000, 9000, 1, "HIGH CUT", "%.0f Hz", 0);
+s74_kc = S74_C_HPF; s74_knob(564, 262, 18, 9, 20, 1000, 60, 1, "LOW CUT", "%.0f Hz", 0);
+s74_kc = 0;
+s74_smallc(528, 330, "IN THE FEEDBACK LOOP");
+
+// ---------- MOD · CLOCK: the modulation and the clock bleed ----------
+s74_mod(614, 62, 128, 292, "MOD · CLOCK");
+s74_knob(678, 140, 22, 10, 0, 100, 20, 0, "MOD", "%.0f%%", 0);
+s74_off = l4_cln;
+s74_knob(678, 250, 22, 11, 0, 100, 30, 0, "CLOCK BLEED", "%.0f%%", 0);
+s74_off = 0;
+l4_cln ? s74_smallc(678, 330, "BLEED OFF ON CLEAN") : s74_smallc(678, 330, "COMPANDER · BBD");
+
+// ---------- OUTPUT: WIDTH, WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(754, 62, 192, 292, "OUTPUT");
+s74_knob(794, 118, 18, 12, 0, 100, 100, 0, "WIDTH", "%.0f%%", 0);
+s74_knob(794, 206, 18, 16, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(794, 290, 12, 17, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(816 * sc, 278 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(858, 106, 130, 13, 0, 100, 30, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(912, 106, 130, 14, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+
+pk_end();
+ui_end();

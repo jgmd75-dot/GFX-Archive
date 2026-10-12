@@ -1,0 +1,466 @@
+desc:GFX Room92 [ambience]
+//tags: ambience room early reflections reverb valve 20-bit dsp home-studio overdub space series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// ROOM92 (Series 92: high-end home recording from the 90s): the ambience unit of a serious 90s home studio, for
+// putting close-miked overdubs into a believable space. Two models on one switch.
+//   input -> TRIM / GUARD -> the dry signal, untouched, to the MIX
+//                         -> the send (L + R) -> a line with sixteen taps: the EARLY REFLECTIONS ->
+//   ANALOG:  a real small room, miked through a valve mic pre. The taps are the image sources of the room, but no real
+//            room is a perfect box: each reflection arrives a little early or late, a little louder or softer, a
+//            little off its place in the stereo picture, and every bounce off the soft furnishings of a home studio
+//            takes some of the top away (the second bounces more, the carpeted floor more than the walls) -> a short
+//            natural TAIL in lines that move very slightly with the air -> the VALVE MIC PRE on the returns: a little
+//            even-harmonic warmth and a touch of low-mid thickness.
+//   DIGITAL: the "ambience" programs of a 90s DSP box: the same image sources, exact and slightly idealised - every
+//            reflection on time, where the geometry puts it, with the same air on each -> a short, dense, clean tail
+//            -> a defined top, the box's 17 kHz band limit, a 20-bit word length (TPDF dither).
+//   -> WIDTH -> MIX (send law: the dry stays at full up to 50 %, the wet at full from 50 %) -> OUTPUT -> the house
+//   output stage (band SAT, CLIP always on).
+// The room: a box, the listener (the room mic) at a third of its length, the source in front of it. The dry signal is
+// the direct sound; each reflection arrives (path - direct path) / c later.
+//   SHAPE (BOOTH / SMALL / LIVE ROOM / CLUB): the room - its proportions, how hard its walls, floor and ceiling are,
+//         the tail's size. The LCD shows the room's dimensions (ANALOG) or the program (DIGITAL), and the mic's
+//         distance (ANALOG) or the decay (DIGITAL).
+//   SIZE: the room 0.6x .. 1.4x.  DISTANCE: source to mic: close (the direct sound leads, the reflections come late
+//         and low) to far (more room: the reflections close up on the direct sound, the tail rises).
+//   DECAY: the tail (0.1 - 2 s, RT60).
+//   DAMP: the top's absorption (a low-pass: black cap). ANALOG - the soft furnishings: how much top each bounce
+//         loses, and the tail's damping; DIGITAL - the program's HF damping on the reflections and the tail.
+//   WIDTH: the reflections' spread and the tail's side signal, mono .. wide.
+// ANALOG and DIGITAL are level matched, and the wet level follows DISTANCE (not SIZE, SHAPE or DECAY).
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the valve pre warms up and the mains wander (its bias drifts),
+// and the air in the room moves the tail a little; DIGITAL - only a trace (the box's clock is steady).
+// Changing the model or the shape fades the room out (the dry stays), switches, and fades it back in.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:50<0,100,1>-Size (%)
+slider4:35<0,100,1>-Distance (%)
+slider5:0.5<0.1,2,0.01>-Decay (s)
+slider6:40<0,100,1>-Damp (%)
+slider7:80<0,100,1>-Width (%)
+slider8:1<0,3,1{Booth,Small,Live room,Club}>-Shape
+slider9:50<0,100,1>-Mix (%)
+slider10:0<-24,12,0.1>-Output (dB)
+slider11:0<0,1,1{Analog,Digital}>-Model
+slider12:50<0,100,1>-Drift (%)
+slider13:0<0,100,1>-Band sat (%)
+slider14:30<0,100,1>-Bias (output stage, %)
+slider15:120<40,400,1>-Sat low band (Hz)
+slider16:6000<2000,16000,10>-Sat high band (Hz)
+slider17:-0.3<-24,0,0.1>-Ceiling (dB)
+slider18:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-room92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+r9_ostm = s92_alloc(4096);
+r9e.s92_dlinit(131072);                                 // the reflections' line
+r9c0.s92_dlinit(16384); r9c1.s92_dlinit(16384); r9c2.s92_dlinit(16384); r9c3.s92_dlinit(16384);
+r9c4.s92_dlinit(16384); r9c5.s92_dlinit(16384); r9c6.s92_dlinit(16384); r9c7.s92_dlinit(16384);
+r9a0.s92_dlinit(4096); r9a1.s92_dlinit(4096); r9a2.s92_dlinit(4096); r9a3.s92_dlinit(4096);
+r9_TD = s92_alloc(16); r9_CD = s92_alloc(16);           // the taps' delays: target, current (samples)
+r9_TGL = s92_alloc(16); r9_TGR = s92_alloc(16); r9_CGL = s92_alloc(16); r9_CGR = s92_alloc(16);
+r9_NX = s92_alloc(16); r9_NY = s92_alloc(16); r9_NZ = s92_alloc(16);   // the image sources (bounces on each axis)
+r9_JT = s92_alloc(16); r9_JG = s92_alloc(16); r9_JP = s92_alloc(16); r9_JF = s92_alloc(16);   // ANALOG: the room's irregularity
+r9_KF = s92_alloc(16); r9_FS = s92_alloc(16);           // each tap's absorption (one-pole) and its state
+r9_LN = s92_alloc(8); r9_GN = s92_alloc(8); r9_GC = s92_alloc(8); r9_LP = s92_alloc(8); r9_YY = s92_alloc(8);
+r9_SHT = s92_alloc(40);                                 // the shapes (10 values each)
+
+// ---------- the room ----------
+// the sixteen image sources: the four walls, the floor and the ceiling, six second bounces, four more
+function r9_image(i, x, y, z) ( r9_NX[i] = x; r9_NY[i] = y; r9_NZ[i] = z; );
+r9_image(0, 1, 0, 0); r9_image(1, -1, 0, 0); r9_image(2, 0, 1, 0); r9_image(3, 0, -1, 0); r9_image(4, 0, 0, -1); r9_image(5, 0, 0, 1);
+r9_image(6, 1, 1, 0); r9_image(7, 1, -1, 0); r9_image(8, -1, 1, 0); r9_image(9, -1, -1, 0); r9_image(10, 0, 1, -1); r9_image(11, 0, -1, -1);
+r9_image(12, 2, 0, 0); r9_image(13, -2, 0, 0); r9_image(14, 1, 0, 1); r9_image(15, -1, 0, -1);
+// ANALOG: no real room is a perfect box - each reflection a little off in time, level, place and absorption (fixed)
+i_ = 0; loop(16,
+  r9_JT[i_] = 0.07 * sin(i_ * 2.39 + 0.7); r9_JG[i_] = 0.3 * sin(i_ * 3.71 + 1.9);
+  r9_JP[i_] = 0.3 * cos(i_ * 1.93 + 0.2); r9_JF[i_] = 0.3 * sin(i_ * 4.13 + 2.6); i_ += 1; );
+// the shapes: length, width, height (m), the walls', the ceiling's and the floor's reflection, the tail's scale and
+// share, the number shown for the program (DIGITAL)
+function r9_shape(k, lx, ly, lz, rw, rc, rf, ts, tsh) local(p) (
+  p = r9_SHT + k * 10; p[0] = lx; p[1] = ly; p[2] = lz; p[3] = rw; p[4] = rc; p[5] = rf; p[6] = ts; p[7] = tsh;
+);
+r9_shape(0,  1.9,  1.6, 2.3, 0.45, 0.45, 0.40, 0.35, 0.30);   // BOOTH: a treated vocal booth
+r9_shape(1,  4.2,  3.3, 2.5, 0.68, 0.70, 0.50, 0.60, 0.50);   // SMALL: the spare room
+r9_shape(2,  8.0,  6.2, 3.4, 0.80, 0.75, 0.62, 1.00, 0.65);   // LIVE ROOM
+r9_shape(3, 15.0, 11.0, 4.5, 0.74, 0.62, 0.70, 1.55, 0.75);   // CLUB
+// the tail's lines (ms, at LIVE ROOM, SIZE 1x)
+r9_LN[0] = 7.1; r9_LN[1] = 8.9; r9_LN[2] = 10.3; r9_LN[3] = 11.9; r9_LN[4] = 13.7; r9_LN[5] = 15.1; r9_LN[6] = 17.3; r9_LN[7] = 19.7;
+
+// the geometry: the image sources of a box room, the mic at a third of its length, the source in front of it
+function r9_geom() local(p, s, lx, ly, lz, sx, sy, sz, d, i, nx, ny, nz, ix, iy, iz, dx, dy, dz, r, g, e, pn, wd, rw, rc, rf, an)
+(
+  r9_g3 = slider3; r9_g4 = slider4; r9_g7 = slider7; r9_gsh = r9_shp; r9_gmo = r9_mod;
+  an = !r9_mod;
+  p = r9_SHT + r9_shp * 10; s = 0.6 + 0.8 * slider3 / 100;
+  r9_rmx = p[0] * s; r9_rmy = p[1] * s; r9_rmz = p[2] * s; rw = p[3]; rc = p[4]; rf = p[5];
+  lx = 0.3 * r9_rmx; ly = 0.55 * r9_rmy; lz = min(1.4, 0.45 * r9_rmz);
+  d = r9_rmx * (0.04 + 0.52 * slider4 / 100);
+  sx = lx + d; sy = ly - 0.12 * d; sz = min(1.2, 0.4 * r9_rmz);
+  r9_dd = sqrt(sqr(sx - lx) + sqr(sy - ly) + sqr(sz - lz));
+  wd = slider7 / 100; e = 0; i = 0;
+  loop(16,
+    nx = r9_NX[i]; ny = r9_NY[i]; nz = r9_NZ[i];
+    ix = abs(nx) % 2 ? (nx + 1) * r9_rmx - sx : nx * r9_rmx + sx;
+    iy = abs(ny) % 2 ? (ny + 1) * r9_rmy - sy : ny * r9_rmy + sy;
+    iz = abs(nz) % 2 ? (nz + 1) * r9_rmz - sz : nz * r9_rmz + sz;
+    dx = ix - lx; dy = iy - ly; dz = iz - lz; r = sqrt(dx * dx + dy * dy + dz * dz);
+    g = rw ^ (abs(nx) + abs(ny)) * (nz > 0 ? rc : nz < 0 ? rf : 1) * min(r9_dd / r, 1);
+    g *= 1 + an * r9_JG[i];
+    r9_TD[i] = max((r - r9_dd) * (1 + an * r9_JT[i]), 0.05) / 343 * srate;
+    pn = min(max(dy / max(sqrt(dx * dx + dy * dy), 0.001) + an * r9_JP[i], -1), 1) * wd;
+    r9_TGL[i] = g * sqrt(0.5 * (1 + pn)); r9_TGR[i] = g * sqrt(0.5 * (1 - pn));
+    e += g * g; i += 1;
+  );
+  e = 1 / sqrt(max(e, 0.000001));
+  i = 0; loop(16, r9_TGL[i] *= e; r9_TGR[i] *= e; i += 1; );
+);
+function r9_snap() local(i) (
+  i = 0; loop(16, r9_CD[i] = r9_TD[i]; r9_CGL[i] = r9_TGL[i]; r9_CGR[i] = r9_TGR[i]; i += 1; );
+);
+// the shape's tail and diffusers, and the model's fixed filters (at the silent point of a switch)
+function r9_tailset() local(p, q) (
+  p = r9_SHT + r9_shp * 10; q = sqrt(p[6]);
+  r9_lsc = p[6] * srate / 1000;                         // the lines' scale (samples per ms of the table)
+  r9_ad0 = 3.1 * q * srate / 1000; r9_ad1 = 4.7 * q * srate / 1000; r9_ad2 = 3.7 * q * srate / 1000; r9_ad3 = 5.3 * q * srate / 1000;
+  r9_apg = r9_mod ? 0.7 : 0.58;                         // DIGITAL: the denser diffusion
+  r9_tsh = p[7];
+  r9_mod ? (
+    r9hl.s92_bqset(1, 110, 0, 0.707, srate); r9hr.s92_bqset(1, 110, 0, 0.707, srate);
+    r9tl.s92_bqset(5, 8000, 0.8, 0.7, srate); r9tr.s92_bqset(5, 8000, 0.8, 0.7, srate);     // a defined top
+    r9bl.s92_bqset(0, 17000, 0, 0.707, srate); r9br.s92_bqset(0, 17000, 0, 0.707, srate);   // the box's band limit
+  ) : (
+    r9hl.s92_bqset(1, 90, 0, 0.6, srate); r9hr.s92_bqset(1, 90, 0, 0.6, srate);
+    r9tl.s92_bqset(4, 240, 1.5, 0.7, srate); r9tr.s92_bqset(4, 240, 1.5, 0.7, srate);      // the valve pre's low-mid thickness
+  );
+);
+// DAMP: each tap's absorption and the tail's damping
+function r9_dampset(dm) local(f1, fc, i, o) (
+  r9_dl = dm;
+  r9_mod ? (
+    f1 = 18000 * 2 ^ (-2.5 * dm);
+    fc = f1 >= 17500 ? 1 : s92_k(f1, srate);
+    i = 0; loop(16, r9_KF[i] = fc; i += 1; );
+    r9_kd = s92_k(0.7 * f1, srate);
+  ) : (
+    // the soft furnishings: the second bounces lose more top, the carpeted floor more than the walls, every surface
+    // a little different
+    f1 = 12000 * 2 ^ (-2.5 * dm);
+    i = 0; loop(16,
+      o = abs(r9_NX[i]) + abs(r9_NY[i]) + abs(r9_NZ[i]);
+      fc = f1 * 0.62 ^ (o - 1) * (r9_NZ[i] < 0 ? 0.7 : 1) * (1 + r9_JF[i]);
+      r9_KF[i] = s92_k(fc, srate); i += 1; );
+    r9_kd = s92_k(0.55 * f1, srate);
+  );
+);
+
+// ---------- settings ----------
+function r9_update() local(dm) (
+  in_setup(slider1, slider2 >= 0.5);
+  r9_tsz = 0.6 + 0.8 * slider3 / 100;
+  r9_tdec = slider5;
+  r9_tmo = slider11 >= 0.5; r9_tshp = slider8;
+  r9_ttm = r9_mod ? 0 : 0.12 * 0.001 * srate;           // ANALOG: the air moves the tail a little
+  r9_twd = slider7 / 100;
+  // the wet level follows DISTANCE (-11 dB close .. +3 dB far); the tail's share rises with it
+  dm = slider4 / 100;
+  r9_twg = 10 ^ ((-11 + 14 * dm) / 20);
+  r9_ttg = r9_tsh * (0.5 + 1.0 * dm);
+  r9_tmix = slider9 / 100; r9_tog = 10 ^ (slider10 / 20);
+  drift_macro(slider12);
+  ost_setup(slider13 / 100, slider14 / 100, slider15, slider16, slider17, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+// the tail's loop gains for DECAY at the present size, and the level that keeps the tail's loudness steady
+function r9_gains() local(i, l, g, gm) (
+  gm = 0; i = 0;
+  loop(8, l = r9_LN[i] * r9_lsc * r9_szc; g = 10 ^ (-3 * l / (r9_dec * (r9_mod ? 1 : 1.1) * srate)); r9_GN[i] = g; gm += g; i += 1; );
+  gm /= 8;
+  r9_ttn = sqrt(1 - gm * gm) * (r9_dec / 0.5) ^ 0.2;
+);
+// the valve mic pre (ANALOG): run gently, the negative half flattens a little sooner (even harmonics)
+function r9_vt(u) ( u >= 0 ? s92_th(0.8 * u) / 0.8 : s92_th(1.6 * u) / 1.6; );
+// the models' wet makeup (measured on pink noise: ANALOG and DIGITAL matched)
+r9_MKA = 1.0; r9_MKD = 1.0;
+function r9_srinit() (
+  r9_sr = srate;
+  r9_sm = 1 - exp(-1 / (0.02 * srate));
+  r9_smt = 1 - exp(-1 / (0.08 * srate));                // the taps' delays glide slower (less of a pitch sweep)
+  r9_fd = 1 / (0.006 * srate);
+  r9_kdc = s92_k(25, srate);
+  ost_init(r9_ostm);
+  r9_tailset(); r9_dampset(r9_dmp);
+  r9_geom(); r9_snap();
+);
+in_init();
+r9_mod = r9_tmo = slider11 >= 0.5; r9_shp = r9_tshp = slider8;
+r9_dmp = slider6 / 100;
+r9_update();
+r9_szc = r9_tsz; r9_dec = r9_tdec;
+r9_srinit();
+r9_update();
+r9_gains(); i_ = 0; loop(8, r9_GC[i_] = r9_GN[i_]; i_ += 1; );
+r9_tn = r9_ttn; r9_tmd = r9_ttm; r9_wd = r9_twd; r9_wg = r9_twg; r9_tg = r9_ttg;
+r9_mix = r9_tmix; r9_og = r9_tog; r9_mk = r9_mod ? r9_MKD : r9_MKA;
+r9_fade = 1; r9_sf = 1; r9_fst = 0; r9_hold = 0; r9_vb = 0.12; r9_clk = 1;
+r9_c1 = r9_c2 = r9_c3 = 1; r9_s1 = r9_s2 = r9_s3 = 0;
+r9_dfV.drift_init(0.8 + rand(0.4)); r9_dfL.drift_init(0.8 + rand(0.4)); r9_dfT.drift_init(0.8 + rand(0.4)); r9_dfC.drift_init(0.8 + rand(0.4));
+r9L.ost_ch_init(); r9R.ost_ch_init();
+
+// ---------- presets ----------
+function r9_set(sh, sz, di, dc, dp, wd, mx, ou, mo) (
+  slider8 = sh; slider3 = sz; slider4 = di; slider5 = dc; slider6 = dp; slider7 = wd; slider9 = mx; slider10 = ou; slider11 = mo;
+  slider_automate(2044);                                // sliders 3-11 (TRIM, GUARD, DRIFT and the output stage stay)
+);
+#r9_pm = "Init|Vocal Booth Air|Bedroom Overdub|Acoustic Guitar Room|Drum Room Mics|Back-Room Amp|Club Snare|Pop Vocal Ambience|DSP Booth|DSP Small Room|DSP Live Room|DSP Club";
+function load_preset(p) (
+  //                sh  size  dist  decay  damp  width mix  output model
+  p == 1  ? r9_set(1,   50,   35,   0.5,   40,   80,  50,     0,    0) :     // Init
+  p == 2  ? r9_set(0,   50,   25,  0.25,   55,   50,  50,     0,    0) :     // Vocal Booth Air
+  p == 3  ? r9_set(1,   40,   30,   0.4,   50,   70,  50,     0,    0) :     // Bedroom Overdub
+  p == 4  ? r9_set(2,   45,   35,   0.7,   35,   90,  50,     0,    0) :     // Acoustic Guitar Room
+  p == 5  ? r9_set(2,   70,   60,   0.9,   30,  100,  50,  -0.6,    0) :     // Drum Room Mics
+  p == 6  ? r9_set(1,   60,   45,   0.5,   60,   60,  50,     0,    0) :     // Back-Room Amp
+  p == 7  ? r9_set(3,   50,   55,   1.2,   45,  100,  50,  -0.5,    0) :     // Club Snare
+  p == 8  ? r9_set(1,   60,   40,   0.6,   30,   90,  50,     0,    1) :     // Pop Vocal Ambience
+  p == 9  ? r9_set(0,   60,   30,   0.3,   35,   60,  50,     0,    1) :     // DSP Booth
+  p == 10 ? r9_set(1,   50,   35,   0.5,   40,   80,  50,     0,    1) :     // DSP Small Room
+  p == 11 ? r9_set(2,   60,   45,   0.9,   30,  100,  50,  -0.3,    1) :     // DSP Live Room
+  p == 12 ? r9_set(3,   60,   55,   1.4,   45,  100,  50, -0.55,    1) :     // DSP Club
+  p == 13 ? (                                               // Reset all to defaults
+    r9_set(1, 50, 35, 0.5, 40, 80, 50, 0, 0);
+    slider1 = 0; slider2 = 1; slider12 = 50; slider13 = 0; slider14 = 30; slider15 = 120; slider16 = 6000; slider17 = -0.3; slider18 = 1;
+    slider_automate(262143);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+r9_update();
+
+@block
+srate != r9_sr ? r9_srinit();
+r9_update();                                            // knobs moved on the panel do not run @slider
+// the geometry follows SIZE, DISTANCE and WIDTH (the taps glide to it); DAMP glides block by block
+(slider3 != r9_g3 || slider4 != r9_g4 || slider7 != r9_g7 || r9_shp != r9_gsh || r9_mod != r9_gmo) ? r9_geom();
+r9_bk = 1 - exp(-samplesblock / (0.02 * srate));
+r9_dmp += (slider6 / 100 - r9_dmp) * r9_bk; abs(r9_dmp - slider6 / 100) < 0.0005 ? r9_dmp = slider6 / 100;
+r9_dmp != r9_dl ? r9_dampset(r9_dmp);
+r9_dec += (r9_tdec - r9_dec) * r9_bk;
+r9_gains();
+// DRIFT: ANALOG - the valve pre's bias wanders as it warms and the mains move, the air moves the tail; DIGITAL - a
+// trace of the box's clock
+r9_di = 0.12 * dm_s * samplesblock / srate;
+r9_vb = 0.12 + (r9_mod ? 0 : dm_a * 0.04 * r9_dfV.drift_tick(r9_di));
+r9_lr = 1 + dm_a * (r9_mod ? 0 : 0.1) * r9_dfL.drift_tick(r9_di);
+r9_tw = dm_a * (r9_mod ? 0 : 0.2) * r9_dfT.drift_tick(r9_di);
+r9_clk = 1 + dm_a * (r9_mod ? 0.00005 : 0.0004) * r9_dfC.drift_tick(r9_di);
+r9_vb0 = r9_vt(r9_vb); r9_vs = 1 / (0.5 * (r9_vt(r9_vb + 0.001) - r9_vt(r9_vb - 0.001)) / 0.001);
+r9_w1 = 2 * $pi * 0.37 * r9_lr / srate; r9_k1c = cos(r9_w1); r9_k1s = sin(r9_w1);
+r9_w2 = 2 * $pi * 0.61 * r9_lr / srate; r9_k2c = cos(r9_w2); r9_k2s = sin(r9_w2);
+r9_w3 = 2 * $pi * 0.93 * r9_lr / srate; r9_k3c = cos(r9_w3); r9_k3s = sin(r9_w3);
+r9_n_ = 1 / sqrt(r9_c1 * r9_c1 + r9_s1 * r9_s1); r9_c1 *= r9_n_; r9_s1 *= r9_n_;
+r9_n_ = 1 / sqrt(r9_c2 * r9_c2 + r9_s2 * r9_s2); r9_c2 *= r9_n_; r9_s2 *= r9_n_;
+r9_n_ = 1 / sqrt(r9_c3 * r9_c3 + r9_s3 * r9_s3); r9_c3 *= r9_n_; r9_s3 *= r9_n_;
+r9a_vi = max(r9a_vi, r9_viL); r9a_vo = max(r9a_vo, r9_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+r9_szc += (r9_tsz - r9_szc) * r9_sm; r9_tmd += (r9_ttm - r9_tmd) * r9_sm;
+r9_wd += (r9_twd - r9_wd) * r9_sm; r9_wg += (r9_twg - r9_wg) * r9_sm; r9_tg += (r9_ttg - r9_tg) * r9_sm;
+r9_tn += (r9_ttn - r9_tn) * r9_sm; r9_mix += (r9_tmix - r9_mix) * r9_sm; r9_og += (r9_tog - r9_og) * r9_sm;
+// a change of model or shape: the room fades out, switches at the silent point, empties, and the send fades back
+// in (the dry stays)
+(r9_tmo != r9_mod || r9_tshp != r9_shp) && r9_fst == 0 ? r9_fst = 1;
+r9_fst == 1 ? ( r9_fade -= r9_fd; r9_fade <= 0 ? (
+  r9_fade = 0; r9_mod = r9_tmo; r9_shp = r9_tshp;
+  r9_update(); r9_tmd = r9_ttm; r9_tg = r9_ttg;
+  r9_mk = r9_mod ? r9_MKD : r9_MKA;
+  r9_tailset(); r9_dampset(r9_dmp); r9_geom(); r9_snap(); r9_gains(); i_ = 0; loop(8, r9_GC[i_] = r9_GN[i_]; i_ += 1; ); r9_tn = r9_ttn;
+  memset(r9e.buf, 0, r9e.len); memset(r9c0.buf, 0, 16384 * 8); memset(r9a0.buf, 0, 4096 * 4); memset(r9_LP, 0, 8); memset(r9_FS, 0, 16);
+  r9hl.s92_bqclr(); r9hr.s92_bqclr(); r9tl.s92_bqclr(); r9tr.s92_bqclr(); r9bl.s92_bqclr(); r9br.s92_bqclr();
+  r9_dc = 0;
+  r9_sf = 0; r9_hold = 32; r9_fst = 2; ); ) :
+r9_fst == 2 ? ( r9_hold -= 1; r9_hold <= 0 ? ( r9_fade = 1; r9_fst = 3; ); ) :
+// (the room is empty now: it opens at full level and the send fades in, so every reflection starts softly)
+r9_fst == 3 ? ( r9_sf += r9_fd; r9_sf >= 1 ? ( r9_sf = 1; r9_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+r9_xl = in_l; r9_xr = in_r;
+r9_viL = max(r9_viL * 0.9995, abs(r9_xl) + abs(r9_xr));
+
+// ---------- the air's three slow LFOs (quadrature, rotated) ----------
+r9_t_ = r9_c1 * r9_k1c - r9_s1 * r9_k1s; r9_s1 = r9_s1 * r9_k1c + r9_c1 * r9_k1s; r9_c1 = r9_t_;
+r9_t_ = r9_c2 * r9_k2c - r9_s2 * r9_k2s; r9_s2 = r9_s2 * r9_k2c + r9_c2 * r9_k2s; r9_c2 = r9_t_;
+r9_t_ = r9_c3 * r9_k3c - r9_s3 * r9_k3s; r9_s3 = r9_s3 * r9_k3c + r9_c3 * r9_k3s; r9_c3 = r9_t_;
+
+// ---------- the send into the reflections' line ----------
+r9_s = (r9_xl + r9_xr) * 0.5 * r9_sf;
+r9_dc += (r9_s - r9_dc) * r9_kdc; r9_s -= r9_dc;               // the send's coupling capacitor (25 Hz)
+r9e.s92_dlw(r9_s);
+
+// ---------- the early reflections: sixteen taps, each with its surfaces' absorption ----------
+r9_el = r9_er = 0; i_ = 0;
+loop(16,
+  r9_CD[i_] += (r9_TD[i_] - r9_CD[i_]) * r9_smt;
+  r9_CGL[i_] += (r9_TGL[i_] - r9_CGL[i_]) * r9_sm; r9_CGR[i_] += (r9_TGR[i_] - r9_CGR[i_]) * r9_sm;
+  r9_v = r9e.s92_dlr3(r9_CD[i_] * r9_clk);
+  r9_FS[i_] += (r9_v - r9_FS[i_]) * r9_KF[i_];
+  r9_el += r9_FS[i_] * r9_CGL[i_]; r9_er += r9_FS[i_] * r9_CGR[i_];
+  i_ += 1;
+);
+
+// ---------- the tail: two diffusers, eight lines (ANALOG: the air moves them a little) ----------
+r9_ti = (r9_el + r9_er) * 0.5;
+r9_d1 = r9a1.s92_ap(r9a0.s92_ap(r9_ti, r9_ad0, r9_apg), r9_ad1, r9_apg - 0.02);
+r9_d2 = r9a3.s92_ap(r9a2.s92_ap(r9_ti, r9_ad2, r9_apg), r9_ad3, r9_apg - 0.02);
+r9_q = r9_lsc * r9_szc;
+r9_YY[0] = r9c0.s92_dlr3(r9_LN[0] * r9_q);
+r9_YY[1] = r9c1.s92_dlr3(r9_LN[1] * r9_q + r9_tmd * (1 + r9_s1 + r9_tw));
+r9_YY[2] = r9c2.s92_dlr3(r9_LN[2] * r9_q);
+r9_YY[3] = r9c3.s92_dlr3(r9_LN[3] * r9_q + r9_tmd * (1 + r9_c2 - r9_tw));
+r9_YY[4] = r9c4.s92_dlr3(r9_LN[4] * r9_q);
+r9_YY[5] = r9c5.s92_dlr3(r9_LN[5] * r9_q + r9_tmd * (1 - r9_s1 + r9_tw));
+r9_YY[6] = r9c6.s92_dlr3(r9_LN[6] * r9_q);
+r9_YY[7] = r9c7.s92_dlr3(r9_LN[7] * r9_q + r9_tmd * (1 + r9_s3 - r9_tw));
+i_ = 0; loop(8,
+  r9_GC[i_] += (r9_GN[i_] - r9_GC[i_]) * r9_sm;
+  r9_LP[i_] += (r9_YY[i_] - r9_LP[i_]) * r9_kd; r9_YY[i_] = r9_LP[i_] * r9_GC[i_];
+  i_ += 1; );
+r9_tl_ = r9_YY[0] - r9_YY[2] + r9_YY[4] - r9_YY[6] * 0.7;
+r9_tr_ = r9_YY[1] - r9_YY[3] + r9_YY[5] - r9_YY[7] * 0.7;
+// Hadamard 8
+r9_a = r9_YY[0] + r9_YY[1]; r9_b = r9_YY[0] - r9_YY[1]; r9_c = r9_YY[2] + r9_YY[3]; r9_h = r9_YY[2] - r9_YY[3];
+r9_f = r9_YY[4] + r9_YY[5]; r9_g = r9_YY[4] - r9_YY[5]; r9_k = r9_YY[6] + r9_YY[7]; r9_j = r9_YY[6] - r9_YY[7];
+r9_YY[0] = r9_a + r9_c; r9_YY[2] = r9_a - r9_c; r9_YY[1] = r9_b + r9_h; r9_YY[3] = r9_b - r9_h;
+r9_YY[4] = r9_f + r9_k; r9_YY[6] = r9_f - r9_k; r9_YY[5] = r9_g + r9_j; r9_YY[7] = r9_g - r9_j;
+r9_a = r9_YY[0]; r9_YY[0] = (r9_a + r9_YY[4]) * 0.35355339; r9_YY[4] = (r9_a - r9_YY[4]) * 0.35355339;
+r9_a = r9_YY[1]; r9_YY[1] = (r9_a + r9_YY[5]) * 0.35355339; r9_YY[5] = (r9_a - r9_YY[5]) * 0.35355339;
+r9_a = r9_YY[2]; r9_YY[2] = (r9_a + r9_YY[6]) * 0.35355339; r9_YY[6] = (r9_a - r9_YY[6]) * 0.35355339;
+r9_a = r9_YY[3]; r9_YY[3] = (r9_a + r9_YY[7]) * 0.35355339; r9_YY[7] = (r9_a - r9_YY[7]) * 0.35355339;
+r9c0.s92_dlw(r9_YY[0] + r9_d1); r9c1.s92_dlw(r9_YY[1] + r9_d2); r9c2.s92_dlw(r9_YY[2] + r9_d1 * 0.6); r9c3.s92_dlw(r9_YY[3] - r9_d2 * 0.6);
+r9c4.s92_dlw(r9_YY[4] - r9_d1 * 0.4); r9c5.s92_dlw(r9_YY[5] + r9_d2 * 0.4); r9c6.s92_dlw(r9_YY[6]); r9c7.s92_dlw(r9_YY[7]);
+// WIDTH on the tail (the reflections are spread by the geometry)
+r9_m = (r9_tl_ + r9_tr_) * 0.5; r9_sd = (r9_tl_ - r9_tr_) * 0.5 * r9_wd;
+r9_tk = r9_tg * r9_tn;
+r9_wl = r9_el + (r9_m + r9_sd) * r9_tk; r9_wr = r9_er + (r9_m - r9_sd) * r9_tk;
+
+// ---------- the returns: ANALOG the valve mic pre; DIGITAL the box's top, band limit and 20-bit word ----------
+!r9_mod ? (
+  r9_wl = (r9_vt(r9_wl * 2 + r9_vb) - r9_vb0) * r9_vs * 0.5; r9_wr = (r9_vt(r9_wr * 2 + r9_vb) - r9_vb0) * r9_vs * 0.5;
+);
+r9_wl = r9hl.s92_bq(r9_wl); r9_wr = r9hr.s92_bq(r9_wr);
+r9_wl = r9tl.s92_bq(r9_wl); r9_wr = r9tr.s92_bq(r9_wr);
+r9_k_ = r9_wg * r9_mk * r9_fade;
+r9_wl *= r9_k_; r9_wr *= r9_k_;
+r9_mod ? (
+  r9_wl = r9bl.s92_bq(r9_wl); r9_wr = r9br.s92_bq(r9_wr);
+  abs(r9_wl) + abs(r9_wr) > 0.000000001 ? (
+    r9_wl = floor(r9_wl * 524288 + rand(1) - rand(1) + 0.5) / 524288; r9_wr = floor(r9_wr * 524288 + rand(1) - rand(1) + 0.5) / 524288;
+  );
+);
+
+// ---------- MIX (send law), OUTPUT and the house output stage ----------
+r9_gd = min(1, 2 - 2 * r9_mix); r9_gw = min(1, 2 * r9_mix);
+r9_yl = r9_xl * r9_gd + r9_wl * r9_gw; r9_yr = r9_xr * r9_gd + r9_wr * r9_gw;
+r9_vL = max(r9_vL * 0.9995, abs(r9_yl) + abs(r9_yr));
+r9_yl = r9L.ost_band(r9_yl) * r9_og; r9_yr = r9R.ost_band(r9_yr) * r9_og;
+ost_out(r9_yl, r9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider11);
+s92_fonts();
+s92_face(960, 366);
+gr_dgt = slider11 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "ROOM92", "SERIES 92", "AMBIENCE PROCESSOR", #r9_pm, 11);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the LED ladders, the trim, GUARD ----------
+s92_mod(20, 62, 210, 292, "INPUT");
+r9mI.s92_edge(30, 94, 190, 46, r9a_vi * 2.83, "IN");
+r9mO.s92_edge(30, 148, 190, 46, r9a_vo * 2.83, "OUT");
+r9a_vi *= 0.6; r9a_vo *= 0.6;
+s92_off = 0; s92_knob(72, 270, 22, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(172, 236, "GUARD");
+s92_key(146, 246, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(210 * sc, 258 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+
+// ---------- ROOM: the shape keys, the LCDs, SIZE / DISTANCE / DECAY ----------
+s92_mod(242, 62, 368, 292, "ROOM");
+gi_ = 0; loop(4, pk_pitem("BOOTH|SMALL|LIVE ROOM|CLUB", gi_ + 1, #gt_);
+  s92_key(254 + gi_ * 88, 92, 82, 26, slider8 == gi_, #gt_) ? s92_set(8, gi_); gi_ += 1; );
+// the readouts (worked out here from the sliders: nothing is shared with the audio)
+gp_ = r9_SHT + min(max(slider8, 0), 3) * 10; gs_ = 0.6 + 0.8 * slider3 / 100;
+gx_ = gp_[0] * gs_; gy_ = gp_[1] * gs_; gz_ = gp_[2] * gs_;
+gd_ = gx_ * (0.04 + 0.52 * slider4 / 100); gm_ = gd_ * sqrt(1 + 0.0144);
+gh_ = min(1.4, 0.45 * gz_) - min(1.2, 0.4 * gz_); gm_ = sqrt(gm_ * gm_ + gh_ * gh_);
+gr_dgt ? (
+  pk_pitem("BOOTH|SMALL ROOM|LIVE ROOM|CLUB", slider8 + 1, #gt_);
+  sprintf(#gl_, "P%d  %s", slider8 + 1, #gt_);
+  sprintf(#gn_, "RT %.2f S", slider5);
+) : (
+  sprintf(#gl_, "%.1f x %.1f x %.1f M", gx_, gy_, gz_);
+  sprintf(#gn_, "MIC %.1f M", gm_);
+);
+s92_lcd(256, 134, 218, 28, #gl_);
+s92_lcd(486, 134, 112, 28, #gn_);
+s92_smallc(365, 176, gr_dgt ? "PROGRAM" : "ROOM  L x W x H");
+s92_smallc(542, 176, gr_dgt ? "DECAY" : "SOURCE TO MIC");
+s92_knob(306, 238, 24, 3, 0, 100, 50, 0, "SIZE", "%.0f%%", 0);
+s92_knob(426, 238, 24, 4, 0, 100, 35, 0, "DISTANCE", "%.0f%%", 0);
+s92_knob(546, 238, 24, 5, 0.1, 2, 0.5, 1, "DECAY", "%.2f s", 0);
+s92_smallc(426, 330, gr_dgt ? "16-TAP EARLY REFLECTIONS  ·  EXACT" : "16 EARLY REFLECTIONS  ·  A REAL, IRREGULAR ROOM");
+
+// ---------- WALLS · VALVE (ANALOG) / DSP PROGRAM (DIGITAL): DAMP, WIDTH ----------
+s92_mod(622, 62, 112, 292, gr_dgt ? "DSP PROGRAM" : "WALLS · VALVE");
+s92_kc = S92_C_LPF; s92_knob(678, 134, 24, 6, 0, 100, 40, 0, "DAMP", "%.0f%%", 0); s92_kc = 0;
+s92_knob(678, 230, 18, 7, 0, 100, 80, 0, "WIDTH", "%.0f%%", 0);
+gr_dgt ? ( s92_smallc(678, 300, "20-BIT CLEAN"); s92_smallc(678, 316, "17 KHZ BAND"); s92_smallc(678, 332, "TPDF DITHER"); )
+       : ( s92_smallc(678, 300, "SOFT"); s92_smallc(678, 316, "FURNISHINGS"); s92_smallc(678, 332, "VALVE MIC PRE"); );
+
+// ---------- OUTPUT: DRIFT, SAT; MIX and OUTPUT on faders ----------
+s92_mod(746, 62, 194, 292, "OUTPUT");
+s92_knob(792, 130, 18, 12, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(792, 222, 12, 13, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(812 * sc, 210 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fc = S92_F_BLUE; s92_fader(852, 106, 130, 9, 0, 100, 50, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(906, 106, 130, 10, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s92_smallc(843, 300, "MIX: SEND LAW");
+s92_smallc(843, 316, "DRY FULL TO 50%");
+
+pk_end();
+ui_end();

@@ -1,0 +1,475 @@
+desc:GFX VC92 [vocoder]
+//tags: vocoder channel vocoder filter bank formant carrier side-chain midi robot voice sub-octave home-studio series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// VC92 (Series 92: high-end home recording from the 90s): the studio vocoder, with two models on one switch. A bank of
+// band-passes analyses the voice, a follower on each band tracks its level, and the same bank, fed with the carrier,
+// is opened band by band to match.
+// I/O  inputs 1/2 = the MODULATOR (a voice ...; summed to mono), inputs 3/4 = the CARRIER when EXT is chosen
+//      (route a synth, an organ ... to channels 3/4). Stereo out. MIDI notes play the INT carrier and are passed on.
+//   voice -> TRIM / GUARD -> EMPHASIS (a high shelf before the analysis) ->
+//   ANALOG:  the boutique analogue rack vocoder of the 90s revival: an input transformer -> 16 warm, overlapping bands
+//            (the carrier's bank a little off the voice's, and DRIFT detunes the two further); a rectifier and one
+//            smoothing pole on each band (a little envelope ripple left in) -> SIBILANCE: unvoiced noise - a band of
+//            noise opened by the voice's top, and the carrier turned towards noise on the consonants -> the output
+//            transformer (a little grit: the lows thicken, the top softens). The INT carrier is its own buzz / saw
+//            oscillator with a SUB-octave (a divider square one octave down).
+//   DIGITAL: the DSP vocoder of the late 90s: 32 precise bands, the voice's and the carrier's exactly matched; a
+//            quadrature detector on each band (fast, clean, no ripple) -> SIBILANCE: an unvoiced detector finds the
+//            consonants and passes them straight through (and turns the carrier to noise for them) -> the wet signal
+//            at a 20-bit word length (TPDF dither). SUB is out of the path.
+//   -> MIX (with the voice) -> OUTPUT -> the house output stage (band SAT, CLIP always on).
+// CARRIER  INT or EXT (channels 3/4). INT: six voices played from MIDI - BUZZ (a narrow pulse train, very rich), SAW,
+//      NOISE (sounds without notes: a whisper), CHORD (each key plays root, fifth and octave). TUNE, OCTAVE, GLIDE;
+//      SUB (ANALOG) adds the sub-octave; HOLD keeps the notes sounding after the keys are up. The LCD shows the
+//      carrier and the band count.
+// FORMANT  moves the carrier's bands against the voice's (-12 .. +12 semitones): the throat grows or shrinks, the
+//      pitch is kept.
+// ATTACK / RELEASE  how quickly the bands follow the voice. EMPHASIS lifts the voice's top before the analysis.
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the warm-up and the mains: the bands' centres wander (the two
+//   banks each on their own) and the INT carrier's pitch wanders; DIGITAL - the clock is steady: only a trace of pitch.
+// Changing the model, the carrier source or the wave fades the sound out and back in. ANALOG and DIGITAL are level
+// matched, and so are the waves and SUB.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:1<0,1,1{Ext,Int}>-Carrier
+slider4:0<0,3,1{Buzz,Saw,Noise,Chord}>-Wave
+slider5:0<-12,12,0.01>-Tune (st)
+slider6:0<-1,1,1>-Octave
+slider7:0<0,100,1>-Glide (%)
+slider8:0<0,1,1{Off,On}>-Hold
+slider9:25<0,100,1>-Sub octave (analog, %)
+slider10:0<-12,12,0.1>-Formant (st)
+slider11:4<0.5,50,0.1>-Attack (ms)
+slider12:60<10,500,1>-Release (ms)
+slider13:40<0,100,1>-Emphasis (%)
+slider14:40<0,100,1>-Sibilance (%)
+slider15:100<0,100,1>-Mix (%)
+slider16:0<-24,12,0.1>-Output (dB)
+slider17:0<0,1,1{Analog,Digital}>-Model
+slider18:50<0,100,1>-Drift (%)
+slider19:0<0,100,1>-Band sat (%)
+slider20:30<0,100,1>-Bias (output stage, %)
+slider21:120<40,400,1>-Sat low band (Hz)
+slider22:6000<2000,16000,10>-Sat high band (Hz)
+slider23:-0.3<-24,0,0.1>-Ceiling (dB)
+slider24:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:Modulator L
+in_pin:Modulator R
+in_pin:Carrier L
+in_pin:Carrier R
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vc92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+v9_CA = s92_alloc(32 * 4);                              // the analysis bank: b0, a1, a2 (b1 = 0, b2 = -b0)
+v9_CS = s92_alloc(32 * 4);                              // the synthesis bank (ANALOG: a little off the analysis)
+v9_QC = s92_alloc(32 * 2);                              // the quadrature detector's constants per band
+v9_SA = s92_alloc(32 * 4); v9_SL = s92_alloc(32 * 4); v9_SQ = s92_alloc(32 * 4);
+v9_EN = s92_alloc(32); v9_Y1 = s92_alloc(32);
+v9_DA = s92_alloc(32); v9_DS = s92_alloc(32);           // the banks' drift (analysis, synthesis)
+v9_WA = s92_alloc(32); v9_WS = s92_alloc(32);
+v9_MM = s92_alloc(32);                                  // ANALOG: the fixed mismatch of the two banks
+v9_DSP = s92_alloc(32);                                 // the panel's copy
+v9_MQ = s92_alloc(1024);
+v9_VO = s92_alloc(6 * 16);                              // voices: 0 note (-1 free), 1 gate, 2-4 phases, 5 freq, 6 target, 7 env, 8 key down, 9 velocity, 10 sub phase
+v9_ostm = s92_alloc(4096);
+v9_i = 0; loop(32, v9_MM[v9_i] = rand(2) - 1; v9_WA[v9_i] = rand(2) - 1; v9_WS[v9_i] = rand(2) - 1; v9_i += 1; );
+
+// ---------- the bank ----------
+function v9_bp(c, f, q) local(w, al, a0) (
+  w = 2 * $pi * min(f, 0.45 * srate) / srate; al = sin(w) / (2 * q); a0 = 1 + al;
+  c[0] = al / a0; c[1] = -2 * cos(w) / a0; c[2] = (1 - al) / a0;
+);
+// the band centres: 100 Hz .. 8 kHz - ANALOG 16 bands (about 4.7 semitones apart), DIGITAL 32 (about 2.4)
+function v9_bands() local(i, f, q, fs, w, r) (
+  v9_nb = v9_mod ? 32 : 16; r = 80 ^ (1 / (v9_nb - 1)); v9_bst = 12 * log(r) / log(2);
+  q = 1 / (sqrt(r) - 1 / sqrt(r)) * (v9_mod ? 0.9 : 0.45);
+  i = 0; loop(v9_nb,
+    f = 100 * r ^ i;
+    v9_mod ? (
+      v9_bp(v9_CA + i * 4, f, q); v9_bp(v9_CS + i * 4, f, q);
+    ) : (
+      v9_bp(v9_CA + i * 4, f * (1 + v9_DA[i]), q);
+      fs = f * (1 + 0.022 * dm_a * v9_MM[i] + v9_DS[i]);
+      v9_bp(v9_CS + i * 4, fs, q);
+    );
+    w = 2 * $pi * min(f, 0.45 * srate) / srate;
+    v9_QC[i * 2] = 0.5 / cos(w * 0.5); v9_QC[i * 2 + 1] = 0.5 / sin(w * 0.5);
+    i += 1; );
+);
+// two cascaded band-passes on the state s (4 slots), coefficients c
+function v9_bq2(x, c, s) local(y, z, b0, a1, a2) (
+  b0 = c[0]; a1 = c[1]; a2 = c[2];
+  y = b0 * x + s[0]; s[0] = -a1 * y + s[1]; s[1] = -b0 * x - a2 * y;
+  z = b0 * y + s[2]; s[2] = -a1 * z + s[3]; s[3] = -b0 * y - a2 * z;
+  z;
+);
+// a band-limited sawtooth (polyBLEP at the reset), phase t, increment dt
+function v9_saw(t, dt) local(s, u) (
+  s = 2 * t - 1;
+  t < dt ? ( u = t / dt; s -= u + u - u * u - 1; ) :
+  t > 1 - dt ? ( u = (t - 1) / dt; s -= u * u + u + u + 1; );
+  s;
+);
+// the transformer: the core saturates the lows first
+function v9_iron(x, kl, kd) instance(lo) ( lo += (x - lo) * kl; (x - lo) + s92_th(lo * kd) / kd; );
+
+// ---------- settings ----------
+// the level of each wave (BUZZ, SAW, NOISE, CHORD) into the bank, per model (measured on pink noise)
+function v9_wgain(w) ( v9_mod ? (w == 0 ? 2.05 : w == 1 ? 1.98 : w == 2 ? 2.22 : 2.5) : (w == 0 ? 2.05 : w == 1 ? 2.1 : w == 2 ? 1.6 : 2.45); );
+function v9_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  v9_tcar = slider3 >= 0.5; v9_twv = floor(slider4 + 0.5); v9_tmo = slider17 >= 0.5;
+  v9_tune = 2 ^ (slider5 / 12 + slider6); v9_gl = slider7 / 100; v9_holdk = slider8 >= 0.5;
+  v9_tsub = slider9 / 100;
+  v9_tfs = slider10 / v9_bst;
+  v9_ka = s92_kt(slider11 / 1000, srate); v9_kr = s92_kt(slider12 / 1000, srate);
+  v9_temp = slider13 / 100; v9_tsib = slider14 / 100;
+  v9_tmix = slider15 / 100; v9_tog = 10 ^ (slider16 / 20);
+  drift_macro(slider18);
+  ost_setup(slider19 / 100, slider20 / 100, slider21, slider22, slider23, 1);   // output stage: CLIP, always on
+);
+function v9_srinit() (
+  v9_sr = srate; v9_sm = s92_kt(0.02, srate); v9_fd = 1 / (0.008 * srate);
+  v9_bands();
+  v9E.s92_bqset(5, 2500, 9, 0.7, srate);                // EMPHASIS: the shelf (scaled)
+  v9H1.s92_bqset(1, 4000, 0, 0.7, srate); v9H2.s92_bqset(1, 4000, 0, 0.7, srate);    // the voice's top (consonants)
+  v9L1.s92_bqset(0, 1200, 0, 0.7, srate);               // the voiced energy
+  v9N1.s92_bqset(2, 5500, 0, 0.8, srate); v9N2.s92_bqset(2, 5500, 0, 0.8, srate);    // ANALOG: the noise band
+  v9C.s92_bqset(1, 40, 0, 0.7, srate); v9D.s92_bqset(1, 40, 0, 0.7, srate);           // the carrier's DC block
+  v9_kl1 = s92_k(110, srate); v9_kl2 = s92_k(70, srate); v9_khf = s92_k(12000, srate); v9_kdc = s92_k(12, srate);
+  v9_kha = s92_kt(0.001, srate); v9_khr = s92_kt(0.03, srate);
+  v9_kua = s92_kt(0.002, srate); v9_kur = s92_kt(0.025, srate);
+  v9_kua2 = s92_kt(0.006, srate); v9_kur2 = s92_kt(0.04, srate);
+  v9_kn = s92_kt(0.05, srate);
+  ost_init(v9_ostm);
+);
+
+in_init();
+v9_mod = v9_tmo = slider17 >= 0.5; v9_car = v9_tcar = slider3 >= 0.5; v9_wv = v9_twv = floor(slider4 + 0.5);
+dm_a = 1; v9_bands();
+v9_update(); v9_srinit();
+v9_p = v9_VO; loop(6, v9_p[0] = -1; v9_p += 16; );
+v9_dfB.drift_init(0.8 + rand(0.4));
+v9oL.ost_ch_init(); v9oR.ost_ch_init();
+v9_mix = v9_tmix; v9_og = v9_tog; v9_fs = v9_tfs; v9_emp = v9_temp; v9_sib = v9_tsib; v9_sub = v9_tsub;
+v9_fade = 1; v9_fst = 0; v9_bend = 1; v9_nsm = 1; v9_qs = 524288;
+v9_gan = 2.0; v9_gdg = 7.68;                             // the banks' gains (ANALOG, DIGITAL), measured on pink noise
+
+// ---------- presets ----------
+function v9_set(car, wv, tn, oc, gl, sb, fm, at, rl, em, si, mx, ou, mo) (
+  slider3 = car; slider4 = wv; slider5 = tn; slider6 = oc; slider7 = gl; slider9 = sb; slider10 = fm; slider11 = at; slider12 = rl;
+  slider13 = em; slider14 = si; slider15 = mx; slider16 = ou; slider17 = mo;
+  slider_automate(130940);                              // sliders 3 - 7, 9 - 17 (TRIM, GUARD, HOLD, DRIFT and the output stage stay)
+);
+#v9_pm = "Init|Synth Pop Robot|Sub Bass Voice|Warm Strings Choir|Whisper Track|Big Throat|Breakbeat Talkbox|DSP Clean Voice|Pitch-Kept Formant|Glassy Choir|Bright Articulate|Ext Pad Vocoder";
+function load_preset(p) (
+  //             car wv  tn  oc   gl   sb   fm    at    rl   em   si    mx     ou  mo
+  p == 1  ? v9_set(1, 0,  0,  0,   0,  25,   0,    4,   60,  40,  40,  100,     0,  0) :     // Init
+  p == 2  ? v9_set(1, 0,  0,  0,   0,  10,   1,    3,   45,  50,  45,  100,     0,  0) :     // Synth Pop Robot
+  p == 3  ? v9_set(1, 1,  0, -1,   0,  80,  -2,    6,   80,  40,  30,  100,     0,  0) :     // Sub Bass Voice
+  p == 4  ? v9_set(1, 3,  0,  0,  20,  30,   0,   10,  160,  35,  30,  100,     0,  0) :     // Warm Strings Choir
+  p == 5  ? v9_set(1, 2,  0,  0,   0,   0,   0,    3,   50,  50,  70,  100,  -2.3,  0) :     // Whisper Track
+  p == 6  ? v9_set(1, 0,  0, -1,  10,  50,  -7,    5,   80,  40,  35,  100,  -0.9,  0) :     // Big Throat
+  p == 7  ? v9_set(1, 1,  0,  0,   0,  40,   3,  1.5,   30,  55,  50,  100,  -1.5,  0) :     // Breakbeat Talkbox
+  p == 8  ? v9_set(1, 0,  0,  0,   0,  25,   0,    2,   40,  45,  55,  100,  -0.6,  1) :     // DSP Clean Voice
+  p == 9  ? v9_set(1, 1,  0,  0,   0,  25,   5,    3,   50,  45,  50,  100,   0.9,  1) :     // Pitch-Kept Formant
+  p == 10 ? v9_set(1, 3,  0,  0,  15,  25,   0,    6,  120,  35,  40,  100,  -0.5,  1) :     // Glassy Choir
+  p == 11 ? v9_set(1, 1,  0,  0,   0,  25,   0,  1.5,   30,  60,  80,  100,     1,  1) :     // Bright Articulate
+  p == 12 ? v9_set(0, 0,  0,  0,   0,  25,   0,    3,   50,  45,  50,  100,     0,  1) :     // Ext Pad Vocoder
+  p == 13 ? (                                                                       // Reset all to defaults
+    v9_set(1, 0, 0, 0, 0, 25, 0, 4, 60, 40, 40, 100, 0, 0);
+    slider1 = 0; slider2 = 1; slider8 = 0; slider18 = 50; slider19 = 0; slider20 = 30; slider21 = 120; slider22 = 6000; slider23 = -0.3; slider24 = 1;
+    slider_automate(16777215);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+v9_update();
+
+@block
+srate != v9_sr ? v9_srinit();
+v9_update();                                            // knobs moved on the panel do not run @slider
+(v9_tmo != v9_mod || v9_tcar != v9_car || v9_twv != v9_wv) && v9_fst == 0 ? v9_fst = 1;
+// DRIFT: ANALOG - the banks' centres (each band, each bank on its own) and the carrier's pitch; DIGITAL - a trace of pitch
+v9_di = 0.12 * dm_s * samplesblock / srate;
+v9_dbz = 2 ^ (dm_a * (v9_mod ? 0.012 : 0.1) / 12 * v9_dfB.drift_tick(v9_di));
+v9_dt += samplesblock;
+v9_dt > srate * 0.1 ? (
+  v9_dt = 0;
+  v9_i = 0; loop(16,
+    v9_WA[v9_i] = 0.97 * v9_WA[v9_i] + (rand(2) - 1) * 0.15; v9_WS[v9_i] = 0.97 * v9_WS[v9_i] + (rand(2) - 1) * 0.15;
+    v9_DA[v9_i] = dm_a * 0.009 * v9_WA[v9_i]; v9_DS[v9_i] = dm_a * 0.014 * v9_WS[v9_i];
+    v9_i += 1; );
+  !v9_mod && v9_fst == 0 ? v9_bands();
+);
+// MIDI: notes into the queue (sample offsets), everything passed on
+v9_qn = 0;
+while (midirecv(v9_mo, v9_m1, v9_m2, v9_m3)) (
+  v9_st = v9_m1 & 0xF0;
+  v9_qn < 250 ? (
+    v9_ty = v9_st == 0x90 ? (v9_m3 > 0 ? 1 : 0) : v9_st == 0x80 ? 0 : v9_st == 0xB0 && (v9_m2 == 120 || v9_m2 == 123) ? 2 : v9_st == 0xE0 ? 3 : -1;
+    v9_ty >= 0 ? ( v9_MQ[v9_qn * 4] = v9_mo; v9_MQ[v9_qn * 4 + 1] = v9_ty; v9_MQ[v9_qn * 4 + 2] = v9_m2; v9_MQ[v9_qn * 4 + 3] = v9_m3; v9_qn += 1; );
+  );
+  midisend(v9_mo, v9_m1, v9_m2, v9_m3);
+);
+v9_qr = 0; v9_spos = 0;
+// HOLD let go: release the voices whose keys are up
+!v9_holdk ? ( v9_p = v9_VO; loop(6, v9_p[0] >= 0 && !v9_p[8] ? v9_p[1] = 0; v9_p += 16; ); );
+v9_kd = s92_kt(0.004 + v9_gl * 0.4, srate);
+v9_kva = s92_kt(0.005, srate); v9_kvr = s92_kt(0.12, srate);
+// the panel
+v9_i = 0; loop(32, v9_DSP[v9_i] = v9_i < v9_nb ? max(v9_DSP[v9_i] * 0.85, v9_EN[v9_i]) : 0; v9_i += 1; );
+v9_mn = 0; v9_p = v9_VO; loop(6, v9_p[0] >= 0 && v9_p[1] ? v9_mn += 1; v9_p += 16; );
+v9a_vi = max(v9a_vi, v9_viL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- the MIDI queue ----------
+while (v9_qr < v9_qn && v9_MQ[v9_qr * 4] <= v9_spos) (
+  v9_ty = v9_MQ[v9_qr * 4 + 1]; v9_nt = v9_MQ[v9_qr * 4 + 2]; v9_vv = v9_MQ[v9_qr * 4 + 3];
+  v9_ty == 1 ? (
+    // a free voice (or the quietest released one, or the quietest)
+    v9_bv = -1; v9_bl = 10; v9_p = v9_VO; v9_i = 0;
+    loop(6, v9_p[0] < 0 ? ( v9_bv = v9_i; v9_bl = -1; ) : ( v9_bl >= 0 && v9_p[7] < v9_bl && !v9_p[1] ? ( v9_bl = v9_p[7]; v9_bv = v9_i; ); ); v9_p += 16; v9_i += 1; );
+    v9_bv < 0 ? ( v9_bl = 10; v9_p = v9_VO; v9_i = 0; loop(6, v9_p[7] < v9_bl ? ( v9_bl = v9_p[7]; v9_bv = v9_i; ); v9_p += 16; v9_i += 1; ); );
+    v9_p = v9_VO + v9_bv * 16;
+    v9_p[6] = 440 * 2 ^ ((v9_nt - 69) / 12);
+    v9_p[0] < 0 || v9_gl <= 0 ? v9_p[5] = v9_last > 0 && v9_gl > 0 ? v9_last : v9_p[6];
+    v9_p[0] = v9_nt; v9_p[1] = 1; v9_p[8] = 1; v9_p[9] = 0.4 + 0.6 * v9_vv / 127; v9_last = v9_p[6];
+  ) : v9_ty == 0 ? (
+    v9_p = v9_VO; loop(6, v9_p[0] == v9_nt ? ( v9_p[8] = 0; !v9_holdk ? v9_p[1] = 0; ); v9_p += 16; );
+  ) : v9_ty == 2 ? (
+    v9_p = v9_VO; loop(6, v9_p[1] = 0; v9_p[8] = 0; v9_p += 16; );
+  ) : v9_ty == 3 ? ( v9_bend = 2 ^ (((v9_vv * 128 + v9_nt) - 8192) / 8192 * 2 / 12); );
+  v9_qr += 1;
+);
+v9_spos += 1;
+
+// ---------- glides; a change of model, carrier or wave: fade out, switch at the silent point, wait, fade in ----------
+v9_mix += (v9_tmix - v9_mix) * v9_sm; v9_og += (v9_tog - v9_og) * v9_sm; v9_fs += (v9_tfs - v9_fs) * v9_sm;
+v9_emp += (v9_temp - v9_emp) * v9_sm; v9_sib += (v9_tsib - v9_sib) * v9_sm; v9_sub += (v9_tsub - v9_sub) * v9_sm;
+v9_fst == 1 ? ( v9_fade -= v9_fd; v9_fade <= 0 ? (
+  v9_fade = 0; v9_mod = v9_tmo; v9_car = v9_tcar; v9_wv = v9_twv; v9_bands();
+  v9_fs = v9_tfs = slider10 / v9_bst;
+  memset(v9_SA, 0, 128); memset(v9_SL, 0, 128); memset(v9_SQ, 0, 128); memset(v9_EN, 0, 32); memset(v9_Y1, 0, 32);
+  v9_hold = 64; v9_fst = 2; ); ) :
+v9_fst == 2 ? ( v9_hold -= 1; v9_hold <= 0 ? v9_fst = 3; ) :
+v9_fst == 3 ? ( v9_fade += v9_fd; v9_fade >= 1 ? ( v9_fade = 1; v9_fst = 0; ); );
+
+// ---------- the voice ----------
+in_process(spl0, spl1);
+v9_viL = max(v9_viL * 0.9995, abs(in_l) + abs(in_r));
+v9_m = (in_l + in_r) * 0.5;
+v9_hf = v9H2.s92_bq(v9H1.s92_bq(v9_m));                 // the consonants (above 4 kHz)
+v9_lf = v9L1.s92_bq(v9_m);                              // the voiced energy (below 1.2 kHz)
+v9_a = abs(v9_hf); v9_eh += (v9_a - v9_eh) * (v9_a > v9_eh ? v9_kha : v9_khr);
+v9_a = abs(v9_lf); v9_el += (v9_a - v9_el) * (v9_a > v9_el ? v9_kha : v9_khr);
+v9_me = v9_m + (v9E.s92_bq(v9_m) - v9_m) * v9_emp;     // EMPHASIS
+!v9_mod ? v9_me = v9iI.v9_iron(v9_me * 1.4, v9_kl1, 3) / 1.4;   // ANALOG: the input transformer
+// the unvoiced detector - the top well above the voiced energy, and above the floor (ANALOG: a slower, softer one)
+v9_ut = min(max((v9_eh / (v9_el + 0.0001) - 0.9) * 1.5, 0), 1) * min(1, v9_eh * 300);
+v9_mod ? v9_u += (v9_ut - v9_u) * (v9_ut > v9_u ? v9_kua : v9_kur) : v9_u += (v9_ut - v9_u) * (v9_ut > v9_u ? v9_kua2 : v9_kur2);
+
+// ---------- the carrier ----------
+v9_nz = rand(2) - 1;
+v9_car ? (
+  v9_wv == 2 ? ( v9_cb = v9_nz; ) : (
+    v9_cb = 0; v9_ns = 0; v9_p = v9_VO;
+    v9_sb = v9_mod ? 0 : v9_sub;
+    loop(6,
+      v9_p[0] >= 0 ? (
+        v9_p[5] += (v9_p[6] - v9_p[5]) * v9_kd;
+        v9_p[7] += ((v9_p[1] ? v9_p[9] : 0) - v9_p[7]) * (v9_p[1] ? v9_kva : v9_kvr);
+        v9_dtp = min(v9_p[5] * v9_tune * v9_bend * v9_dbz / srate, 0.45);
+        v9_p[2] += v9_dtp; v9_p[2] >= 1 ? v9_p[2] -= 1;
+        v9_wv == 0 ? (
+          // BUZZ: a narrow pulse train - two sawtooths 12 % of a cycle apart
+          v9_t2 = v9_p[2] + 0.12; v9_t2 >= 1 ? v9_t2 -= 1;
+          v9_b = v9_saw(v9_p[2], v9_dtp) - v9_saw(v9_t2, v9_dtp);
+        ) : v9_wv == 1 ? (
+          v9_b = v9_saw(v9_p[2], v9_dtp);
+        ) : (
+          // CHORD: root, fifth and octave
+          v9_d3 = v9_dtp * 1.4983; v9_d4 = min(v9_dtp * 2.003, 0.45);
+          v9_p[3] += v9_d3; v9_p[3] >= 1 ? v9_p[3] -= 1; v9_p[4] += v9_d4; v9_p[4] >= 1 ? v9_p[4] -= 1;
+          v9_b = (v9_saw(v9_p[2], v9_dtp) + 0.8 * v9_saw(v9_p[3], v9_d3) + 0.6 * v9_saw(v9_p[4], v9_d4)) * 0.62;
+        );
+        // ANALOG: SUB - a divider's square one octave down (kept in step with the main oscillator)
+        v9_sb > 0.001 ? (
+          v9_d2 = v9_dtp * 0.5; v9_p[10] += v9_d2; v9_p[10] >= 1 ? v9_p[10] -= 1;
+          v9_t2 = v9_p[10] + 0.5; v9_t2 >= 1 ? v9_t2 -= 1;
+          v9_b = (v9_b + v9_sb * 0.9 * (v9_saw(v9_p[10], v9_d2) - v9_saw(v9_t2, v9_d2))) / (1 + 0.8 * v9_sb * v9_sb);
+        );
+        v9_cb += v9_b * v9_p[7]; v9_ns += v9_p[7];
+        !v9_p[1] && v9_p[7] < 0.0005 ? v9_p[0] = -1;
+      );
+      v9_p += 16; );
+    // more voices, the same weight: the sum is kept about level
+    v9_nsm += (max(v9_ns, 1) - v9_nsm) * v9_kn;
+    v9_cb /= sqrt(v9_nsm);
+  );
+  v9_cl = v9_cr = v9C.s92_bq(v9_cb) * v9_wgain(v9_wv);
+) : (
+  v9_x = v9_mod ? 7.27 : 6.1;                           // EXT: a carrier at about -14 dBFS RMS comes out level
+  v9_cl = v9C.s92_bq(spl2) * v9_x; v9_cr = v9D.s92_bq(spl3) * v9_x;
+  // a stereo carrier opens a second synthesis bank (its state taken from the first, which it has matched until now);
+  // a mono one (3 = 4) needs only the one
+  abs(v9_cl - v9_cr) > 0.0000001 ? ( !v9_xs ? memcpy(v9_SQ, v9_SL, 128); v9_xs = 1; v9_xh = srate; ) :
+    v9_xs ? ( v9_xh -= 1; v9_xh <= 0 ? v9_xs = 0; );
+);
+// the consonants turn the carrier towards noise (ANALOG: the unvoiced noise switch, gentler)
+v9_u > 0 ? ( v9_x = v9_u * v9_sib * (v9_mod ? 0.7 : 0.5); v9_cl += (v9_nz * 0.62 - v9_cl) * v9_x; v9_cr += (v9_nz * 0.62 - v9_cr) * v9_x; );
+
+// ---------- the bank: analyse, follow ----------
+v9_i = 0; v9_c = v9_CA; v9_s = v9_SA; v9_q = v9_QC;
+v9_mod ? (
+  loop(32,
+    v9_y = v9_bq2(v9_me, v9_c, v9_s);
+    // the quadrature detector: exact for a tone at the band's centre, no ripple
+    v9_a = sqrt(sqr((v9_y + v9_Y1[v9_i]) * v9_q[0]) + sqr((v9_y - v9_Y1[v9_i]) * v9_q[1])); v9_Y1[v9_i] = v9_y;
+    v9_e = v9_EN[v9_i]; v9_EN[v9_i] = v9_e + (v9_a - v9_e) * (v9_a > v9_e ? v9_ka : v9_kr);
+    v9_i += 1; v9_c += 4; v9_s += 4; v9_q += 2; );
+) : (
+  loop(16,
+    v9_y = v9_bq2(v9_me, v9_c, v9_s);
+    // the rectifier and one pole: a little envelope ripple left in
+    v9_a = abs(v9_y) * 1.571;
+    v9_e = v9_EN[v9_i]; v9_EN[v9_i] = v9_e + (v9_a - v9_e) * (v9_a > v9_e ? v9_ka : v9_kr);
+    v9_i += 1; v9_c += 4; v9_s += 4; );
+);
+// ---------- open the carrier's bands (FORMANT: the carrier's band i follows the voice's band i - shift) ----------
+v9_ol = v9_or = 0; v9_i = 0; v9_c = v9_CS; v9_nm = v9_nb - 1;
+v9_st2 = !v9_car && v9_xs;
+v9_k0 = floor(v9_fs); v9_ff = v9_fs - v9_k0; v9_ff < 0.0001 ? v9_ff = 0;
+loop(v9_nb,
+  v9_j = v9_i - v9_k0; v9_g = v9_EN[min(max(v9_j, 0), v9_nm)];
+  v9_ff > 0 ? v9_g += (v9_EN[min(max(v9_j - 1, 0), v9_nm)] - v9_g) * v9_ff;
+  v9_ol += v9_bq2(v9_cl, v9_c, v9_SL + v9_i * 4) * v9_g;
+  v9_st2 ? v9_or += v9_bq2(v9_cr, v9_c, v9_SQ + v9_i * 4) * v9_g;
+  v9_i += 1; v9_c += 4; );
+!v9_st2 ? v9_or = v9_ol;
+
+// ---------- SIBILANCE; ANALOG: the output transformer; DIGITAL: 20 bits ----------
+v9_mod ? (
+  v9_x = v9_hf * v9_u * v9_sib * 1.2;                   // the consonants, passed straight through
+  v9_ol = v9_ol * v9_gdg + v9_x; v9_or = v9_or * v9_gdg + v9_x;
+  v9_ol = floor(v9_ol * v9_qs + rand(1) - rand(1) + 0.5) / v9_qs; v9_or = floor(v9_or * v9_qs + rand(1) - rand(1) + 0.5) / v9_qs;
+) : (
+  v9_x = v9N2.s92_bq(v9N1.s92_bq(v9_nz)) * v9_eh * v9_sib * 6;   // unvoiced noise: a band opened by the voice's top
+  v9_ol = v9_ol * v9_gan + v9_x; v9_or = v9_or * v9_gan + v9_x;
+  v9_ol = v9oiL.v9_iron(v9_ol * 1.8, v9_kl2, 2.5); v9_or = v9oiR.v9_iron(v9_or * 1.8, v9_kl2, 2.5);
+  // a little grit: the core's slight asymmetry (its offset blocked)
+  v9_ol = (s92_th(v9_ol * 0.9 + 0.06) - s92_th(0.06)) / 0.9 / 1.8; v9_or = (s92_th(v9_or * 0.9 + 0.06) - s92_th(0.06)) / 0.9 / 1.8;
+  v9_dcl += (v9_ol - v9_dcl) * v9_kdc; v9_dcr += (v9_or - v9_dcr) * v9_kdc; v9_ol -= v9_dcl; v9_or -= v9_dcr;
+  v9_hl += (v9_ol - v9_hl) * v9_khf; v9_hr += (v9_or - v9_hr) * v9_khf; v9_ol = v9_hl; v9_or = v9_hr;
+);
+
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+v9_yl = in_l + (v9_ol * v9_fade - in_l) * v9_mix; v9_yr = in_r + (v9_or * v9_fade - in_r) * v9_mix;
+v9_yl = v9oL.ost_band(v9_yl) * v9_og; v9_yr = v9oR.ost_band(v9_yr) * v9_og;
+ost_out(v9_yl, v9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider17);
+s92_fonts();
+s92_face(960, 366);
+gv_dg = slider17 >= 0.5; gv_ext = slider3 < 0.5; gv_nb = gv_dg ? 32 : 16;
+
+// ---------- the header ----------
+k_ = s92_header(960, "VC92", "SERIES 92", "STUDIO VOCODER", #v9_pm, 17);
+k_ > 0 ? load_preset(k_);
+
+// ---------- CARRIER: the LCD, the source, HOLD, the wave, TUNE / OCTAVE / GLIDE / SUB ----------
+s92_mod(20, 62, 262, 292, "CARRIER");
+gv_ext ? strcpy(#gv_s, "EXT 3/4") : pk_pitem("BUZZ|SAW|NOISE|CHORD", floor(slider4 + 0.5) + 1, #gv_s);
+!gv_ext && !gv_dg && slider9 > 0 && floor(slider4 + 0.5) != 2 ? strcat(#gv_s, "+SUB");
+sprintf(#gv_l, "%s  ·  %d BANDS", #gv_s, gv_nb);
+s92_lcd(34, 92, 234, 26, #gv_l);
+s92_smallc(87, 138, "SOURCE");
+s92_key(34, 148, 50, 24, !gv_ext, "INT") ? s92_set(3, 1);
+s92_key(90, 148, 50, 24, gv_ext, "EXT") ? s92_set(3, 0);
+s92_smallc(170, 138, "MIDI");
+pk_led(170 * sc, 160 * sc, 3.5 * sc, v9_mn > 0, S92_LAMP);
+s92_smallc(241, 138, "HOLD");
+s92_key(214, 148, 54, 24, slider8 >= 0.5, slider8 >= 0.5 ? "ON" : "OFF") ? s92_set(8, slider8 >= 0.5 ? 0 : 1);
+s92_smallc(151, 188, "WAVE");
+gi_ = 0; loop(4, pk_pitem("BUZZ|SAW|NOISE|CHORD", gi_ + 1, #gt_);
+  s92_key(34 + gi_ * 60, 198, 56, 24, floor(slider4 + 0.5) == gi_ && !gv_ext, #gt_) ? s92_set(4, gi_); gi_ += 1; );
+s92_off = gv_ext;
+s92_knob(58, 268, 16, 5, -12, 12, 0, 0, "TUNE", "%+.2f st", 0);
+s92_knob(122, 268, 16, 6, -1, 1, 0, 0, "OCTAVE", "%+.0f", 1);
+s92_knob(186, 268, 16, 7, 0, 100, 0, 0, "GLIDE", "%.0f%%", 0);
+s92_kc = S92_C_LF; s92_off = gv_ext || gv_dg; s92_knob(248, 268, 16, 9, 0, 100, 25, 0, "SUB", "%.0f%%", 0); s92_kc = 0;
+s92_off = 0;
+s92_smallc(151, 324, gv_ext ? "EXT: THE CARRIER ON INPUTS 3 / 4" : "MIDI NOTES PLAY THE CARRIER");
+s92_smallc(151, 340, gv_dg ? "SUB: ANALOG ONLY" : "SUB: A DIVIDER ONE OCTAVE DOWN");
+
+// ---------- FILTER BANK: the band display and the followers ----------
+s92_mod(294, 62, 404, 292, gv_dg ? "FILTER BANK · 32 BANDS" : "FILTER BANK · 16 BANDS");
+gx_ = 308; gy_ = 92; gw_ = 376; gh_ = 112;
+ui_col(0x050506); s92_rr(gx_ - 2, gy_ - 2, gw_ + 4, gh_ + 4, 3);
+ui_col(S92_LCDB); s92_r(gx_, gy_, gw_, gh_);
+gi_ = 0; loop(5, ui_cola(S92_LCDT, 0.07); s92_r(gx_ + 8, gy_ + 10 + gi_ * 17, gw_ - 16, 1); gi_ += 1; );
+gb_ = (gw_ - 16) / gv_nb;
+gi_ = 0; loop(gv_nb,
+  gv_ = min(max((20 * log10(max(v9_DSP[gi_], 0.000001)) + 60) / 48, 0), 1);   // -60 .. -12 dB
+  ui_col(ui_mix(S92_LAMP, 0x000000, 0.8)); s92_r(gx_ + 8 + gi_ * gb_ + 1, gy_ + 10, gb_ - 2, 72);
+  gv_ > 0.01 ? (
+    ui_cola(S92_LAMP, 0.2); s92_r(gx_ + 8 + gi_ * gb_, gy_ + 80 - 72 * gv_, gb_, 72 * gv_ + 3);
+    ui_col(S92_LAMP); s92_r(gx_ + 8 + gi_ * gb_ + 1, gy_ + 82 - 72 * gv_, gb_ - 2, 72 * gv_);
+  );
+  gi_ += 1; );
+gfx_setfont(13); ui_col(S92_LCDT);
+s92_t(gx_ + 9, gy_ + 88, "100"); s92_tc(gx_ + 8 + (gw_ - 16) * 0.528, gy_ + 95, "1k"); s92_t(gx_ + gw_ - 26, gy_ + 88, "8k");
+s92_knob(340, 260, 18, 10, -12, 12, 0, 0, "FORMANT", "%+.1f st", 0);
+s92_knob(418, 260, 18, 11, 0.5, 50, 4, 1, "ATTACK", "%.1f ms", 0);
+s92_knob(496, 260, 18, 12, 10, 500, 60, 1, "RELEASE", "%.0f ms", 0);
+s92_kc = S92_C_HF; s92_knob(574, 260, 18, 13, 0, 100, 40, 0, "EMPHASIS", "%.0f%%", 0); s92_kc = 0;
+s92_knob(652, 260, 18, 14, 0, 100, 40, 0, "SIBILANCE", "%.0f%%", 0);
+s92_smallc(496, 330, gv_dg ? "MATCHED BANDS · CLEAN FOLLOWERS · UNVOICED PASS · 20-BIT" : "WARM BANDS · ENVELOPE RIPPLE · UNVOICED NOISE · IRON");
+
+// ---------- OUTPUT: the voice ladder, TRIM, DRIFT, SAT, GUARD; MIX and OUTPUT on faders ----------
+s92_mod(710, 62, 230, 292, "OUTPUT");
+v9mI.s92_edge(722, 92, 206, 46, v9a_vi * 2.83, "VOICE");
+v9a_vi *= 0.6;
+s92_knob(746, 192, 16, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_knob(746, 284, 16, 18, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(806, 192, 12, 19, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(824 * sc, 180 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_smallc(806, 262, "GUARD");
+s92_key(782, 272, 48, 22, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(806 * sc, 306 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+s92_fc = S92_F_BLUE; s92_fader(862, 166, 120, 15, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(910, 166, 120, 16, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+
+pk_end();
+ui_end();

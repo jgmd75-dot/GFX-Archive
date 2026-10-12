@@ -1,0 +1,415 @@
+desc:GFX Fet74 [compressor]
+//tags: dynamics compressor limiter fet peak feedback rms leveller broadcast pumping series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// FET74 (Series 74: the OB remote and broadcast series): the studio compressor of the series, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> INPUT (0 .. 36 dB, into a fixed threshold) -> 2x oversampling ->
+//   OB:    a FET peak compressor / limiter, feedback style (the side-chain hears the gain cell's output; the loop is
+//          solved every sample, so it holds at 20 us with 20:1 in the loop). RATIO 4 / 8 / 12 / 20 : 1 with the
+//          FET's curved knee, or ALL (all buttons in): about 40:1 just over the threshold bending over to about 12:1,
+//          a lazier attack, a detector overshoot that digs in after every hit and lets go (pumping), a quicker
+//          release and the FET's bias shifted (more 2nd and some 3rd harmonic). The FET adds level-dependent
+//          harmonic distortion that grows with the gain it takes away; then the CLASS-A gain stage (a gentle biased
+//          curve, mostly 2nd harmonic) -> back to 1x -> the OUTPUT TRANSFORMER (the lows saturate at high levels).
+//   CLEAN: a transparent RMS leveller: an RMS detector (feed-forward), a soft knee (12 dB), the same ratios (ALL is
+//          20:1 here, without the overshoot or the colour), no added harmonics. Its threshold follows the same INPUT
+//          knob, so INPUT still sets how much it levels.
+//   -> MIX (parallel, with the dry signal delayed to match) -> OUTPUT -> the house output stage (band SAT, CLIP
+//   always on).
+//   ATTACK   20 us .. 800 us (OB). On CLEAN the same knob sets the leveller's attack, 37.5x longer (0.75 .. 30 ms).
+//   RELEASE  50 ms .. 1.1 s, programme dependent on both models: a fast stage recovers short peaks in the set time;
+//            a slow stage remembers sustained gain reduction and lets the last of it go 1.6 .. 2.5x more slowly.
+//   SC HPF   the side-chain high-pass: OFF, 60, 120, 250 Hz (12 dB / oct): the lows stop pulling the gain down.
+//   The two channels share one detector (linked).
+// Every INPUT and RATIO setting is level matched by the makeup in both models, and the models are matched to each
+// other, so INPUT changes the amount of compression rather than the loudness.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the FET's bias wanders (the threshold by up to about
+// +/-0.5 dB, the release timing by +/-8 %, the two channels tracking the gain reduction slightly differently); on
+// CLEAN only a trace remains.
+// Changing the model or the side-chain high-pass fades the sound out and back in (the new detector settles in the gap). Latency 31 samples (reported).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:12<0,36,0.1>-Input (dB)
+slider4:250<20,800,1>-Attack (us)
+slider5:150<50,1100,1>-Release (ms)
+slider6:0<0,4,1{4:1,8:1,12:1,20:1,All}>-Ratio
+slider7:0<0,3,1{Off,60 Hz,120 Hz,250 Hz}>-SC high-pass
+slider8:100<0,100,1>-Mix (%)
+slider9:0<-24,12,0.1>-Output (dB)
+slider10:0<0,1,1{OB,Clean}>-Model
+slider11:50<0,100,1>-Wander (%)
+slider12:0<0,100,1>-Band sat (%)
+slider13:30<0,100,1>-Bias (output stage, %)
+slider14:120<40,400,1>-Sat low band (Hz)
+slider15:6000<2000,16000,10>-Sat high band (Hz)
+slider16:-0.3<-24,0,0.1>-Ceiling (dB)
+slider17:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-fet74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+f4_H1 = s74_alloc(64);
+f4_MK = s74_alloc(160);                                 // the makeup tables: model x ratio, 13 points each (dB)
+f4_ostm = s74_alloc(4096);
+f4_DRY = s74_alloc(256);                                // the dry signal's delay (L at 0, R at 128)
+
+// ---------- oversampling: 2x, the house half-band ----------
+s74_hbdesign(f4_H1, 63, 8);
+f4uL.s74_upinit(63, f4_H1, 64); f4uR.s74_upinit(63, f4_H1, 64); f4dL.s74_dninit(63, f4_H1, 64); f4dR.s74_dninit(63, f4_H1, 64);
+f4_LAT = 31;
+
+// ---------- the makeup that keeps every INPUT and RATIO setting level matched (dB, INPUT 0 .. 36 in 3 dB steps) ----------
+function f4_row(k, a, b, c, d, e, f, g, h, i, j, l, m, n) local(p) (
+  p = f4_MK + k * 13; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l; p[11] = m; p[12] = n;
+);
+//     model * 5 + ratio
+f4_row(0, 0.71, 2.21, 4.04, 6.12, 8.17, 10.15, 12.22, 14.39, 16.55, 18.69, 20.95, 23.24, 25.36);
+f4_row(1, 0.89, 2.54, 4.85, 7.32, 9.62, 11.97, 14.37, 16.90, 19.48, 21.89, 24.36, 26.96, 29.67);
+f4_row(2, 0.67, 2.78, 5.02, 7.56, 10.18, 12.71, 15.18, 17.67, 20.28, 22.95, 25.70, 28.43, 31.09);
+f4_row(3, 0.74, 3.08, 5.46, 7.93, 10.44, 13.17, 15.95, 18.64, 21.23, 23.76, 26.47, 29.24, 32.03);
+f4_row(4, 0.39, 2.02, 3.90, 6.07, 8.46, 10.83, 13.36, 16.14, 18.79, 21.24, 23.63, 26.09, 28.78);
+f4_row(5, 1.04, 2.55, 4.36, 6.50, 8.71, 10.91, 13.20, 15.49, 17.75, 20.01, 22.21, 24.44, 26.69);
+f4_row(6, 1.29, 3.04, 5.12, 7.51, 10.16, 12.91, 15.52, 18.05, 20.61, 23.22, 25.88, 28.48, 30.99);
+f4_row(7, 1.38, 3.19, 5.40, 7.99, 10.69, 13.41, 16.11, 18.87, 21.62, 24.32, 27.05, 29.83, 32.64);
+f4_row(8, 1.34, 3.25, 5.51, 8.21, 11.07, 13.87, 16.65, 19.54, 22.43, 25.19, 27.98, 30.88, 33.78);
+f4_row(9, 1.45, 3.34, 5.59, 8.17, 11.00, 13.97, 16.80, 19.55, 22.39, 25.26, 28.10, 30.89, 33.81);
+// the makeup as a gain: the table (dB) less INPUT, so the wet path comes back at the level it went in
+function f4_mk(cl, rt, d) local(p, i, f, q) (
+  p = min(max(d, 0), 36) / 3; i = min(floor(p), 11); f = p - i; q = f4_MK + (cl * 5 + min(max(rt, 0), 4)) * 13;
+  10 ^ ((q[i] * (1 - f) + q[i + 1] * f - d) / 20);
+);
+
+// ---------- the gain law (OB, feedback domain: u = the output's level over the threshold, dB) ----------
+function f4_q(u, k)  ( u <= -0.5 * k ? 0 : u >= 0.5 * k ? u : sqr(u + 0.5 * k) / (2 * k) );
+function f4_qd(u, k) ( u <= -0.5 * k ? 0 : u >= 0.5 * k ? 1 : (u + 0.5 * k) / k );
+// C(u): the gain reduction (dB) the loop settles on; its slope goes to f4_cd
+function f4_cc(u) local(c, d, ca, da) (
+  c = f4_rm * f4_q(u, f4_kn); d = f4_rm * f4_qd(u, f4_kn);
+  f4_wa > 0.0001 ? (
+    ca = 39 * f4_q(u, 0.3) - 30 * f4_q(u - 0.25, 0.5);  // ALL: ~40:1 at first, bending over to ~12:1
+    da = 39 * f4_qd(u, 0.3) - 30 * f4_qd(u - 0.25, 0.5);
+    c += (ca - c) * f4_wa; d += (da - d) * f4_wa;
+  );
+  f4_cd = d;
+  c;
+);
+// the FET detector: lev = the side-chain's peak level (linear), thr = the threshold (dBFS). Returns the GR (dB).
+function f4_det(lev, thr) instance(gn, gs, gl, ga, hd) local(p, t0, gx, c, h, fl) (
+  p = 8.68588963807 * log(max(lev, 0.000001)) - thr;
+  t0 = f4_cc(p - gn);
+  t0 > gn ? (
+    // attack: an implicit (zero-delay) step of the feedback loop, by Newton
+    gx = gn;
+    loop(4,
+      c = f4_cc(p - gx);
+      h = gx - gn - f4_a * (c - gx);
+      gx -= h / (1 + f4_a + f4_a * f4_cd);
+      gx = min(max(gx, gn), max(p, gn) + 1);
+    );
+    gn = gx;
+  ) : (
+    // release: the fast stage falls towards the slow stage's memory, then both let go
+    fl = f4_kap * gs;
+    gn = gn > fl ? fl + (gn - fl) * f4_rf : gn * f4_rs;
+    gn = max(gn, t0);
+  );
+  hd = max(t0, hd * f4_hd);
+  gn > gs && hd > 0.85 * gn ? gs += (gn - gs) * f4_cs : gs *= f4_rs;
+  gl += (gn - gl) * f4_cl;                              // ALL: the lagging copy for the overshoot
+  gn < 0.000001 ? gn = 0; gs < 0.000001 ? gs = 0; hd < 0.000001 ? hd = 0; abs(gl) < 0.000001 ? gl = 0;
+  ga = max(gn + f4_ov * (gn - gl), 0);
+  ga;
+);
+// the CLEAN detector: e = the side-chain's mean square; an RMS leveller with a soft knee. Returns the GR (dB).
+function f4_rms(e, thr) instance(m1, ms, gn, gs, hd) local(l, t0, fl) (
+  m1 += (e - m1) * f4_krms; ms += (m1 - ms) * f4_krms;  // two poles: the bass's ripple stays out of the gain
+  l = 4.34294481903 * log(max(ms, 0.000000000001)) + 3.0103 - thr;
+  t0 = f4_slc * f4_q(l, 12);
+  t0 > gn ? gn += (t0 - gn) * f4_kac : (
+    fl = f4_kap * gs;
+    gn = gn > fl ? fl + (gn - fl) * f4_rf : gn * f4_rs;
+    gn = max(gn, t0);
+  );
+  hd = max(t0, hd * f4_hd);
+  gn > gs && hd > 0.85 * gn ? gs += (gn - gs) * f4_cs : gs *= f4_rs;
+  m1 < 0.000000000001 ? m1 = 0; ms < 0.000000000001 ? ms = 0; gn < 0.000001 ? gn = 0; gs < 0.000001 ? gs = 0; hd < 0.000001 ? hd = 0;
+  gn;
+);
+
+// ---------- OB: the FET's colour, the makeup, the class-A gain stage (one channel, at 2x) ----------
+f4_ld = 0.55; f4_lb = 0.1;
+f4_ltb = s74_th(f4_ld * f4_lb); f4_lnm = 1 / (f4_ld * (1 - f4_ltb * f4_ltb));
+function f4_nl(y, g) instance(e2, lo, e2l) local(v, s, s2, l2, gr1) (
+  v = y * g; gr1 = 1 - g; gr1 *= gr1;                   // the FET's distortion grows with the gain it takes away
+  s = v / sqrt(1 + v * v); s2 = s * s;
+  e2 += (s2 - e2) * f4_ce;                              // the running mean square keeps the even terms DC-free
+  lo += (s - lo) * f4_clo; l2 = lo * lo; e2l += (l2 - e2l) * f4_ce;
+  v += gr1 * (f4_cf * (s2 - e2) + f4_cfl * (l2 - e2l) - f4_c3 * s * s2);
+  v *= f4_m;
+  (s74_th(f4_ld * (v + f4_lb)) - f4_ltb) * f4_lnm;      // the class-A stage: unity small-signal gain
+);
+// the output transformer (1x): the lows saturate at high levels; a 2 Hz DC blocker
+function f4_xfm(x) instance(lo, dx, dy) local(y) (
+  lo += (x - lo) * f4_cxf;
+  x += lo / sqrt(1 + sqr(0.6 * lo)) - lo;
+  y = x - dx + f4_dcr * dy; dx = x; dy = y;
+  y;
+);
+function f4_flush() instance(e2, lo, e2l, dx, dy) (
+  abs(e2) < 0.000000000001 ? e2 = 0; abs(lo) < 0.000000000001 ? lo = 0; abs(e2l) < 0.000000000001 ? e2l = 0;
+  abs(dx) < 0.000000000001 ? dx = 0; abs(dy) < 0.000000000001 ? dy = 0;
+);
+
+// ---------- one 2x sample (f4_a0 / f4_b0 in, out): the side-chain, the detector, the gain cell ----------
+function f4_step() local(sa, sb, gr, gl, gq) (
+  sa = f4_a0; sb = f4_b0;
+  f4_sc > 0 ? ( sa = f4hA.s74_bq(sa); sb = f4hB.s74_bq(sb); );
+  f4_mod ? (
+    gr = f4dt.f4_rms(0.5 * (sa * sa + sb * sb), f4_thc);
+    gl = exp(-0.115129255 * gr) * f4_m;
+    f4_a0 *= gl; f4_b0 *= gl;
+  ) : (
+    gr = f4dt.f4_det(max(abs(sa), abs(sb)), f4_thr);
+    gl = exp(-0.115129255 * gr * (1 + f4_ml)); gq = exp(-0.115129255 * gr * (1 + f4_mr));
+    f4_a0 = f4nL.f4_nl(f4_a0, gl); f4_b0 = f4nR.f4_nl(f4_b0, gq);
+  );
+  f4_grm = max(f4_grm, gr);
+);
+
+// ---------- settings ----------
+function f4_update() local(rt, rs) (
+  in_setup(slider1, slider2 >= 0.5);
+  rt = slider6 | 0; f4_rt = rt;
+  f4_trm = rt == 0 ? 3 : rt == 1 ? 7 : rt == 2 ? 11 : 19;
+  f4_tkn = rt == 0 ? 3.2 : rt == 1 ? 1.3333 : rt == 2 ? 0.7692 : 0.381;   // the knee's width on the output side
+  f4_twa = rt == 4;
+  f4_tg = 10 ^ (slider3 / 20);
+  f4_tmo = slider10 >= 0.5;
+  f4_tm = f4_mk(f4_mod, rt, slider3);
+  f4_att = min(max(slider4, 20), 800) * 0.000001;
+  f4_rel = min(max(slider5, 50), 1100) * 0.001;
+  f4_tsc = slider7 | 0;
+  f4_tmix = slider8 / 100; f4_tog = 10 ^ (slider9 / 20);
+  drift_macro(slider11);
+  ost_setup(slider12 / 100, slider13 / 100, slider14, slider15, slider16, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = f4_LAT;
+  rs = log(f4_rel / 0.05) / log(22);                    // 0 = fastest release .. 1 = slowest
+  f4_smul = 2.5 - 0.9 * rs;                             // the slow stage: 2.5x the set time (fast) .. 1.6x (slow)
+  f4_cf  = 0.11 * (1 + 2.6 * f4_wa);
+  f4_cfl = 0.16 * (0.3 + 0.7 * rs) * (1 + f4_wa);
+  f4_c3  = 0.6 * f4_wa;
+);
+// the side-chain high-pass (at 2x): Butterworth
+function f4_scset() local(f) (
+  f = f4_sc == 1 ? 60 : f4_sc == 2 ? 120 : 250;
+  f4hA.s74_bqset(1, f, 0, 0.707, f4_fs2); f4hB.s74_bqset(1, f, 0, 0.707, f4_fs2);
+  f4hA.s74_bqclr(); f4hB.s74_bqclr();
+);
+function f4_srinit() (
+  f4_sr = srate; f4_fs2 = 2 * srate;
+  f4_sm  = 1 - exp(-1 / (0.02 * srate));                // knob glide
+  f4_smr = 1 - exp(-1 / (0.03 * srate));                // ratio glide
+  f4_cs  = s74_kt(0.3, f4_fs2);                         // the slow release stage: charge
+  f4_hd  = exp(-1 / (0.02 * f4_fs2));                   // signal-present hold, 20 ms
+  f4_cl  = s74_kt(0.04, f4_fs2);                        // ALL: the overshoot's lag
+  f4_ce  = s74_kt(0.01, f4_fs2);                        // the mean-square tracker, 10 ms
+  f4_clo = s74_k(250, f4_fs2);                          // the FET's low-frequency weighting
+  f4_krms = s74_kt(0.02, f4_fs2);                       // CLEAN: the RMS window (two poles of 20 ms)
+  f4_cxf = s74_k(90, srate); f4_dcr = 1 - 2 * $pi * 2 / srate;
+  f4_fd = 1 / (0.006 * srate);
+  ost_init(f4_ostm);
+  f4_scset();
+);
+f4_kap = 0.7;
+f4_sc = f4_tsc = slider7 | 0; f4_mod = f4_tmo = slider10 >= 0.5;
+in_init();
+f4_srinit();
+f4_drT.drift_init(0.8 + rand(0.4)); f4_drR.drift_init(0.8 + rand(0.4));
+f4_drA.drift_init(0.8 + rand(0.5)); f4_drB.drift_init(0.8 + rand(0.5));
+f4L.ost_ch_init(); f4R.ost_ch_init();
+f4_update();
+f4_g = f4_tg; f4_m = f4_tm; f4_mix = f4_tmix; f4_og = f4_tog;
+f4_rm = f4_trm; f4_kn = f4_tkn; f4_wa = f4_twa;
+f4_fade = 1; f4_fst = 0; f4_hold = 0; f4_dw = 0;
+
+// ---------- presets ----------
+function f4_set(ip, at, rl, rt, sc, mx, ou, mo) (
+  slider3 = ip; slider4 = at; slider5 = rl; slider6 = rt; slider7 = sc; slider8 = mx; slider9 = ou; slider10 = mo;
+  slider_automate(1020);                                // sliders 3-10 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#f4_pm = "Init|Vocal Grab|Vocal Smooth|De-Harsh Vocal|Bass Even|Kick Punch|Snare Crack|Drum Bus Punch|Parallel Smash|Room Mics|Acoustic Guitar|Mix Bus Glue";
+function load_preset(p) (
+  //                in  att  rel   rt sc mix  out  model
+  p == 1  ? f4_set(12, 250, 150, 0, 0, 100, 0, 0) :     // Init
+  p == 2  ? f4_set(18, 200, 150, 0, 1, 100, -1.0, 0) :     // Vocal Grab
+  p == 3  ? f4_set(15, 300, 300, 0, 2, 100, -1.4, 1) :     // Vocal Smooth
+  p == 4  ? f4_set(14, 50, 100, 0, 3, 100, -1.6, 0) :     // De-Harsh Vocal
+  p == 5  ? f4_set(16, 500, 400, 1, 0, 100, 0.5, 0) :     // Bass Even
+  p == 6  ? f4_set(15, 700, 60, 0, 0, 100, -1.2, 0) :     // Kick Punch
+  p == 7  ? f4_set(20, 600, 80, 1, 1, 100, -2.6, 0) :     // Snare Crack
+  p == 8  ? f4_set(14, 400, 100, 0, 2, 100, -2.1, 0) :     // Drum Bus Punch
+  p == 9  ? f4_set(30, 250, 50, 4, 0, 40, -0.7, 0) :     // Parallel Smash
+  p == 10 ? f4_set(24, 400, 80, 4, 0, 100, -2.3, 0) :     // Room Mics
+  p == 11 ? f4_set(14, 200, 250, 0, 2, 100, -1.4, 1) :     // Acoustic Guitar
+  p == 12 ? f4_set(8, 500, 300, 0, 2, 100, -1.6, 1) :     // Mix Bus Glue
+  p == 13 ? (                                           // Reset all to defaults
+    f4_set(12, 250, 150, 0, 0, 100, 0, 0);
+    slider1 = 0; slider2 = 1; slider11 = 50; slider12 = 0; slider13 = 30; slider14 = 120; slider15 = 6000; slider16 = -0.3; slider17 = 1;
+    slider_automate(131071);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+f4_update();
+
+@block
+srate != f4_sr ? f4_srinit();
+f4_update();                                            // knobs moved on the panel do not run @slider
+// WANDER: the FET's bias (the threshold, the release timing, the channels' tracking); on CLEAN only a trace
+f4_di = 0.25 * dm_s * samplesblock / srate;
+f4_wd = f4_mod ? 0.2 : 1;
+f4_thr = -12 + f4_wd * 0.5 * dm_a * f4_drT.drift_tick(f4_di);
+f4_thc = -18 + f4_wd * 0.5 * dm_a * f4_drT.v;           // CLEAN: the RMS threshold (fixed; INPUT drives into it)
+f4_drr = 1 + f4_wd * 0.08 * dm_a * f4_drR.drift_tick(f4_di);
+f4_ml = f4_wd * 0.015 * dm_a * f4_drA.drift_tick(f4_di);
+f4_mr = f4_wd * 0.015 * dm_a * f4_drB.drift_tick(f4_di);
+// the timing (from the gliding ratio), at 2x
+f4_rn = 1 + f4_rm * (1 - f4_wa) + 39 * f4_wa;           // the loop gain: the attack stays the set time at any ratio
+f4_a  = (exp(1 / (f4_att * (1 + 2 * f4_wa) * f4_fs2)) - 1) / f4_rn;
+f4_tr = f4_rel * (1 - 0.3 * f4_wa * (1 - f4_mod)) * f4_drr;
+f4_rf = exp(-1 / (f4_tr * f4_fs2));
+f4_rs = exp(-1 / (f4_smul * f4_tr * f4_fs2));
+f4_ov = 0.6 * f4_wa;
+f4_slc = 1 - 1 / (1 + f4_rm * (1 - f4_wa) + 19 * f4_wa); // CLEAN: the slope (ALL = 20:1)
+f4_kac = s74_kt(f4_att * 37.5, f4_fs2);
+f4nL.f4_flush(); f4nR.f4_flush(); f4xL.f4_flush(); f4xR.f4_flush();
+f4a_gr = max(f4a_gr, f4_grm); f4_grm = 0;
+f4a_vi = max(f4a_vi, f4_viL); f4a_vo = max(f4a_vo, f4_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+f4_g += (f4_tg - f4_g) * f4_sm; f4_m += (f4_tm - f4_m) * f4_sm;
+f4_mix += (f4_tmix - f4_mix) * f4_sm; f4_og += (f4_tog - f4_og) * f4_sm;
+f4_rm += (f4_trm - f4_rm) * f4_smr; f4_kn += (f4_tkn - f4_kn) * f4_smr; f4_wa += (f4_twa - f4_wa) * f4_smr;
+f4_wa < 0.00001 ? f4_wa = 0;
+// a change of model or side-chain high-pass: fade out, switch at the silent point, wait, fade in
+(f4_tmo != f4_mod || f4_tsc != f4_sc) && f4_fst == 0 ? f4_fst = 1;
+f4_fst == 1 ? ( f4_fade -= f4_fd; f4_fade <= 0 ? (
+  f4_fade = 0;
+  // the detectors keep running while it is silent, so the new one has settled when the sound comes back
+  f4_hold = f4_LAT + 0.03 * srate;
+  f4_tmo != f4_mod ? ( f4_mod = f4_tmo; f4_m = f4_tm = f4_mk(f4_mod, f4_rt, slider3); f4_hold = f4_LAT + 0.08 * srate; );
+  f4_tsc != f4_sc ? ( f4_sc = f4_tsc; f4_scset(); );
+  f4_fst = 2; ); ) :
+f4_fst == 2 ? ( f4_hold -= 1; f4_hold <= 0 ? f4_fst = 3; ) :
+f4_fst == 3 ? ( f4_fade += f4_fd; f4_fade >= 1 ? ( f4_fade = 1; f4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+f4_xl = in_l; f4_xr = in_r;
+f4_viL = max(f4_viL * 0.9995, abs(f4_xl) + abs(f4_xr));
+f4_DRY[f4_dw] = f4_xl; f4_DRY[128 + f4_dw] = f4_xr;
+f4_dr = (f4_dw - f4_LAT) & 127; f4_yld = f4_DRY[f4_dr]; f4_yrd = f4_DRY[128 + f4_dr]; f4_dw = (f4_dw + 1) & 127;
+
+f4uL.s74_up(f4_xl * f4_g); f4uR.s74_up(f4_xr * f4_g);
+f4_a0 = f4uL.o0; f4_b0 = f4uR.o0; f4_step(); f4_q0l = f4_a0; f4_q0r = f4_b0;
+f4_a0 = f4uL.o1; f4_b0 = f4uR.o1; f4_step(); f4_q1l = f4_a0; f4_q1r = f4_b0;
+f4_yl = f4dL.s74_dn(f4_q0l, f4_q1l); f4_yr = f4dR.s74_dn(f4_q0r, f4_q1r);
+// OB: the output transformer
+!f4_mod ? ( f4_yl = f4xL.f4_xfm(f4_yl); f4_yr = f4xR.f4_xfm(f4_yr); );
+
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+f4_yl = (f4_yld + (f4_yl - f4_yld) * f4_mix) * f4_fade; f4_yr = (f4_yrd + (f4_yr - f4_yrd) * f4_mix) * f4_fade;
+f4_vL = max(f4_vL * 0.9995, abs(f4_yl) + abs(f4_yr));
+f4_yl = f4L.ost_band(f4_yl) * f4_og; f4_yr = f4R.ost_band(f4_yr) * f4_og;
+ost_out(f4_yl, f4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider10);
+s74_fonts();
+s74_face(960, 366);
+f4_cln = slider10 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "FET74", "SERIES 74", "STUDIO COMPRESSOR", #f4_pm, 10);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 206, 292, "INPUT");
+f4mI.s74_edge(28, 92, 178, 62, f4a_vi * 2.83, "IN");
+f4mO.s74_edge(28, 162, 178, 62, f4a_vo * 2.83, "OUT");
+f4a_vi *= 0.6; f4a_vo *= 0.6;
+s74_off = 0; s74_knob(66, 288, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(160, 256, "GUARD");
+s74_lens(134, 268, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(196 * sc, 280 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- the compressor: the GR meter, INPUT, ATTACK, RELEASE, RATIO ----------
+s74_mod(232, 62, 400, 292, f4_cln ? "RMS LEVELLER" : "FET COMPRESSOR");
+f4mG.s74_gredge(246, 92, 372, 62, f4a_gr, "GAIN REDUCTION");
+f4a_gr *= 0.5;
+s74_knob(310, 236, 40, 3, 0, 36, 12, 0, "INPUT", "%.1f dB", 0);
+s74_small(256, 290, "0"); s74_small(350, 290, "36");
+s74_knob(444, 206, 22, 4, 20, 800, 250, 1, "ATTACK", "%.0f us", 0);
+s74_knob(556, 206, 22, 5, 50, 1100, 150, 1, "RELEASE", "%.0f ms", 0);
+s74_smallc(500, 278, "RATIO");
+i_ = 0; loop(5, pk_pitem("4|8|12|20|ALL", i_ + 1, #t_);
+  s74_lens(384 + i_ * 46, 290, 42, 26, slider6 == i_, #t_) ? s74_set(6, i_); i_ += 1; );
+s74_smallc(500, 334, f4_cln ? "RMS  ·  SOFT KNEE  ·  ALL = 20:1" : "PEAK  ·  FEEDBACK  ·  ALL BUTTONS IN");
+
+// ---------- the side-chain ----------
+s74_mod(644, 62, 110, 292, "SIDE-CHAIN");
+s74_smallc(699, 100, "HIGH-PASS");
+s74_lc = S74_C_HPF;
+i_ = 0; loop(4, pk_pitem("OFF|60|120|250", i_ + 1, #t_);
+  s74_lens(653 + (i_ % 2) * 48, 114 + floor(i_ / 2) * 34, 44, 26, slider7 == i_, #t_) ? s74_set(7, i_); i_ += 1; );
+s74_lc = 0;
+s74_smallc(699, 188, "HZ"); s74_smallc(699, 204, "12 DB / OCT");
+s74_smallc(699, 236, "DETECTOR");
+s74_smallc(699, 254, f4_cln ? "RMS" : "PEAK");
+s74_smallc(699, 290, "LINKED");
+s74_smallc(699, 308, "STEREO");
+f4_cln ? s74_smallc(699, 334, "NO COLOUR") : s74_smallc(699, 334, "FET · CLASS A");
+
+// ---------- OUTPUT: WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(766, 62, 180, 292, "OUTPUT");
+s74_knob(808, 126, 18, 11, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(808, 226, 12, 12, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(830 * sc, 214 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(862, 106, 130, 8, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(912, 106, 130, 9, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(852, 318, "CLIP  ·  ALWAYS ON");
+
+pk_end();
+ui_end();

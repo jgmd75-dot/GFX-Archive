@@ -65,6 +65,7 @@ Plugins here may need the shared `.jsfx-inc` files from GFX-II beside them to ru
 - `gfx-ch81-tky-nyc.jsfx` — GFX CH81 TKY-NYC, the original CH81 from main with its Tokyo / New York themes (archived 12 Oct 2026; desc renamed so it can't clash with the live CH81). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn, gfx-faceplate, gfx-instrument and gfx-headsmooth (copied here). No main-branch HTML manual existed to archive.
 - `gfx-tandem.jsfx` — GFX Tandem (removed from GFX-II 12 Oct 2026; lives on as Tandem Q with the EQ out; manual beside it as gfx-tandem-manual.html). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-instrument (copied here).
 - `gfx-smooth.jsfx` — GFX Smooth (removed from GFX-II 12 Oct 2026; lives on as GFX Headsmoother with HEAD off; manual beside it as gfx-smooth-manual.html). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn, gfx-faceplate, gfx-instrument and gfx-headsmooth (copied here).
+- `gfx-duplex-q.jsfx` — GFX Duplex Q (removed from GFX-II 12 Oct 2026; merged into GFX OB Q as its DUPLEX model, the tilt EQ dropped for OB Q's Board EQ; manual beside it as gfx-duplex-q-manual.html). Needs gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-instrument and gfx-dyn (copied here).
 - `gfx-drift`, `gfx-input`, `gfx-output`, `gfx-ui`, `gfx-panel`, `gfx-s57`, `gfx-s74`, `gfx-s92`, `gfx-dyn`, `gfx-faceplate`, `gfx-instrument`, `gfx-headsmooth` (.jsfx-inc) — copies of the GFX-II includes (12 Oct 2026) so the units above load from this folder.
 
 ## ideas

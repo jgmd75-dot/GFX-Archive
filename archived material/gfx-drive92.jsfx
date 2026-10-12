@@ -1,0 +1,337 @@
+desc:GFX Drive92 [home studio preamp]
+//tags: preamp tube valve saturation transformer converter 20-bit digital home-studio drive series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// DRIVE92 (Series 92: high-end home recording from the 90s): the front-end of a serious 90s home studio, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> POLARITY -> HIGH-PASS (off, 40, 80, 160 Hz) -> 2x or 4x oversampling ->
+//   ANALOG:  GAIN into a starved-plate valve stage - the boutique "tube preamp" of the decade, its valve run on a low
+//            plate voltage: the negative half of the wave flattens early and unevenly (even harmonics, a soft, thick
+//            edge). TUBE sets the heat: cool and polite to hot and furry. -> the coupling capacitor -> the OUTPUT
+//            IRON (the lows thicken, the top softens with IRON).
+//   DIGITAL: GAIN into a 20-bit converter front-end: clean until full scale, where the converter clips - SOFT LIMIT
+//            sets the knee of the converter's own soft limiter before it (0 = hard digital overs, 100 = a gentle
+//            knee from -6 dBFS). BITS (16 / 20 / 24) sets the converter's resolution (TPDF-dithered). IRON is out of
+//            the path.
+//   -> back to 1x -> (DIGITAL: the converter's word length) -> TONE (a tilt about 900 Hz) -> MIX (with the dry
+//   signal, delayed to match) -> OUTPUT -> the house output stage (band SAT, CLIP always on).
+// Each GAIN setting is level matched in both models, and the two models are matched to each other.
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the valve warms up and the mains wander: its bias and gain
+// drift slowly, the channels never quite matched; DIGITAL - the converter clock is steady: only a trace of gain drift.
+// Changing the model, the high-pass, the polarity, BITS or 2x / 4x fades the sound out and back in.
+// 2x / 4x: the oversampling (4x by default). The latency is the same in both (37 samples, reported).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:12<0,36,0.1>-Gain (dB)
+slider4:0<0,3,1{Off,40 Hz,80 Hz,160 Hz}>-High-pass
+slider5:45<0,100,1>-Tube heat / soft limit (%)
+slider6:40<0,100,1>-Iron (%)
+slider7:0<-6,6,0.1>-Tone (dark to bright, dB)
+slider8:100<0,100,1>-Mix (%)
+slider9:0<-24,12,0.1>-Output (dB)
+slider10:0<0,1,1{Analog,Digital}>-Model
+slider11:1<0,1,1{2x,4x}>-Oversampling
+slider12:50<0,100,1>-Drift (%)
+slider13:0<0,1,1{Normal,Invert}>-Polarity
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:1<0,1,1{Off,Clip}>-(unused, output stage)
+slider20:1<0,2,1{16 bit,20 bit,24 bit}>-Bits (digital)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-drive92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+d9_H1 = s92_alloc(64); d9_H2 = s92_alloc(32);
+d9_MK = s92_alloc(32);                                  // the makeup tables: ANALOG, DIGITAL (13 points each, dB)
+d9_ostm = s92_alloc(4096);
+d9_DRY = s92_alloc(256);                                // the dry signal's delay (L at 0, R at 128)
+d9_X2 = s92_alloc(16);                                  // the 2x chain's extra delay (L at 0, R at 8)
+
+// ---------- oversampling (the house half-bands; the 2x chain is delayed to the 4x chain's 37 samples) ----------
+s92_hbdesign(d9_H1, 63, 8); s92_hbdesign(d9_H2, 23, 7);
+d9u1L.s92_upinit(63, d9_H1, 64); d9u1R.s92_upinit(63, d9_H1, 64); d9d1L.s92_dninit(63, d9_H1, 64); d9d1R.s92_dninit(63, d9_H1, 64);
+d9u2L.s92_upinit(23, d9_H2, 16); d9u2R.s92_upinit(23, d9_H2, 16); d9d2L.s92_dninit(23, d9_H2, 32); d9d2R.s92_dninit(23, d9_H2, 32);
+function d9_flush() instance(buf, sz2) ( memset(buf, 0, 2 * sz2); );
+d9_LAT = 37; d9_L2X = 6;
+
+// ---------- the stages ----------
+// the starved-plate valve: run on a low plate voltage the negative half flattens early and unevenly; HEAT softens and
+// lowers the knee
+function d9_vt(u) ( u >= 0 ? s92_th(0.85 * u) / 0.85 : s92_th(d9_vn * u) / d9_vn; );
+// the makeup that keeps every GAIN level matched (dB, GAIN 0 .. 36 in 3 dB steps; measured on pink noise)
+function d9_row(k, a, b, c, d, e, f, g, h, i, j, l, m, n) local(p) (
+  p = d9_MK + k * 13; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l; p[11] = m; p[12] = n;
+);
+d9_row(0, 1.32, 0.97, 1.34, 1.61, 1.73, 2.71, 4.30, 5.45, 7.71, 9.82, 12.37, 14.73, 17.90);
+d9_row(1, 0.19, 0.21, 0.11, 0.11, 0.05, 0.40, 1.31, 2.76, 4.70, 7.26, 9.67, 12.55, 15.38);
+function d9_mk(cl, d) local(p, i, f, q) (
+  p = min(max(d, 0), 36) / 3; i = min(floor(p), 11); f = p - i; q = d9_MK + cl * 13;
+  10 ^ ((q[i] * (1 - f) + q[i + 1] * f) / 20);
+);
+
+// ---------- one channel at the oversampled rate ----------
+// ANALOG: GAIN into the starved-plate valve, the coupling cap, the output iron
+function d9_an(x) instance(hp, lo2, hf) local(u, y, b) (
+  u = x * d9_g * d9_dg;
+  b = d9_b + d9_db;
+  y = d9_vt(u + b) - d9_vt(b);
+  hp += (y - hp) * d9_khp; y -= hp;
+  lo2 += (y - lo2) * d9_kl2;
+  y = (y - lo2) + s92_th(lo2 * d9_ko) / d9_ko;
+  hf += (y - hf) * d9_khf;
+  hf / d9_g * d9_m;
+);
+// DIGITAL: GAIN into the converter: linear to its soft-limit knee, then the converter's ceiling at full scale
+function d9_dig(x) local(u, a, k) (
+  u = x * d9_g * d9_dg; a = abs(u); k = d9_kn;
+  a > k ? u = sign(u) * min(k + (1 - k) * s92_th((a - k) / (1 - k)), 1);
+  u / d9_g * d9_m;
+);
+function d9_ch(x) ( d9_mod ? d9_dig(x) : this.d9_an(x); );
+
+// ---------- settings ----------
+function d9_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  d9_tg = 10 ^ (slider3 / 20);
+  d9_tmo = slider10 >= 0.5;
+  d9_tm = d9_mk(d9_mod, slider3);
+  d9_tvn = 1.3 + 1.7 * slider5 / 100; d9_tb = 0.03 + 0.3 * slider5 / 100;   // ANALOG: the valve's heat
+  d9_tkn = 1 - 0.5 * slider5 / 100;                                       // DIGITAL: the soft-limit knee
+  d9_tko = 0.25 + 1.6 * slider6 / 100;                                     // the output iron
+  d9_tbits = slider20;
+  d9_tilt = slider7; d9_tmix = slider8 / 100; d9_tog = 10 ^ (slider9 / 20);
+  d9_tos = slider11 >= 0.5; d9_thp = slider4; d9_tpol = slider13 >= 0.5;
+  drift_macro(slider12);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = d9_LAT;
+);
+function d9_tiltset() local(g, w) (
+  d9_tl = d9_tilt; g = 10 ^ (d9_tilt / 40); w = tan($pi * 900 / srate);
+  d9_ta = (w - 1) / (w + 1); d9_tlo = 1 / g; d9_thi = g;
+);
+// the high-pass (at 1x): ANALOG a little bump at the corner (Q 0.85), DIGITAL Butterworth
+function d9_hpset() local(f) (
+  f = d9_hp == 1 ? 40 : d9_hp == 2 ? 80 : 160;
+  d9_hl.s92_bqset(1, f, 0, d9_mod ? 0.707 : 0.85, srate); d9_hr.s92_bqset(1, f, 0, d9_mod ? 0.707 : 0.85, srate);
+  d9_hl.s92_bqclr(); d9_hr.s92_bqclr();
+);
+function d9_srinit() (
+  d9_sr = srate; d9_os = d9_tos; d9_fso = (d9_os ? 4 : 2) * srate;
+  d9_kl1 = s92_k(110, d9_fso); d9_kl2 = s92_k(70, d9_fso); d9_khp = s92_k(14, d9_fso);
+  d9_khf = s92_k(min(30000, 0.45 * d9_fso), d9_fso);
+  d9_sm = 1 - exp(-1 / (0.02 * srate));
+  d9_fd = 1 / (0.006 * srate);
+  ost_init(d9_ostm);
+  d9_tiltset(); d9_hpset();
+);
+d9_tilt = 0; d9_tos = 1; d9_hp = d9_thp = slider4; d9_mod = d9_tmo = slider10 >= 0.5;
+in_init();
+d9_srinit();
+d9_dfL.drift_init(0.8 + rand(0.4)); d9_dfR.drift_init(0.8 + rand(0.4)); d9_dgL.drift_init(0.8 + rand(0.4)); d9_dgR.drift_init(0.8 + rand(0.4));
+d9_sbL = rand(2) - 1; d9_sbR = rand(2) - 1; d9_sgL = rand(2) - 1; d9_sgR = rand(2) - 1;
+d9L.ost_ch_init(); d9R.ost_ch_init();
+d9_update();
+d9_qs = 524288;
+d9_g = d9_tg; d9_m = d9_tm; d9_b = d9_tb; d9_vn = d9_tvn; d9_kn = d9_tkn; d9_ko = d9_tko; d9_bits = d9_tbits; d9_mix = d9_tmix; d9_og = d9_tog;
+d9_pol = d9_tpol; d9_fade = 1; d9_fst = 0; d9_hold = 0; d9_dw = 0; d9_pw = 0;
+
+// ---------- presets ----------
+function d9_set(tr, ga, hp, ht, ir, tn, mx, ou, mo, bt) (
+  slider1 = tr; slider3 = ga; slider4 = hp; slider5 = ht; slider6 = ir; slider7 = tn; slider8 = mx; slider9 = ou; slider10 = mo; slider20 = bt;
+  slider_automate(1021 + 524288);                       // sliders 1, 3-10, 20 (GUARD, 2x / 4x, DRIFT, POLARITY and the output stage stay)
+);
+#d9_pm = "Init|Tube Vocal|Warm Bass DI|Hot Valve Drums|Acoustic Sheen|Furry Synth|Parallel Tube|Clean Converter|Soft Limit Vocal|Hot Digital Drums|16-Bit Sampler|Mastering ADC";
+function load_preset(p) (
+  p == 1  ? d9_set(0, 12, 0, 45, 40,    0, 100, 0, 0, 1) :     // Init
+  p == 2  ? d9_set(0, 18, 2, 55, 35, 1.0, 100, -0.7, 0, 1) :     // Tube Vocal
+  p == 3  ? d9_set(0, 20, 0, 60, 75, -1.0, 100, -0.2, 0, 1) :     // Warm Bass DI
+  p == 4  ? d9_set(0, 26, 1, 85, 50,    0, 100, 0, 0, 1) :     // Hot Valve Drums
+  p == 5  ? d9_set(0, 14, 1, 30, 25, 1.5, 100, -0.5, 0, 1) :     // Acoustic Sheen
+  p == 6  ? d9_set(0, 30, 0, 95, 60, -0.5, 100, 0.3, 0, 1) :     // Furry Synth
+  p == 7  ? d9_set(0, 34, 1, 90, 60, 0.5, 40, 1, 0, 1) :     // Parallel Tube
+  p == 8  ? d9_set(0, 12, 0, 0, 40, 0, 100, -0.35, 1, 1) :     // Clean Converter
+  p == 9  ? d9_set(0, 22, 2, 70, 40, 0.6, 100, 0.3, 1, 1) :     // Soft Limit Vocal
+  p == 10 ? d9_set(0, 30, 0, 50, 40, 0, 100, -0.2, 1, 1) :     // Hot Digital Drums
+  p == 11 ? d9_set(0, 28, 1, 20, 40,  0.4, 100, 0, 1, 0) :     // 16-Bit Sampler
+  p == 12 ? d9_set(0, 10, 0, 80, 40, 0.3, 100, -0.3, 1, 2) :     // Mastering ADC
+  p == 13 ? (                                                  // Reset all to defaults
+    d9_set(0, 12, 0, 45, 40, 0, 100, 0, 0, 1);
+    slider2 = 1; slider11 = 1; slider12 = 50; slider13 = 0; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3; slider19 = 1;
+    slider_automate(1048575);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+d9_update();
+
+@block
+srate != d9_sr ? d9_srinit();
+d9_update();                                            // knobs moved on the panel do not run @slider
+// DRIFT: ANALOG - the valve's bias and gain drift as it warms and the mains wander; DIGITAL - a trace of gain drift
+d9_di = 0.12 * dm_s * samplesblock / srate;
+d9_wb = d9_mod ? 0 : 1; d9_wg = d9_mod ? 0.2 : 1;
+d9_dbL = d9_wb * dm_a * (0.03 * d9_dfL.drift_tick(d9_di) + 0.01 * d9_sbL); d9_dbR = d9_wb * dm_a * (0.03 * d9_dfR.drift_tick(d9_di) + 0.01 * d9_sbR);
+d9_dgLv = 1 + d9_wg * dm_a * (0.025 * d9_dgL.drift_tick(d9_di) + 0.008 * d9_sgL); d9_dgRv = 1 + d9_wg * dm_a * (0.025 * d9_dgR.drift_tick(d9_di) + 0.008 * d9_sgR);
+d9_tilt != d9_tl ? d9_tiltset();
+d9a_vi = max(d9a_vi, d9_viL); d9a_vo = max(d9a_vo, d9_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+d9_g += (d9_tg - d9_g) * d9_sm; d9_m += (d9_tm - d9_m) * d9_sm; d9_b += (d9_tb - d9_b) * d9_sm;
+d9_vn += (d9_tvn - d9_vn) * d9_sm; d9_kn += (d9_tkn - d9_kn) * d9_sm; d9_ko += (d9_tko - d9_ko) * d9_sm;
+d9_mix += (d9_tmix - d9_mix) * d9_sm; d9_og += (d9_tog - d9_og) * d9_sm;
+// a change of model, high-pass, polarity or oversampling: fade out, switch at the silent point, wait, fade in
+(d9_tmo != d9_mod || d9_thp != d9_hp || d9_tpol != d9_pol || d9_tos != d9_os || d9_tbits != d9_bits) && d9_fst == 0 ? d9_fst = 1;
+d9_fst == 1 ? ( d9_fade -= d9_fd; d9_fade <= 0 ? (
+  d9_fade = 0; d9_pol = d9_tpol;
+  d9_bits = d9_tbits; d9_qs = d9_bits == 0 ? 32768 : d9_bits == 1 ? 524288 : 8388608;
+  d9_tmo != d9_mod ? ( d9_mod = d9_tmo; d9_m = d9_tm = d9_mk(d9_mod, slider3); d9_hpset(); );
+  d9_thp != d9_hp ? ( d9_hp = d9_thp; d9_hpset(); );
+  d9_tos != d9_os ? ( d9_os = d9_tos; d9_srinit();
+                      d9u1L.d9_flush(); d9u1R.d9_flush(); d9d1L.d9_flush(); d9d1R.d9_flush();
+                      d9u2L.d9_flush(); d9u2R.d9_flush(); d9d2L.d9_flush(); d9d2R.d9_flush(); memset(d9_X2, 0, 16); );
+  d9_hold = d9_LAT + 8; d9_fst = 2; ); ) :
+d9_fst == 2 ? ( d9_hold -= 1; d9_hold <= 0 ? d9_fst = 3; ) :
+d9_fst == 3 ? ( d9_fade += d9_fd; d9_fade >= 1 ? ( d9_fade = 1; d9_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD, POLARITY, the high-pass ----------
+in_process(spl0, spl1);
+d9_xl = in_l; d9_xr = in_r;
+d9_pol ? ( d9_xl = -d9_xl; d9_xr = -d9_xr; );
+d9_hp > 0 ? ( d9_xl = d9_hl.s92_bq(d9_xl); d9_xr = d9_hr.s92_bq(d9_xr); );
+d9_viL = max(d9_viL * 0.9995, abs(d9_xl) + abs(d9_xr));
+d9_DRY[d9_dw] = d9_xl; d9_DRY[128 + d9_dw] = d9_xr;
+d9_dr = (d9_dw - d9_LAT) & 127; d9_yld = d9_DRY[d9_dr]; d9_yrd = d9_DRY[128 + d9_dr]; d9_dw = (d9_dw + 1) & 127;
+
+// ---------- the preamp, oversampled ----------
+d9_os ? (
+  d9u1L.s92_up(d9_xl); d9u1R.s92_up(d9_xr);
+  d9_a1l = d9u1L.o0; d9_a1r = d9u1R.o0;
+  d9u2L.s92_up(d9_p1l); d9u2R.s92_up(d9_p1r);
+  d9_p1l = d9u1L.o1; d9_p1r = d9u1R.o1;
+  d9_dg = d9_dgLv; d9_db = d9_dbL; d9_q0l = d9cL.d9_ch(d9u2L.o0); d9_q1l = d9cL.d9_ch(d9u2L.o1);
+  d9_dg = d9_dgRv; d9_db = d9_dbR; d9_q0r = d9cR.d9_ch(d9u2R.o0); d9_q1r = d9cR.d9_ch(d9u2R.o1);
+  d9_h0l = d9d2L.s92_dn(d9_q0l, d9_q1l); d9_h0r = d9d2R.s92_dn(d9_q0r, d9_q1r);
+  d9u2L.s92_up(d9_a1l); d9u2R.s92_up(d9_a1r);
+  d9_dg = d9_dgLv; d9_db = d9_dbL; d9_q0l = d9cL.d9_ch(d9u2L.o0); d9_q1l = d9cL.d9_ch(d9u2L.o1);
+  d9_dg = d9_dgRv; d9_db = d9_dbR; d9_q0r = d9cR.d9_ch(d9u2R.o0); d9_q1r = d9cR.d9_ch(d9u2R.o1);
+  d9_h1l = d9d2L.s92_dn(d9_q0l, d9_q1l); d9_h1r = d9d2R.s92_dn(d9_q0r, d9_q1r);
+  d9_yl = d9d1L.s92_dn(d9_h0l, d9_h1l); d9_yr = d9d1R.s92_dn(d9_h0r, d9_h1r);
+) : (
+  d9u1L.s92_up(d9_xl); d9u1R.s92_up(d9_xr);
+  d9_dg = d9_dgLv; d9_db = d9_dbL; d9_q0l = d9cL.d9_ch(d9u1L.o0); d9_q1l = d9cL.d9_ch(d9u1L.o1);
+  d9_dg = d9_dgRv; d9_db = d9_dbR; d9_q0r = d9cR.d9_ch(d9u1R.o0); d9_q1r = d9cR.d9_ch(d9u1R.o1);
+  d9_yl = d9d1L.s92_dn(d9_q0l, d9_q1l); d9_yr = d9d1R.s92_dn(d9_q0r, d9_q1r);
+  d9_X2[d9_pw] = d9_yl; d9_X2[8 + d9_pw] = d9_yr;
+  d9_pr = (d9_pw - d9_L2X) & 7; d9_yl = d9_X2[d9_pr]; d9_yr = d9_X2[8 + d9_pr]; d9_pw = (d9_pw + 1) & 7;
+);
+
+// ---------- DIGITAL: the converter's word length (TPDF dither) ----------
+d9_mod ? (
+  d9_yl = (floor(d9_yl * d9_qs + rand(1) - rand(1) + 0.5)) / d9_qs; d9_yr = (floor(d9_yr * d9_qs + rand(1) - rand(1) + 0.5)) / d9_qs;
+);
+// ---------- TONE: the tilt ----------
+d9_tilt != 0 ? (
+  d9_tzl = d9_ta * d9_yl + d9_tsl; d9_tsl = d9_yl - d9_ta * d9_tzl;
+  d9_lpl = (d9_yl + d9_tzl) * 0.5; d9_yl = d9_lpl * d9_tlo + (d9_yl - d9_lpl) * d9_thi;
+  d9_tzr = d9_ta * d9_yr + d9_tsr; d9_tsr = d9_yr - d9_ta * d9_tzr;
+  d9_lpr = (d9_yr + d9_tzr) * 0.5; d9_yr = d9_lpr * d9_tlo + (d9_yr - d9_lpr) * d9_thi;
+);
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+d9_yl = (d9_yld + (d9_yl - d9_yld) * d9_mix) * d9_fade; d9_yr = (d9_yrd + (d9_yr - d9_yrd) * d9_mix) * d9_fade;
+d9_vL = max(d9_vL * 0.9995, abs(d9_yl) + abs(d9_yr));
+d9_yl = d9L.ost_band(d9_yl) * d9_og; d9_yr = d9R.ost_band(d9_yr) * d9_og;
+ost_out(d9_yl, d9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider10);
+s92_fonts();
+s92_face(960, 366);
+d9_dgt = slider10 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "DRIVE92", "SERIES 92", "STUDIO PREAMP", #d9_pm, 10);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the LED ladders, the trim, GUARD, polarity ----------
+s92_mod(20, 62, 222, 292, "INPUT");
+d9mI.s92_edge(30, 94, 202, 46, d9a_vi * 2.83, "IN");
+d9mO.s92_edge(30, 148, 202, 46, d9a_vo * 2.83, "OUT");
+d9a_vi *= 0.6; d9a_vo *= 0.6;
+s92_off = 0; s92_knob(72, 282, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(180, 222, "GUARD");
+s92_key(152, 232, 56, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(220 * sc, 244 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+s92_smallc(180, 278, "POLARITY");
+s92_key(152, 288, 56, 24, slider13 >= 0.5, "Ø") ? s92_set(13, slider13 >= 0.5 ? 0 : 1);
+
+// ---------- PREAMP: GAIN and the high-pass ----------
+s92_mod(254, 62, 296, 292, "PREAMP");
+s92_knob(402, 168, 50, 3, 0, 36, 12, 0, "GAIN", "%.1f dB", 0);
+s92_small(290, 210, "0"); s92_small(504, 210, "36");
+s92_smallc(402, 276, "HIGH-PASS");
+s92_lc = S92_C_HPF;
+gi_ = 0; loop(4, pk_pitem("OFF|40|80|160", gi_ + 1, #gt_);
+  s92_key(296 + gi_ * 54, 288, 48, 26, slider4 == gi_, #gt_) ? s92_set(4, gi_); gi_ += 1; );
+s92_lc = 0;
+s92_smallc(402, 330, "HZ  ·  12 DB / OCT");
+
+// ---------- VALVE · IRON (ANALOG) / CONVERTER (DIGITAL) ----------
+s92_mod(562, 62, 172, 292, d9_dgt ? "CONVERTER" : "VALVE · IRON");
+d9_dgt ? sprintf(#gl_, "ADC  %s", slider20 == 0 ? "16-BIT" : slider20 == 1 ? "20-BIT" : "24-BIT") : sprintf(#gl_, "HEAT  %d", slider5);
+s92_lcd(576, 94, 144, 26, #gl_);
+s92_knob(608, 176, 24, 5, 0, 100, 45, 0, d9_dgt ? "SOFT LIMIT" : "TUBE", "%.0f%%", 0);
+s92_off = d9_dgt; s92_knob(690, 176, 24, 6, 0, 100, 40, 0, "IRON", "%.0f%%", 0); s92_off = 0;
+s92_smallc(648, 246, "BITS");
+gi_ = 0; loop(3, pk_pitem("16|20|24", gi_ + 1, #gt_);
+  s92_key(584 + gi_ * 44, 256, 40, 24, slider20 == gi_ && d9_dgt, #gt_) ? s92_set(20, gi_); gi_ += 1; );
+d9_dgt ? s92_smallc(648, 300, "TPDF DITHER") : s92_smallc(648, 300, "DIGITAL ONLY");
+s92_smallc(648, 330, d9_dgt ? "IRON OUT OF PATH" : "STARVED-PLATE VALVE");
+
+// ---------- OUTPUT: TONE, DRIFT, SAT; MIX and OUTPUT on faders ----------
+s92_mod(746, 62, 194, 292, "OUTPUT");
+s92_knob(788, 118, 18, 7, -6, 6, 0, 0, "TONE", "%+.1f dB", 0);
+s92_knob(788, 206, 18, 12, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(788, 290, 12, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(810 * sc, 278 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fc = S92_F_BLUE; s92_fader(852, 106, 130, 8, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(906, 106, 130, 9, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s92_smallc(879, 286, "OVERSAMPLING");
+s92_key(846, 298, 32, 22, slider11 < 0.5, "2x") ? s92_set(11, 0);
+s92_key(882, 298, 32, 22, slider11 >= 0.5, "4x") ? s92_set(11, 1);
+
+pk_end();
+ui_end();

@@ -1,0 +1,451 @@
+desc:GFX VC74 [OB vocoder]
+//tags: vocoder channel vocoder filter bank transformer carrier side-chain midi robot voice talkback broadcast series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// VC74 (Series 74: the OB remote and broadcast series): the field vocoder from an outside-broadcast truck, with two
+// models on one switch. A bank of 24 band-passes analyses the voice, a follower on each band tracks its level, and the
+// same bank, fed with the carrier, is opened band by band to match.
+// I/O  inputs 1/2 = the MODULATOR (a voice ...; summed to mono), inputs 3/4 = the CARRIER when EXT is chosen
+//      (route a synth, an organ ... to channels 3/4). Stereo out. MIDI notes play the INT carrier and are passed on.
+//   voice -> TRIM / GUARD -> EMPHASIS (a high shelf before the analysis) ->
+//   OB:    the INPUT IRON -> 24 wide, overlapping bands; a rectifier and one smoothing pole on each (a little ripple
+//          left in, as on the field units); the carrier's bank is a little off the voice's, and WANDER detunes the two
+//          further -> SIBILANCE: a band of noise (3 - 9 kHz) opened by the voice's top -> the OUTPUT IRON (driven: the
+//          lows thicken, the top softens)
+//   CLEAN: 24 sharp bands, the voice's and the carrier's exactly matched; a quadrature detector on each band (no
+//          ripple, fast and precise) -> SIBILANCE: an unvoiced detector finds the consonants and passes them straight
+//          through (and turns the carrier to noise for them): high articulation, no added harmonics.
+//   -> MIX (with the voice) -> OUTPUT -> the house output stage (band SAT, CLIP always on).
+// CARRIER  INT or EXT (channels 3/4). INT: six voices played from MIDI - BUZZ (a narrow pulse train, very rich), SAW,
+//      NOISE (sounds without notes: a whisper), CHORD (each key plays root, fifth and octave). TUNE, OCTAVE, GLIDE;
+//      HOLD keeps the notes sounding after the keys are up.
+// FORMANT  moves the carrier's bands against the voice's (-12 .. +12 semitones: a larger or smaller throat).
+// ATTACK / RELEASE  how quickly the bands follow the voice. EMPHASIS lifts the voice's top before the analysis.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the bands' centres drift (the two banks each on their own) and
+//   the INT carrier's pitch wanders; on CLEAN only a trace of pitch wander remains.
+// Changing the model, the carrier source or the wave fades the sound out and back in. OB and CLEAN are level matched.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:1<0,1,1{Ext,Int}>-Carrier
+slider4:0<0,3,1{Buzz,Saw,Noise,Chord}>-Wave
+slider5:0<-12,12,0.01>-Tune (st)
+slider6:0<-1,1,1>-Octave
+slider7:0<0,100,1>-Glide (%)
+slider8:0<0,1,1{Off,On}>-Hold
+slider9:0<-12,12,0.1>-Formant (st)
+slider10:4<0.5,50,0.1>-Attack (ms)
+slider11:60<10,500,1>-Release (ms)
+slider12:40<0,100,1>-Emphasis (%)
+slider13:40<0,100,1>-Sibilance (%)
+slider14:100<0,100,1>-Mix (%)
+slider15:0<-24,12,0.1>-Output (dB)
+slider16:0<0,1,1{OB,Clean}>-Model
+slider17:50<0,100,1>-Wander (%)
+slider18:0<0,100,1>-Band sat (%)
+slider19:30<0,100,1>-Bias (output stage, %)
+slider20:120<40,400,1>-Sat low band (Hz)
+slider21:6000<2000,16000,10>-Sat high band (Hz)
+slider22:-0.3<-24,0,0.1>-Ceiling (dB)
+slider23:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:Modulator L
+in_pin:Modulator R
+in_pin:Carrier L
+in_pin:Carrier R
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vc74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+v4_NB = 24;
+v4_CA = s74_alloc(24 * 4);                              // the analysis bank: b0, a1, a2 (b1 = 0, b2 = -b0)
+v4_CS = s74_alloc(24 * 4);                              // the synthesis bank (OB: a little off the analysis)
+v4_QC = s74_alloc(24 * 2);                              // the quadrature detector's constants per band
+v4_SA = s74_alloc(24 * 4); v4_SL = s74_alloc(24 * 4); v4_SQ = s74_alloc(24 * 4);
+v4_EN = s74_alloc(24); v4_Y1 = s74_alloc(24);
+v4_DA = s74_alloc(24); v4_DS = s74_alloc(24);           // the banks' wander (analysis, synthesis)
+v4_WA = s74_alloc(24); v4_WS = s74_alloc(24);
+v4_MM = s74_alloc(24);                                  // OB: the fixed mismatch of the two banks
+v4_DSP = s74_alloc(24);                                 // the panel's copy
+v4_MQ = s74_alloc(1024);
+v4_VO = s74_alloc(6 * 16);                              // voices: 0 note (-1 free), 1 gate, 2-4 phases, 5 freq, 6 target, 7 env, 8 key down, 9 velocity
+v4_ostm = s74_alloc(4096);
+i_ = 0; loop(24, v4_MM[i_] = rand(2) - 1; v4_WA[i_] = rand(2) - 1; v4_WS[i_] = rand(2) - 1; i_ += 1; );
+
+// ---------- the bank ----------
+function v4_bp(c, f, q) local(w, al, a0) (
+  w = 2 * $pi * min(f, 0.45 * srate) / srate; al = sin(w) / (2 * q); a0 = 1 + al;
+  c[0] = al / a0; c[1] = -2 * cos(w) / a0; c[2] = (1 - al) / a0;
+);
+// the band centres: 100 Hz .. 8 kHz, 24 bands (about 3.3 semitones apart)
+v4_r = 80 ^ (1 / 23); v4_bst = 12 * log(v4_r) / log(2);
+function v4_bands() local(i, f, q, fs, w) (
+  q = 1 / (sqrt(v4_r) - 1 / sqrt(v4_r)) * (v4_mod ? 0.85 : 0.42);
+  i = 0; loop(24,
+    f = 100 * v4_r ^ i;
+    v4_mod ? (
+      v4_bp(v4_CA + i * 4, f, q); v4_bp(v4_CS + i * 4, f, q);
+    ) : (
+      v4_bp(v4_CA + i * 4, f * (1 + v4_DA[i]), q);
+      fs = f * (1 + 0.025 * dm_a * v4_MM[i] + v4_DS[i]);
+      v4_bp(v4_CS + i * 4, fs, q);
+    );
+    w = 2 * $pi * min(f, 0.45 * srate) / srate;
+    v4_QC[i * 2] = 0.5 / cos(w * 0.5); v4_QC[i * 2 + 1] = 0.5 / sin(w * 0.5);
+    i += 1; );
+);
+// two cascaded band-passes on the state s (4 slots), coefficients c
+function v4_bq2(x, c, s) local(y, z, b0, a1, a2) (
+  b0 = c[0]; a1 = c[1]; a2 = c[2];
+  y = b0 * x + s[0]; s[0] = -a1 * y + s[1]; s[1] = -b0 * x - a2 * y;
+  z = b0 * y + s[2]; s[2] = -a1 * z + s[3]; s[3] = -b0 * y - a2 * z;
+  z;
+);
+// a band-limited sawtooth (polyBLEP at the reset), phase t, increment dt
+function v4_saw(t, dt) local(s, u) (
+  s = 2 * t - 1;
+  t < dt ? ( u = t / dt; s -= u + u - u * u - 1; ) :
+  t > 1 - dt ? ( u = (t - 1) / dt; s -= u * u + u + u + 1; );
+  s;
+);
+// the transformer: the core saturates the lows first
+function v4_iron(x, kl, kd) instance(lo) ( lo += (x - lo) * kl; (x - lo) + s74_th(lo * kd) / kd; );
+
+// ---------- settings ----------
+// the level of each wave (BUZZ, SAW, NOISE, CHORD) into the bank, and of each model's bank (measured on pink noise)
+function v4_wgain(w) ( v4_mod ? (w == 0 ? 2.05 : w == 1 ? 2.51 : w == 2 ? 2.31 : 2.58) : (w == 0 ? 2.05 : w == 1 ? 2.27 : w == 2 ? 1.75 : 2.63); );
+function v4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  v4_tcar = slider3 >= 0.5; v4_twv = floor(slider4 + 0.5); v4_tmo = slider16 >= 0.5;
+  v4_tune = 2 ^ (slider5 / 12 + slider6); v4_gl = slider7 / 100; v4_holdk = slider8 >= 0.5;
+  v4_tfs = slider9 / v4_bst;
+  v4_ka = s74_kt(slider10 / 1000, srate); v4_kr = s74_kt(slider11 / 1000, srate);
+  v4_temp = slider12 / 100; v4_tsib = slider13 / 100;
+  v4_tmix = slider14 / 100; v4_tog = 10 ^ (slider15 / 20);
+  drift_macro(slider17);
+  ost_setup(slider18 / 100, slider19 / 100, slider20, slider21, slider22, 1);   // output stage: CLIP, always on
+);
+function v4_srinit() (
+  v4_sr = srate; v4_sm = s74_kt(0.02, srate); v4_fd = 1 / (0.008 * srate);
+  v4_bands();
+  v4E.s74_bqset(5, 2500, 9, 0.7, srate);                // EMPHASIS: the shelf (scaled)
+  v4H1.s74_bqset(1, 4000, 0, 0.7, srate); v4H2.s74_bqset(1, 4000, 0, 0.7, srate);    // the voice's top (consonants)
+  v4L1.s74_bqset(0, 1200, 0, 0.7, srate);               // the voiced energy
+  v4N1.s74_bqset(2, 5200, 0, 0.9, srate); v4N2.s74_bqset(2, 5200, 0, 0.9, srate);    // OB: the noise band
+  v4C.s74_bqset(1, 40, 0, 0.7, srate); v4D.s74_bqset(1, 40, 0, 0.7, srate);           // the carrier's DC block
+  v4_kl1 = s74_k(110, srate); v4_kl2 = s74_k(70, srate); v4_khf = s74_k(11000, srate);
+  v4_kha = s74_kt(0.001, srate); v4_khr = s74_kt(0.03, srate);
+  v4_kua = s74_kt(0.002, srate); v4_kur = s74_kt(0.025, srate);
+  v4_kn = s74_kt(0.05, srate);
+  ost_init(v4_ostm);
+);
+
+in_init();
+v4_mod = v4_tmo = slider16 >= 0.5; v4_car = v4_tcar = slider3 >= 0.5; v4_wv = v4_twv = floor(slider4 + 0.5);
+v4_update(); v4_srinit();
+v4_p = v4_VO; loop(6, v4_p[0] = -1; v4_p += 16; );
+v4_dfB.drift_init(0.8 + rand(0.4));
+v4oL.ost_ch_init(); v4oR.ost_ch_init();
+v4_mix = v4_tmix; v4_og = v4_tog; v4_fs = v4_tfs; v4_emp = v4_temp; v4_sib = v4_tsib;
+v4_fade = 1; v4_fst = 0; v4_bend = 1; v4_nsm = 1;
+v4_gob = 2.52; v4_gcl = 6.13;                                // the banks' gains (OB, CLEAN), measured on pink noise
+
+// ---------- presets ----------
+function v4_set(car, wv, tn, oc, gl, fm, at, rl, em, sb, mx, ou, mo) (
+  slider3 = car; slider4 = wv; slider5 = tn; slider6 = oc; slider7 = gl; slider9 = fm; slider10 = at; slider11 = rl;
+  slider12 = em; slider13 = sb; slider14 = mx; slider15 = ou; slider16 = mo;
+  slider_automate(65404);                               // sliders 3 - 7, 9 - 16 (GUARD, HOLD, WANDER and the output stage stay)
+);
+#v4_pm = "Init|Truck Talkback|Robot Announcer|Field Saw|Stadium Choir|Whisper Feed|Deep Relay|Small Radio|Mission Control|Telemetry Chord|Clean Articulate|External Carrier";
+function load_preset(p) (
+  //               car wv   tn  oc   gl   fm    at    rl   em   sb   mx     ou  mo
+  p == 1  ? v4_set(1,  0,   0,   0,   0,   0,    4,   60,  40,  40,  100,     0,  0) :     // Init
+  p == 2  ? v4_set(1,  0,   0,   0,   0,   2,    3,   45,  55,  55,  100,  -0.4,  0) :     // Truck Talkback
+  p == 3  ? v4_set(1,  0,   0,  -1,   0,  -2,    6,   80,  45,  25,  100,  -0.8,  0) :     // Robot Announcer
+  p == 4  ? v4_set(1,  1,   0,   0,  10,   0,    4,   70,  40,  40,  100,  -0.2,  0) :     // Field Saw
+  p == 5  ? v4_set(1,  3,   0,   0,  20,   0,   10,  160,  35,  30,  100,   0.8,  0) :     // Stadium Choir
+  p == 6  ? v4_set(1,  2,   0,   0,   0,   0,    3,   50,  50,  70,  100,  -2.2,  0) :     // Whisper Feed
+  p == 7  ? v4_set(1,  0,   0,  -1,  10,  -7,    5,   80,  40,  35,  100,  -1.3,  0) :     // Deep Relay
+  p == 8  ? v4_set(1,  0,   0,   0,   0,   6,    3,   50,  50,  45,  100,     0,  0) :     // Small Radio
+  p == 9  ? v4_set(1,  0,   0,   0,   0,   0,    2,   40,  45,  55,  100,     0,  1) :     // Mission Control
+  p == 10 ? v4_set(1,  3,   0,   0,  15,   0,    6,  120,  35,  40,  100,   0.5,  1) :     // Telemetry Chord
+  p == 11 ? v4_set(1,  1,   0,   0,   0,   0,  1.5,   30,  60,  80,  100,  -1.2,  1) :     // Clean Articulate
+  p == 12 ? v4_set(0,  0,   0,   0,   0,   0,    3,   50,  45,  50,  100,     0,  1) :     // External Carrier
+  p == 13 ? (                                                                  // Reset all to defaults
+    v4_set(1, 0, 0, 0, 0, 0, 4, 60, 40, 40, 100, 0, 0);
+    slider1 = 0; slider2 = 1; slider8 = 0; slider17 = 50; slider18 = 0; slider19 = 30; slider20 = 120; slider21 = 6000; slider22 = -0.3; slider23 = 1;
+    slider_automate(8388607);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+v4_update();
+
+@block
+srate != v4_sr ? v4_srinit();
+v4_update();                                            // knobs moved on the panel do not run @slider
+(v4_tmo != v4_mod || v4_tcar != v4_car || v4_twv != v4_wv) && v4_fst == 0 ? v4_fst = 1;
+// WANDER: OB - the banks' centres (each band, each bank on its own) and the carrier's pitch; CLEAN - a trace of pitch
+v4_di = 0.12 * dm_s * samplesblock / srate;
+v4_dbz = 2 ^ (dm_a * (v4_mod ? 0.015 : 0.12) / 12 * v4_dfB.drift_tick(v4_di));
+v4_dt += samplesblock;
+v4_dt > srate * 0.1 ? (
+  v4_dt = 0;
+  i_ = 0; loop(24,
+    v4_WA[i_] = 0.97 * v4_WA[i_] + (rand(2) - 1) * 0.15; v4_WS[i_] = 0.97 * v4_WS[i_] + (rand(2) - 1) * 0.15;
+    v4_DA[i_] = dm_a * 0.010 * v4_WA[i_]; v4_DS[i_] = dm_a * 0.016 * v4_WS[i_];
+    i_ += 1; );
+  !v4_mod ? v4_bands();
+);
+// MIDI: notes into the queue (sample offsets), everything passed on
+v4_qn = 0;
+while (midirecv(v4_mo, v4_m1, v4_m2, v4_m3)) (
+  v4_st = v4_m1 & 0xF0;
+  v4_qn < 250 ? (
+    v4_ty = v4_st == 0x90 ? (v4_m3 > 0 ? 1 : 0) : v4_st == 0x80 ? 0 : v4_st == 0xB0 && (v4_m2 == 120 || v4_m2 == 123) ? 2 : v4_st == 0xE0 ? 3 : -1;
+    v4_ty >= 0 ? ( v4_MQ[v4_qn * 4] = v4_mo; v4_MQ[v4_qn * 4 + 1] = v4_ty; v4_MQ[v4_qn * 4 + 2] = v4_m2; v4_MQ[v4_qn * 4 + 3] = v4_m3; v4_qn += 1; );
+  );
+  midisend(v4_mo, v4_m1, v4_m2, v4_m3);
+);
+v4_qr = 0; v4_spos = 0;
+// HOLD let go: release the voices whose keys are up
+!v4_holdk ? ( v4_p = v4_VO; loop(6, v4_p[0] >= 0 && !v4_p[8] ? v4_p[1] = 0; v4_p += 16; ); );
+v4_kd = s74_kt(0.004 + v4_gl * 0.4, srate);
+v4_kva = s74_kt(0.005, srate); v4_kvr = s74_kt(0.12, srate);
+// the panel
+i_ = 0; loop(24, v4_DSP[i_] = max(v4_DSP[i_] * 0.85, v4_EN[i_]); i_ += 1; );
+v4_mn = 0; v4_p = v4_VO; loop(6, v4_p[0] >= 0 && v4_p[1] ? v4_mn += 1; v4_p += 16; );
+v4a_vi = max(v4a_vi, v4_viL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- the MIDI queue ----------
+while (v4_qr < v4_qn && v4_MQ[v4_qr * 4] <= v4_spos) (
+  v4_ty = v4_MQ[v4_qr * 4 + 1]; v4_nt = v4_MQ[v4_qr * 4 + 2]; v4_vv = v4_MQ[v4_qr * 4 + 3];
+  v4_ty == 1 ? (
+    // a free voice (or the quietest released one, or the quietest)
+    v4_bv = -1; v4_bl = 10; v4_p = v4_VO; v4_i = 0;
+    loop(6, v4_p[0] < 0 ? ( v4_bv = v4_i; v4_bl = -1; ) : ( v4_bl >= 0 && v4_p[7] < v4_bl && !v4_p[1] ? ( v4_bl = v4_p[7]; v4_bv = v4_i; ); ); v4_p += 16; v4_i += 1; );
+    v4_bv < 0 ? ( v4_bl = 10; v4_p = v4_VO; v4_i = 0; loop(6, v4_p[7] < v4_bl ? ( v4_bl = v4_p[7]; v4_bv = v4_i; ); v4_p += 16; v4_i += 1; ); );
+    v4_p = v4_VO + v4_bv * 16;
+    v4_p[6] = 440 * 2 ^ ((v4_nt - 69) / 12);
+    v4_p[0] < 0 || v4_gl <= 0 ? v4_p[5] = v4_last > 0 && v4_gl > 0 ? v4_last : v4_p[6];
+    v4_p[0] = v4_nt; v4_p[1] = 1; v4_p[8] = 1; v4_p[9] = 0.4 + 0.6 * v4_vv / 127; v4_last = v4_p[6];
+  ) : v4_ty == 0 ? (
+    v4_p = v4_VO; loop(6, v4_p[0] == v4_nt ? ( v4_p[8] = 0; !v4_holdk ? v4_p[1] = 0; ); v4_p += 16; );
+  ) : v4_ty == 2 ? (
+    v4_p = v4_VO; loop(6, v4_p[1] = 0; v4_p[8] = 0; v4_p += 16; );
+  ) : v4_ty == 3 ? ( v4_bend = 2 ^ (((v4_vv * 128 + v4_nt) - 8192) / 8192 * 2 / 12); );
+  v4_qr += 1;
+);
+v4_spos += 1;
+
+// ---------- glides; a change of model, carrier or wave: fade out, switch at the silent point, wait, fade in ----------
+v4_mix += (v4_tmix - v4_mix) * v4_sm; v4_og += (v4_tog - v4_og) * v4_sm; v4_fs += (v4_tfs - v4_fs) * v4_sm;
+v4_emp += (v4_temp - v4_emp) * v4_sm; v4_sib += (v4_tsib - v4_sib) * v4_sm;
+v4_fst == 1 ? ( v4_fade -= v4_fd; v4_fade <= 0 ? (
+  v4_fade = 0; v4_mod = v4_tmo; v4_car = v4_tcar; v4_wv = v4_twv; v4_bands();
+  memset(v4_SA, 0, 96); memset(v4_SL, 0, 96); memset(v4_SQ, 0, 96); memset(v4_EN, 0, 24); memset(v4_Y1, 0, 24);
+  v4_hold = 64; v4_fst = 2; ); ) :
+v4_fst == 2 ? ( v4_hold -= 1; v4_hold <= 0 ? v4_fst = 3; ) :
+v4_fst == 3 ? ( v4_fade += v4_fd; v4_fade >= 1 ? ( v4_fade = 1; v4_fst = 0; ); );
+
+// ---------- the voice ----------
+in_process(spl0, spl1);
+v4_viL = max(v4_viL * 0.9995, abs(in_l) + abs(in_r));
+v4_m = (in_l + in_r) * 0.5;
+v4_hf = v4H2.s74_bq(v4H1.s74_bq(v4_m));                 // the consonants (above 4 kHz)
+v4_lf = v4L1.s74_bq(v4_m);                              // the voiced energy (below 1.2 kHz)
+v4_a = abs(v4_hf); v4_eh += (v4_a - v4_eh) * (v4_a > v4_eh ? v4_kha : v4_khr);
+v4_a = abs(v4_lf); v4_el += (v4_a - v4_el) * (v4_a > v4_el ? v4_kha : v4_khr);
+v4_me = v4_m + (v4E.s74_bq(v4_m) - v4_m) * v4_emp;     // EMPHASIS
+!v4_mod ? v4_me = v4iI.v4_iron(v4_me * 1.4, v4_kl1, 3) / 1.4;   // OB: the input iron
+// CLEAN: the unvoiced detector - the top well above the voiced energy, and above the floor
+v4_mod ? (
+  v4_ut = min(max((v4_eh / (v4_el + 0.0001) - 0.9) * 1.5, 0), 1) * min(1, v4_eh * 300);
+  v4_u += (v4_ut - v4_u) * (v4_ut > v4_u ? v4_kua : v4_kur);
+) : v4_u = 0;
+
+// ---------- the carrier ----------
+v4_nz = rand(2) - 1;
+v4_car ? (
+  v4_wv == 2 ? ( v4_cb = v4_nz; ) : (
+    v4_cb = 0; v4_ns = 0; v4_p = v4_VO;
+    loop(6,
+      v4_p[0] >= 0 ? (
+        v4_p[5] += (v4_p[6] - v4_p[5]) * v4_kd;
+        v4_p[7] += ((v4_p[1] ? v4_p[9] : 0) - v4_p[7]) * (v4_p[1] ? v4_kva : v4_kvr);
+        v4_dtp = min(v4_p[5] * v4_tune * v4_bend * v4_dbz / srate, 0.45);
+        v4_p[2] += v4_dtp; v4_p[2] >= 1 ? v4_p[2] -= 1;
+        v4_wv == 0 ? (
+          // BUZZ: a narrow pulse train - two sawtooths 12 % of a cycle apart
+          v4_t2 = v4_p[2] + 0.12; v4_t2 >= 1 ? v4_t2 -= 1;
+          v4_b = v4_saw(v4_p[2], v4_dtp) - v4_saw(v4_t2, v4_dtp);
+        ) : v4_wv == 1 ? (
+          v4_b = v4_saw(v4_p[2], v4_dtp);
+        ) : (
+          // CHORD: root, fifth and octave
+          v4_d3 = v4_dtp * 1.4983; v4_d4 = min(v4_dtp * 2.003, 0.45);
+          v4_p[3] += v4_d3; v4_p[3] >= 1 ? v4_p[3] -= 1; v4_p[4] += v4_d4; v4_p[4] >= 1 ? v4_p[4] -= 1;
+          v4_b = (v4_saw(v4_p[2], v4_dtp) + 0.8 * v4_saw(v4_p[3], v4_d3) + 0.6 * v4_saw(v4_p[4], v4_d4)) * 0.62;
+        );
+        v4_cb += v4_b * v4_p[7]; v4_ns += v4_p[7];
+        !v4_p[1] && v4_p[7] < 0.0005 ? v4_p[0] = -1;
+      );
+      v4_p += 16; );
+    // more voices, the same weight: the sum is kept about level
+    v4_nsm += (max(v4_ns, 1) - v4_nsm) * v4_kn;
+    v4_cb /= sqrt(v4_nsm);
+  );
+  v4_cl = v4_cr = v4C.s74_bq(v4_cb) * v4_wgain(v4_wv);
+) : (
+  v4_x = v4_mod ? 8.3 : 6.2;                            // EXT: a carrier at about -14 dBFS RMS comes out level
+  v4_cl = v4C.s74_bq(spl2) * v4_x; v4_cr = v4D.s74_bq(spl3) * v4_x;
+);
+// CLEAN: the consonants turn the carrier towards noise
+v4_mod && v4_u > 0 ? ( v4_x = v4_u * v4_sib * 0.7; v4_cl += (v4_nz * 0.62 - v4_cl) * v4_x; v4_cr += (v4_nz * 0.62 - v4_cr) * v4_x; );
+
+// ---------- the bank: analyse, follow ----------
+v4_i = 0; v4_c = v4_CA; v4_s = v4_SA; v4_q = v4_QC;
+v4_mod ? (
+  loop(24,
+    v4_y = v4_bq2(v4_me, v4_c, v4_s);
+    // the quadrature detector: exact for a tone at the band's centre, no ripple
+    v4_a = sqrt(sqr((v4_y + v4_Y1[v4_i]) * v4_q[0]) + sqr((v4_y - v4_Y1[v4_i]) * v4_q[1])); v4_Y1[v4_i] = v4_y;
+    v4_e = v4_EN[v4_i]; v4_EN[v4_i] = v4_e + (v4_a - v4_e) * (v4_a > v4_e ? v4_ka : v4_kr);
+    v4_i += 1; v4_c += 4; v4_s += 4; v4_q += 2; );
+) : (
+  loop(24,
+    v4_y = v4_bq2(v4_me, v4_c, v4_s);
+    // the rectifier and one pole: a little ripple left in
+    v4_a = abs(v4_y) * 1.571;
+    v4_e = v4_EN[v4_i]; v4_EN[v4_i] = v4_e + (v4_a - v4_e) * (v4_a > v4_e ? v4_ka : v4_kr);
+    v4_i += 1; v4_c += 4; v4_s += 4; );
+);
+// ---------- open the carrier's bands (FORMANT: the carrier's band i follows the voice's band i - shift) ----------
+v4_ol = v4_or = 0; v4_i = 0; v4_c = v4_CS;
+v4_st2 = !v4_car;
+loop(24,
+  v4_j = min(max(v4_i - v4_fs, 0), 23); v4_j0 = floor(v4_j); v4_jf = v4_j - v4_j0;
+  v4_g = v4_EN[v4_j0]; v4_jf > 0 ? v4_g += (v4_EN[v4_j0 + 1] - v4_g) * v4_jf;
+  v4_ol += v4_bq2(v4_cl, v4_c, v4_SL + v4_i * 4) * v4_g;
+  v4_st2 ? v4_or += v4_bq2(v4_cr, v4_c, v4_SQ + v4_i * 4) * v4_g;
+  v4_i += 1; v4_c += 4; );
+!v4_st2 ? v4_or = v4_ol;
+
+// ---------- SIBILANCE, the output iron ----------
+v4_mod ? (
+  v4_gb = v4_gcl;
+  v4_x = v4_hf * v4_u * v4_sib * 1.2;                   // the consonants, passed straight through
+  v4_ol = v4_ol * v4_gb + v4_x; v4_or = v4_or * v4_gb + v4_x;
+) : (
+  v4_gb = v4_gob;
+  v4_x = v4N2.s74_bq(v4N1.s74_bq(v4_nz)) * v4_eh * v4_sib * 6;   // a band of noise, opened by the voice's top
+  v4_ol = v4_ol * v4_gb + v4_x; v4_or = v4_or * v4_gb + v4_x;
+  v4_ol = v4oiL.v4_iron(v4_ol * 1.8, v4_kl2, 2.5); v4_or = v4oiR.v4_iron(v4_or * 1.8, v4_kl2, 2.5);
+  v4_ol = s74_th(v4_ol * 0.9) / 0.9 / 1.8; v4_or = s74_th(v4_or * 0.9) / 0.9 / 1.8;
+  v4_hl += (v4_ol - v4_hl) * v4_khf; v4_hr += (v4_or - v4_hr) * v4_khf; v4_ol = v4_hl; v4_or = v4_hr;
+);
+
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+v4_yl = in_l + (v4_ol * v4_fade - in_l) * v4_mix; v4_yr = in_r + (v4_or * v4_fade - in_r) * v4_mix;
+v4_yl = v4oL.ost_band(v4_yl) * v4_og; v4_yr = v4oR.ost_band(v4_yr) * v4_og;
+ost_out(v4_yl, v4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider16);
+s74_fonts();
+s74_face(960, 366);
+v4_cln = slider16 >= 0.5; v4_ext = slider3 < 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "VC74", "SERIES 74", "OB VOCODER", #v4_pm, 16);
+k_ > 0 ? load_preset(k_);
+
+// ---------- CARRIER ----------
+s74_mod(14, 62, 262, 292, "CARRIER");
+s74_smallc(77, 92, "SOURCE");
+s74_lens(24, 102, 50, 24, !v4_ext, "INT") ? s74_set(3, 1);
+s74_lens(80, 102, 50, 24, v4_ext, "EXT") ? s74_set(3, 0);
+s74_small(146, 108, "MIDI");
+pk_led(181 * sc, 114 * sc, 3.5 * sc, v4_mn > 0, S74_LAMP);
+s74_smallc(229, 92, "HOLD");
+s74_lens(204, 102, 50, 24, slider8 >= 0.5, slider8 >= 0.5 ? "ON" : "OFF") ? s74_set(8, slider8 >= 0.5 ? 0 : 1);
+s74_off = v4_ext;
+s74_smallc(145, 144, "WAVE");
+i_ = 0; loop(4, pk_pitem("BUZZ|SAW|NOISE|CHORD", i_ + 1, #t_);
+  s74_lens(24 + i_ * 62, 154, 56, 24, floor(slider4 + 0.5) == i_ && !v4_ext, #t_) ? s74_set(4, i_); i_ += 1; );
+s74_knob(64, 240, 20, 5, -12, 12, 0, 0, "TUNE", "%+.2f st", 0);
+s74_knob(145, 240, 20, 6, -1, 1, 0, 0, "OCTAVE", "%+.0f", 1);
+s74_knob(226, 240, 20, 7, 0, 100, 0, 0, "GLIDE", "%.0f%%", 0);
+s74_off = 0;
+v4_ext ? s74_smallc(145, 330, "EXT: THE CARRIER ON INPUTS 3 / 4") : s74_smallc(145, 330, "MIDI NOTES PLAY THE CARRIER");
+
+// ---------- FILTER BANK: the band lamps and the followers ----------
+s74_mod(288, 62, 400, 292, "FILTER BANK · 24 BANDS");
+x_ = 302; y_ = 92; w_ = 372; h_ = 104;
+ui_cola(0x000000, 0.4); s74_r(x_ + 1, y_ + 2, w_, h_);
+ui_col(0x101112); s74_r(x_, y_, w_, h_);
+ui_col(S74_LAMPD); s74_r(x_ + 5, y_ + 5, w_ - 10, h_ - 10);
+i_ = 0; loop(8, ui_cola(S74_LAMPW, 0.05); s74_r(x_ + 5 + i_ * 6, y_ + 5 + i_ * 1.5, w_ - 10 - i_ * 12, h_ - 10 - i_ * 3); i_ += 1; );
+bw_ = (w_ - 24) / 24;
+i_ = 0; loop(24,
+  v_ = min(max((20 * log10(max(v4_DSP[i_], 0.000001)) + 60) / 48, 0), 1);   // -60 .. -12 dB
+  ui_cola(v4_cln ? 0xFFFFFF : 0x000000, v4_cln ? 0.16 : 0.28); s74_r(x_ + 12 + i_ * bw_, y_ + 12, bw_ - 4, 66);
+  v_ > 0.01 ? (
+    // OB: amber bars on the dark window; CLEAN: charcoal bars on the lit window
+    !v4_cln ? ( ui_cola(S74_LAMP, 0.25); s74_r(x_ + 11 + i_ * bw_, y_ + 77 - 66 * v_, bw_ - 2, 66 * v_ + 2); );
+    ui_col(v4_cln ? 0x2A1C16 : S74_LAMP); s74_r(x_ + 12 + i_ * bw_, y_ + 78 - 66 * v_, bw_ - 4, 66 * v_);
+  );
+  i_ += 1; );
+gfx_setfont(13); ui_col(v4_cln ? S74_CHAR : S74_LAMP);
+s74_t(x_ + 12, y_ + 82, "100"); s74_tc(x_ + w_ * 0.5, y_ + 89, "1k"); s74_t(x_ + w_ - 34, y_ + 82, "8k");
+ui_cola(0xFFFFFF, 0.06); s74_r(x_ + 5, y_ + 5, w_ - 10, (h_ - 10) * 0.4);
+s74_knob(330, 250, 19, 9, -12, 12, 0, 0, "FORMANT", "%+.1f st", 0);
+s74_knob(409, 250, 19, 10, 0.5, 50, 4, 1, "ATTACK", "%.1f ms", 0);
+s74_knob(488, 250, 19, 11, 10, 500, 60, 1, "RELEASE", "%.0f ms", 0);
+s74_kc = S74_C_HF; s74_knob(567, 250, 19, 12, 0, 100, 40, 0, "EMPHASIS", "%.0f%%", 0); s74_kc = 0;
+s74_knob(646, 250, 19, 13, 0, 100, 40, 0, "SIBILANCE", "%.0f%%", 0);
+v4_cln ? s74_smallc(488, 330, "SHARP MATCHED BANDS · UNVOICED PASS") : s74_smallc(488, 330, "WIDE DRIFTING BANDS · NOISE SIBILANCE · IRON");
+
+// ---------- OUTPUT: the voice meter, TRIM, WANDER, SAT, GUARD; MIX and OUTPUT on faders ----------
+s74_mod(700, 62, 246, 292, "OUTPUT");
+v4mI.s74_edge(714, 90, 218, 56, v4a_vi * 2.83, "VOICE");
+v4a_vi *= 0.6;
+s74_knob(744, 196, 16, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_knob(806, 196, 15, 17, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(744, 292, 12, 18, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(764 * sc, 278 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_smallc(806, 270, "GUARD");
+s74_lens(782, 280, 48, 22, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(806 * sc, 314 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+s74_fc = S74_F_BLUE; s74_fader(864, 172, 112, 14, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(914, 172, 112, 15, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+
+pk_end();
+ui_end();

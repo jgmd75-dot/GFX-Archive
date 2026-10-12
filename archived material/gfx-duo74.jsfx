@@ -1,0 +1,399 @@
+desc:GFX Duo74 [OB channel]
+//tags: limiter eq broadcast vca transformer presence program-limiter channel series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// DUO74 (Series 74: the OB remote and broadcast series): two remote modules in one case, chained - a LIMITER and
+// an EQ - with two models on one switch.
+//   input -> TRIM / GUARD -> 2x oversampling ->
+//   LIMITER  THRESHOLD (with an automatic make-up, so it changes the amount of limiting, not the level), RATIO
+//            (4, 8, 20 or LIMIT), ATTACK, RELEASE. The GR meter shows the reduction.
+//   EQ       LOW (a shelf at 100 Hz), PRESENCE (a broad peak at 0.7, 1.4, 2.8 or 5 kHz), HIGH (a shelf at 10 kHz).
+//   ORDER    LIMIT FIRST (the default) or EQ FIRST. Each module has its IN lens (in its header strip).
+//   -> back to 1x -> MIX (parallel, with the dry signal delayed to match) -> OUTPUT -> the house output stage
+//   (band SAT, CLIP always on).
+//   OB:    a character VCA limiter: a fast feed-back VCA (it hears its own output: punchy, a little pumping), a VCA
+//          line amp with a trace of even harmonics and an iron output that saturates the lows first. The EQ is a
+//          coloured broadcast EQ: an input transformer (its low corner and core), shelves with a little overshoot,
+//          a presence peak that broadens as it is boosted, and a make-up amp that rounds off softly.
+//   CLEAN: an ultra-transparent master broadcast processor: a smooth RMS / peak programme limiter (look-ahead,
+//          a 10 dB soft knee, a programme-dependent release: short peaks recover at RELEASE, sustained limiting
+//          recovers slowly) with no added harmonics, and a clean minimum-phase EQ with the same controls.
+// The two models are level matched, and every THRESHOLD and RATIO is level matched in each model.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the VCA's threshold drifts and the two channels' EQ never
+//   quite match (the presence frequency and gains wander a little); on CLEAN only a trace of threshold wander.
+// Changing the model, the order, a module in or out, or the presence frequency fades the sound out and back in.
+// Latency: the 2x oversampling plus the CLEAN limiter's look-ahead (kept in both models): 63 samples, reported.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:1<0,1,1{Out,In}>-Limiter in
+slider4:-12<-30,0,0.1>-Threshold (dB)
+slider5:1<0,3,1{4:1,8:1,20:1,Limit}>-Ratio
+slider6:1<0.1,20,0.01>-Attack (ms)
+slider7:150<20,2000,1>-Release (ms)
+slider8:1<0,1,1{Out,In}>-EQ in
+slider9:0<-12,12,0.1>-Low (dB)
+slider10:0<-12,12,0.1>-Presence (dB)
+slider11:2<0,3,1{700 Hz,1.4 kHz,2.8 kHz,5 kHz}>-Presence freq
+slider12:0<-12,12,0.1>-High (dB)
+slider13:0<0,1,1{Limit first,EQ first}>-Order
+slider14:100<0,100,1>-Mix (%)
+slider15:0<-24,12,0.1>-Output (dB)
+slider16:0<0,1,1{OB,Clean}>-Model
+slider17:50<0,100,1>-Wander (%)
+slider18:0<0,100,1>-Band sat (%)
+slider19:30<0,100,1>-Bias (output stage, %)
+slider20:120<40,400,1>-Sat low band (Hz)
+slider21:6000<2000,16000,10>-Sat high band (Hz)
+slider22:-0.3<-24,0,0.1>-Ceiling (dB)
+slider23:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-duo74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+u4_HB = s74_alloc(64);
+u4_MK = s74_alloc(96);                                  // the make-up tables: (model * 4 + ratio) * 11 points, dB
+u4_ostm = s74_alloc(4096);
+u4_DRY = s74_alloc(256);                                // the dry signal's delay (L at 0, R at 128)
+u4_LA = s74_alloc(256);                                 // the limiter's look-ahead line at 2x (L at 0, R at 128)
+
+// ---------- oversampling (2x, the house half-band) ----------
+s74_hbdesign(u4_HB, 63, 8);
+u4uL.s74_upinit(63, u4_HB, 64); u4uR.s74_upinit(63, u4_HB, 64); u4dL.s74_dninit(63, u4_HB, 64); u4dR.s74_dninit(63, u4_HB, 64);
+u4_LAH = 64;                                            // the look-ahead, 2x samples (32 at 1x)
+u4_LAT = 31 + u4_LAH / 2;
+
+// ---------- the make-up: every THRESHOLD and RATIO level matched (dB at THRESHOLD 0 .. -30 in 3 dB steps;
+// measured on pink noise) ----------
+function u4_row(k, a, b, c, d, e, f, g, h, i, j, l) local(p) (
+  p = u4_MK + k * 11; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l;
+);
+u4_row(0, 1.12, 1.12, 1.12, 1.12, 1.61, 2.86, 4.72, 6.52, 8.36, 10.40, 12.81);
+u4_row(1, 1.19, 1.19, 1.19, 1.19, 1.75, 3.38, 5.63, 7.46, 10.13, 12.62, 14.81);
+u4_row(2, 1.21, 1.21, 1.21, 1.21, 2.27, 4.29, 6.71, 8.73, 11.32, 13.94, 17.09);
+u4_row(3, 1.23, 1.23, 1.23, 1.23, 2.71, 4.73, 7.78, 10.06, 12.83, 15.67, 17.89);
+u4_row(4, 0.11, 0.11, 0.11, 0.11, 0.11, 0.54, 1.54, 3.30, 5.57, 7.74, 9.84);
+u4_row(5, 0.12, 0.12, 0.12, 0.12, 0.12, 0.62, 1.87, 3.69, 6.21, 8.98, 11.45);
+u4_row(6, 0.13, 0.13, 0.13, 0.13, 0.13, 0.66, 1.99, 4.17, 6.93, 9.76, 12.50);
+u4_row(7, 0.12, 0.12, 0.12, 0.12, 0.12, 0.66, 2.24, 4.46, 7.33, 10.07, 13.15);
+function u4_mk(mo, ra, th) local(p, i, f, q) (
+  p = min(max(-th, 0), 30) / 3; i = min(floor(p), 9); f = p - i; q = u4_MK + (mo * 4 + ra) * 11;
+  q[i] * (1 - f) + q[i + 1] * f;
+);
+
+// ---------- helpers ----------
+// a soft knee: dB of reduction for 'over' dB above the threshold, knee width k, slope s
+function u4_knee(over, k, s) (
+  over <= -k * 0.5 ? 0 : over >= k * 0.5 ? over * s : s * sqr(over + k * 0.5) / (2 * k);
+);
+function u4_db(x) ( 20 * log10(max(x, 0.0000001)); );
+
+// the iron output (OB): a DC blocker, the core saturates the lows first, the top softens a little
+function u4_iron(x) instance(dx, dy, lo, hf) local(y) (
+  dy = x - dx + 0.9997 * dy; dx = x;
+  lo += (dy - lo) * u4_kil;
+  y = (dy - lo) + s74_th(lo * 1.6) / 1.6;
+  hf += (y - hf) * u4_kih;
+  hf;
+);
+
+
+// ---------- the LIMITER: one 2x sample of both channels (u4_a, u4_b) ----------
+function u4_lim() local(dl, dr, rp, pk, over, grt, g, y, t) (
+  // the look-ahead line: always in the path, so the latency never changes
+  u4_LA[u4_lw] = u4_a; u4_LA[128 + u4_lw] = u4_b;
+  rp = (u4_lw - u4_LAH) & 127; dl = u4_LA[rp]; dr = u4_LA[128 + rp]; u4_lw = (u4_lw + 1) & 127;
+  u4_lon ? (
+    u4_mod ? (
+      // CLEAN: the detector sees the signal before it arrives; the peak is held across the look-ahead
+      pk = max(abs(u4_a), abs(u4_b));
+      pk >= u4_ph ? ( u4_ph = pk; u4_hc = u4_LAH; ) : u4_hc > 0 ? u4_hc -= 1 : u4_ph += (pk - u4_ph) * u4_kpr;
+      u4_ms += (0.5 * (u4_a * u4_a + u4_b * u4_b) - u4_ms) * u4_kms;
+      // RMS against the threshold, the peaks against a point 6 dB above it
+      over = max(u4_db(u4_ph) - u4_th - 6, 10 * log10(max(2 * u4_ms, 0.00000000000001)) - u4_th);
+      grt = u4_knee(over, 10, u4_slc);
+      // the programme-dependent release: a fast part (ATTACK / RELEASE) and a slow part that builds with
+      // sustained limiting and recovers slowly
+      u4_gf += (grt - u4_gf) * (grt > u4_gf ? u4_kca : u4_kr);
+      u4_gs += (grt - u4_gs) * (grt > u4_gs ? u4_ksa : u4_ksr);
+      u4_gr = max(u4_gf, u4_gs);
+      g = 10 ^ (-u4_gr / 20) * u4_mkg;
+      u4_a = dl * g; u4_b = dr * g;
+    ) : (
+      // OB: the feed-back VCA - the detector hears the VCA's last output; the control voltage charges at ATTACK
+      // and discharges at RELEASE (between the peaks too: a little pumping)
+      pk = max(abs(u4_fl), abs(u4_fr));
+      grt = min(u4_knee(u4_db(pk) - u4_th, 4, u4_slo), 40);
+      u4_gr += (grt - u4_gr) * (grt > u4_gr ? u4_ka : u4_kr);
+      g = 10 ^ (-u4_gr / 20);
+      u4_fl = dl * g; u4_fr = dr * g;
+      // the VCA line amp (a trace of even harmonics), the make-up, the iron output
+      t = 0.06;
+      u4_a = (s74_th(u4_fl * u4_mkg * 0.8 + t) - s74_th(t)) / 0.8;
+      u4_b = (s74_th(u4_fr * u4_mkg * 0.8 + t) - s74_th(t)) / 0.8;
+      u4_a = u4iL.u4_iron(u4_a); u4_b = u4iR.u4_iron(u4_b);
+    );
+    u4_grm = max(u4_grm, u4_gr);
+  ) : (
+    u4_a = dl; u4_b = dr;
+  );
+);
+// ---------- the EQ: one channel ----------
+function u4_eqch(x) instance(hp, t1, f1, f2, f3, hf) local(y) (
+  u4_mod ? (
+    // CLEAN: three minimum-phase sections, nothing else
+    y = f1.s74_bq(x); y = f2.s74_bq(y); f3.s74_bq(y);
+  ) : (
+    // OB: the input transformer (its low corner, its core), the sections, the make-up amp
+    hp += (x - hp) * u4_ktr; y = x - hp;
+    t1 += (y - t1) * u4_kti; y = (y - t1) + s74_th(t1 * 1.2) / 1.2;
+    y = f1.s74_bq(y); y = f2.s74_bq(y); y = f3.s74_bq(y);
+    y = s74_th(y * 0.6) / 0.6;
+    hf += (y - hf) * u4_kih; hf;
+  );
+);
+function u4_eq() ( u4_a = u4eL.u4_eqch(u4_a); u4_b = u4eR.u4_eqch(u4_b); );
+function u4_step() (
+  !u4_ord ? ( u4_lim(); u4_eon ? u4_eq(); ) : ( u4_eon ? u4_eq(); u4_lim(); );
+);
+
+// ---------- settings ----------
+function u4_update() local(r) (
+  in_setup(slider1, slider2 >= 0.5);
+  u4_tmo = slider16 >= 0.5; u4_tord = slider13 >= 0.5; u4_tlon = slider3 >= 0.5; u4_teon = slider8 >= 0.5; u4_tpf = slider11;
+  u4_tth = slider4; u4_ra = slider5;
+  r = u4_ra == 0 ? 4 : u4_ra == 1 ? 8 : u4_ra == 2 ? 20 : 1000;
+  u4_slc = 1 - 1 / r;                                   // CLEAN: the static slope (feed-forward)
+  u4_tmkg = 10 ^ (u4_mk(u4_mod, u4_ra, slider4) / 20);
+  u4_atk = slider6; u4_rel = slider7;
+  u4_tlo = slider9; u4_tpr = slider10; u4_thi = slider12;
+  u4_tmix = slider14 / 100; u4_tog = 10 ^ (slider15 / 20);
+  drift_macro(slider17);
+  ost_setup(slider18 / 100, slider19 / 100, slider20, slider21, slider22, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = u4_LAT;
+);
+// the time constants (at 2x); OB: the feed-back slope is held where the loop stays stable at fast attacks
+function u4_times() local(r) (
+  r = u4_ra == 0 ? 4 : u4_ra == 1 ? 8 : u4_ra == 2 ? 20 : 60;
+  u4_ka = s74_kt(u4_atk * 0.001, u4_fs2); u4_kr = s74_kt(u4_rel * 0.001, u4_fs2);
+  u4_slo = min(r - 1, 1.6 / u4_ka);
+  u4_kca = s74_kt(u4_atk * 0.0005, u4_fs2);
+  u4_ksa = s74_kt(0.4, u4_fs2); u4_ksr = s74_kt(u4_rel * 0.008, u4_fs2);
+);
+// the EQ's coefficients (per channel, so WANDER can part them), from the glided gains
+function u4_eqset() local(f, q, ql, qh, eL, eR) (
+  f = u4_pf == 0 ? 700 : u4_pf == 1 ? 1400 : u4_pf == 2 ? 2800 : 5000;
+  u4_mod ? ( q = 0.8; ql = 0.707; qh = 0.707; eL = eR = 0; ) : ( q = 0.5 + 0.05 * abs(u4_gp); ql = 0.95; qh = 0.85; eL = u4_dfL; eR = u4_dfR; );
+  u4eL.f1.s74_bqset(4, 100, u4_gl + eL * 0.25, ql, u4_fs2); u4eR.f1.s74_bqset(4, 100, u4_gl + eR * 0.25, ql, u4_fs2);
+  u4eL.f2.s74_bqset(3, f * (1 + 0.02 * eL), u4_gp + eL * 0.2, q, u4_fs2); u4eR.f2.s74_bqset(3, f * (1 + 0.02 * eR), u4_gp + eR * 0.2, q, u4_fs2);
+  u4eL.f3.s74_bqset(5, 10000, u4_gh - eL * 0.25, qh, u4_fs2); u4eR.f3.s74_bqset(5, 10000, u4_gh - eR * 0.25, qh, u4_fs2);
+);
+function u4_clr() (
+  u4eL.f1.s74_bqclr(); u4eL.f2.s74_bqclr(); u4eL.f3.s74_bqclr(); u4eR.f1.s74_bqclr(); u4eR.f2.s74_bqclr(); u4eR.f3.s74_bqclr();
+  u4_gr = 0; u4_gf = 0; u4_gs = 0; u4_ph = 0; u4_hc = 0; u4_ms = 0; u4_fl = 0; u4_fr = 0;
+);
+// the EQ's gains glide (about 20 ms), the coefficients following every 8 samples while they move
+function u4_eqtick() (
+  u4_ec -= 1;
+  u4_ec <= 0 ? (
+    u4_ec = 8;
+    u4_emv = u4_gl != u4_tlo || u4_gp != u4_tpr || u4_gh != u4_thi;
+    u4_emv ? (
+      u4_gl += (u4_tlo - u4_gl) * u4_k8; u4_gp += (u4_tpr - u4_gp) * u4_k8; u4_gh += (u4_thi - u4_gh) * u4_k8;
+      abs(u4_gl - u4_tlo) < 0.002 ? u4_gl = u4_tlo; abs(u4_gp - u4_tpr) < 0.002 ? u4_gp = u4_tpr; abs(u4_gh - u4_thi) < 0.002 ? u4_gh = u4_thi;
+      u4_eqset();
+    );
+  );
+);
+function u4_srinit() (
+  u4_sr = srate; u4_fs2 = 2 * srate;
+  u4_sm = s74_kt(0.02, srate); u4_k8 = 1 - exp(-8 / (0.02 * srate)); u4_fd = 1 / (0.006 * srate);
+  u4_kpr = s74_kt(0.06, u4_fs2); u4_kms = s74_kt(0.025, u4_fs2);
+  u4_kil = s74_k(70, u4_fs2); u4_kih = s74_k(min(26000, 0.45 * u4_fs2), u4_fs2);
+  u4_ktr = s74_k(12, u4_fs2); u4_kti = s74_k(90, u4_fs2);
+  ost_init(u4_ostm);
+  u4_times(); u4_eqset();
+);
+in_init();
+u4_mod = u4_tmo = slider16 >= 0.5; u4_pf = u4_tpf = slider11;
+u4_update();
+u4_gl = u4_tlo; u4_gp = u4_tpr; u4_gh = u4_thi;
+u4_srinit();
+u4_dTh.drift_init(0.7 + rand(0.4)); u4_dEL.drift_init(0.8 + rand(0.4)); u4_dER.drift_init(0.8 + rand(0.4));
+u4_seL = rand(2) - 1; u4_seR = rand(2) - 1;
+u4o.ost_ch_init(); u4p.ost_ch_init();
+u4_ord = u4_tord; u4_lon = u4_tlon; u4_eon = u4_teon;
+u4_th = u4_tth; u4_mkg = u4_tmkg; u4_mix = u4_tmix; u4_og = u4_tog;
+u4_fade = 1; u4_fst = 0; u4_hold = 0; u4_dw = 0; u4_lw = 0; u4_clr();
+
+// ---------- presets ----------
+function u4_set(li, th, ra, at, re, eq, lo, pr, pf, hi, od, mx, ou, mo) (
+  slider3 = li; slider4 = th; slider5 = ra; slider6 = at; slider7 = re; slider8 = eq; slider9 = lo; slider10 = pr; slider11 = pf;
+  slider12 = hi; slider13 = od; slider14 = mx; slider15 = ou; slider16 = mo;
+  slider_automate(131064);                              // sliders 3 - 16 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#u4_pm = "Init|Commentary Box|Stadium PA|Pitch-side Mic|Crowd Bed|Truck Vocal|Drum Bus Pump|Parallel Punch|Brass Band Remote|Clean Master|Clean Speech Leveller|Transmitter Safe";
+function load_preset(p) (
+  //                li   th  ra    at    re  eq   lo   pr  pf   hi  od  mix    out  mo
+  p == 1  ? u4_set( 1,  -12,  1,    1,   150,  1,   0,   0,  2,   0,  0,  100,     0,  0) :     // Init
+  p == 2  ? u4_set( 1,  -18,  1,    1,   120,  1,  -2,   4,  2,   1,  1,  100,  -0.7,  0) :     // Commentary Box
+  p == 3  ? u4_set( 1,  -20,  2,  0.5,   200,  1,   1,   3,  1,  -2,  0,  100,  -0.9,  0) :     // Stadium PA
+  p == 4  ? u4_set( 1,  -16,  1,    2,   250,  1,  -4,   3,  3,   1,  1,  100,  -0.9,  0) :     // Pitch-side Mic
+  p == 5  ? u4_set( 1,  -14,  0,   10,   400,  1,   2,  -2,  1,   2,  0,  100,  -0.7,  0) :     // Crowd Bed
+  p == 6  ? u4_set( 1,  -20,  1,  0.8,   100,  1,  -1,   3,  2,   2,  1,  100,  -0.5,  0) :     // Truck Vocal
+  p == 7  ? u4_set( 1,  -24,  3,    3,    80,  1,   3,   0,  2,   2,  0,  100,  -2.6,  0) :     // Drum Bus Pump
+  p == 8  ? u4_set( 1,  -28,  3,  0.3,    60,  1,   2,   2,  3,   3,  0,   40,  -0.8,  0) :     // Parallel Punch
+  p == 9  ? u4_set( 1,  -15,  0,    5,   300,  1,   1,  -2,  1,   2,  1,  100,  -0.7,  0) :     // Brass Band Remote
+  p == 10 ? u4_set( 1,   -8,  3,  0.5,   300,  1,   1,   0,  2,   1,  1,  100,  -0.7,  1) :     // Clean Master
+  p == 11 ? u4_set( 1,  -20,  0,    5,   500,  1,  -3,   2,  2,   0,  1,  100,  -0.1,  1) :     // Clean Speech Leveller
+  p == 12 ? u4_set( 1,   -6,  3,  0.1,   200,  1,   0,   0,  2,   0,  0,  100,  -0.2,  1) :     // Transmitter Safe
+  p == 13 ? (                                                                           // Reset all to defaults
+    u4_set(1, -12, 1, 1, 150, 1, 0, 0, 2, 0, 0, 100, 0, 0);
+    slider1 = 0; slider2 = 1; slider17 = 50; slider18 = 0; slider19 = 30; slider20 = 120; slider21 = 6000; slider22 = -0.3; slider23 = 1;
+    slider_automate(16777215);                          // sliders 1 - 23
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+u4_update();
+
+@block
+srate != u4_sr ? u4_srinit();
+u4_update();                                            // knobs moved on the panel do not run @slider
+u4_times();
+// a new model, order, module in / out or presence frequency: fade out, switch at the silent point, fade in
+(u4_tmo != u4_mod || u4_tord != u4_ord || u4_tlon != u4_lon || u4_teon != u4_eon || u4_tpf != u4_pf) && u4_fst == 0 ? u4_fst = 1;
+// WANDER: OB - the VCA's threshold drifts, the channels' EQ parts a little; CLEAN - a trace of threshold wander
+u4_di = 0.12 * dm_s * samplesblock / srate;
+u4_dth = dm_a * (u4_mod ? 0.04 : 0.6) * u4_dTh.drift_tick(u4_di);
+u4_dfL = u4_mod ? 0 : dm_a * (0.8 * u4_dEL.drift_tick(u4_di) + 0.4 * u4_seL);
+u4_dfR = u4_mod ? 0 : dm_a * (0.8 * u4_dER.drift_tick(u4_di) + 0.4 * u4_seR);
+// the drift moves the EQ's coefficients once a block (the gains' glides move them in @sample)
+(u4_dfL != 0 || u4_dfR != 0 || u4_eqf) && !u4_emv ? ( u4_eqset(); u4_eqf = u4_dfL != 0 || u4_dfR != 0; );
+u4a_gr = max(u4a_gr, u4_grm); u4_grm = 0;
+u4a_vo = max(u4a_vo, u4_vo);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+u4_th += (u4_tth + u4_dth - u4_th) * u4_sm; u4_mkg += (u4_tmkg - u4_mkg) * u4_sm;
+u4_mix += (u4_tmix - u4_mix) * u4_sm; u4_og += (u4_tog - u4_og) * u4_sm;
+u4_eqtick();
+// ---------- the fade ----------
+u4_fst == 1 ? ( u4_fade -= u4_fd; u4_fade <= 0 ? (
+  u4_fade = 0; u4_ord = u4_tord; u4_lon = u4_tlon; u4_eon = u4_teon; u4_pf = u4_tpf;
+  u4_tmo != u4_mod ? ( u4_mod = u4_tmo; u4_update(); u4_mkg = u4_tmkg; );
+  u4_eqset(); u4_clr();
+  u4_hold = u4_LAT + 64; u4_fst = 2; ); ) :
+u4_fst == 2 ? ( u4_hold -= 1; u4_hold <= 0 ? u4_fst = 3; ) :
+u4_fst == 3 ? ( u4_fade += u4_fd; u4_fade >= 1 ? ( u4_fade = 1; u4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD; the dry signal ----------
+in_process(spl0, spl1);
+u4_xl = in_l; u4_xr = in_r;
+u4_DRY[u4_dw] = u4_xl; u4_DRY[128 + u4_dw] = u4_xr;
+u4_dr = (u4_dw - u4_LAT) & 127; u4_yld = u4_DRY[u4_dr]; u4_yrd = u4_DRY[128 + u4_dr]; u4_dw = (u4_dw + 1) & 127;
+
+// ---------- the two modules, at 2x ----------
+u4uL.s74_up(u4_xl); u4uR.s74_up(u4_xr);
+u4_a = u4uL.o0; u4_b = u4uR.o0; u4_step(); u4_q0l = u4_a; u4_q0r = u4_b;
+u4_a = u4uL.o1; u4_b = u4uR.o1; u4_step(); u4_q1l = u4_a; u4_q1r = u4_b;
+u4_yl = u4dL.s74_dn(u4_q0l, u4_q1l); u4_yr = u4dR.s74_dn(u4_q0r, u4_q1r);
+
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+u4_yl = (u4_yld + (u4_yl - u4_yld) * u4_mix) * u4_fade; u4_yr = (u4_yrd + (u4_yr - u4_yrd) * u4_mix) * u4_fade;
+u4_vo = max(u4_vo * 0.9995, abs(u4_yl) + abs(u4_yr));
+u4_yl = u4o.ost_band(u4_yl) * u4_og; u4_yr = u4p.ost_band(u4_yr) * u4_og;
+ost_out(u4_yl, u4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider16);
+s74_fonts();
+s74_face(960, 366);
+u4_cln = slider16 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "DUO74", "SERIES 74", "OB CHANNEL", #u4_pm, 16);
+k_ > 0 ? load_preset(k_);
+
+// ---------- LIMITER ----------
+s74_mod(14, 62, 410, 292, u4_cln ? "LIMITER · PROGRAMME" : "LIMITER · VCA");
+s74_onoff(324, 65, 3);
+u4mG.s74_gredge(28, 96, 382, 62, slider3 >= 0.5 ? u4a_gr : 0, "GAIN REDUCTION");
+u4a_gr *= 0.5;
+s74_off = slider3 < 0.5;
+s74_knob(84, 218, 26, 4, -30, 0, -12, 0, "THRESHOLD", "%.1f dB", 0);
+s74_knob(206, 218, 20, 6, 0.1, 20, 1, 1, "ATTACK", "%.2f ms", 0);
+s74_knob(320, 218, 20, 7, 20, 2000, 150, 1, "RELEASE", "%.0f ms", 0);
+s74_off = 0;
+s74_small(28, 296, "RATIO");
+i_ = 0; loop(4, pk_pitem("4|8|20|LIMIT", i_ + 1, #t_);
+  s74_lens(80 + i_ * 58, 288, 52, 26, slider5 == i_, #t_) ? s74_set(5, i_); i_ += 1; );
+s74_small(326, 296, "AUTO MAKE-UP");
+slider3 < 0.5 ? s74_smallc(219, 334, "MODULE OUT OF PATH") :
+u4_cln ? s74_smallc(219, 334, "RMS / PEAK · LOOK-AHEAD · PROGRAMME RELEASE")
+       : s74_smallc(219, 334, "FEED-BACK VCA · IRON OUTPUT");
+
+// ---------- EQ ----------
+s74_mod(436, 62, 300, 292, u4_cln ? "EQ · MINIMUM PHASE" : "EQ · BROADCAST");
+s74_onoff(636, 65, 8);
+s74_off = slider8 < 0.5;
+s74_kc = S74_C_LF;  s74_knob(496, 146, 24, 9, -12, 12, 0, 0, "LOW", "%+.1f dB", 0);
+s74_kc = S74_C_HMF; s74_knob(586, 146, 24, 10, -12, 12, 0, 0, "PRESENCE", "%+.1f dB", 0);
+s74_kc = S74_C_HF;  s74_knob(676, 146, 24, 12, -12, 12, 0, 0, "HIGH", "%+.1f dB", 0);
+s74_kc = 0;
+s74_off = 0;
+s74_smallc(496, 206, "100 HZ"); s74_smallc(676, 206, "10 KHZ");
+s74_smallc(586, 240, "PRESENCE  ·  KHZ");
+s74_lc = S74_C_HMF;
+i_ = 0; loop(4, pk_pitem("0.7|1.4|2.8|5", i_ + 1, #t_);
+  s74_lens(460 + i_ * 64, 254, 58, 26, slider11 == i_, #t_) ? s74_set(11, i_); i_ += 1; );
+s74_lc = 0;
+slider8 < 0.5 ? s74_smallc(586, 334, "MODULE OUT OF PATH") :
+u4_cln ? s74_smallc(586, 334, "NO COLOUR · NO HARMONICS")
+       : s74_smallc(586, 334, "TRANSFORMER IN · AMP OUT");
+
+// ---------- IN · OUT: ORDER, TRIM, WANDER, SAT, GUARD; MIX and OUTPUT on faders ----------
+s74_mod(748, 62, 198, 292, "IN · OUT");
+s74_smallc(847, 96, "ORDER");
+u4ok.s74_orderkey(766, 104, 162, 22, slider13 < 0.5 ? "LIMIT FIRST" : "EQ FIRST") ? s74_set(13, slider13 >= 0.5 ? 0 : 1);
+s74_knob(790, 166, 13, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_knob(790, 236, 13, 17, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(790, 304, 12, 18, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(812 * sc, 292 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(858, 140, 116, 14, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(912, 140, 116, 15, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(885, 302, "GUARD");
+s74_lens(859, 312, 52, 22, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(920 * sc, 323 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+pk_end();
+ui_end();

@@ -1,0 +1,266 @@
+desc:GFX Platte57 [plate reverb]
+//tags: reverb plate steel plate damper valve mono stereo vintage space series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// PLATTE57 (Series 57). 1957 is the year the plate reverb arrived: a large sheet of steel hung in a frame, a
+// moving-coil driver at one point, a contact pickup at another, and a porous damping plate on a screw that brings
+// the decay down from about five seconds to under one. Platte57 is that first plate - one driver, its valve drive
+// amplifier, and the choice of the original single pickup (MONO) or two pickups (STEREO, as the later plates had).
+// Where Platte81 models the plate's modes, Platte57 is built as a figure-eight tank of diffusers and delays - the
+// dense, bright, instant build of a plate, with no slap.
+//   DAMPER  the damping plate's position: OPEN (about 5.5 s) to CLOSED (0.7 s) - the panel shows it moving.
+//   PRE-DELAY  0 - 250 ms (a tape machine before the send, as the studios used).
+//   TENSION  the plate's tension: slack (darker, a little slower to build) to tight (brighter, denser).
+//   LOW CUT  the return's high-pass (20 - 400 Hz): plates were usually thinned in the lows. HIGH  a top shelf.
+//   DRIVE  the valve drive amplifier (2x oversampled). PICKUPS  MONO or STEREO. WIDTH (STEREO).
+//   MIX (the dry stays at full up to 50 %), OUTPUT, the house output stage (straight through: a mix tool).
+// ULM / COPENHAGEN (the face): ULM - a tight, bright steel plate. COPENHAGEN - a softer, darker plate, the damper's
+//   felt thicker. Level matched; presets leave the face alone.
+// DRIFT (0 - 100 %, 50 % = standard): the plate's tension wanders - the tail's modulation breathes a little.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:45<0,100,1>-Damper (open .. closed, %)
+slider4:20<0,250,0.1>-Pre-delay (ms)
+slider5:50<0,100,1>-Tension (%)
+slider6:120<20,400,1>-Low cut (Hz)
+slider7:0<-6,6,0.1>-High (dB)
+slider8:20<0,100,1>-Drive (%)
+slider9:1<0,1,1{Mono,Stereo}>-Pickups
+slider10:80<0,100,1>-Width (%)
+slider11:25<0,100,1>-Mix (%)
+slider12:0<-24,12,0.1>-Output (dB)
+slider13:50<0,100,1>-Drift (%)
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:0<0,1,1{Ulm,Copenhagen}>-Face
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-platte57";
+ext_noinit = 1;
+s57_mem = 0;
+pt_HB = s57_alloc(64); s57_hbdesign(pt_HB, 63, 8);
+ptu.s57_upinit(63, pt_HB, 64); ptd.s57_dninit(63, pt_HB, 64);
+ptP.s57_dlinit(65536);
+// the tank (lengths at 29761 Hz, the classic figure-eight)
+pti1.s57_dlinit(2048); pti2.s57_dlinit(2048); pti3.s57_dlinit(4096); pti4.s57_dlinit(4096);
+ptm1.s57_dlinit(4096); ptd1.s57_dlinit(32768); pta1.s57_dlinit(8192); ptd2.s57_dlinit(32768);
+ptm2.s57_dlinit(4096); ptd3.s57_dlinit(32768); pta2.s57_dlinit(16384); ptd4.s57_dlinit(32768);
+
+function pt_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  pt_tpd = slider4 / 1000 * srate;
+  pt_drv = slider8 / 100;
+  pt_tmix = slider11 / 100; pt_tog = 10 ^ (slider12 / 20);
+  pt_ster = slider9 >= 0.5; pt_wid = slider10 / 100;
+  pt_tfc = slider19 >= 0.5;
+  drift_macro(slider13);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 0);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+function pt_plate() local(rt, sz, loop) (
+  pt_l3 = slider3; pt_l5 = slider5; pt_l6 = slider6; pt_l7 = slider7;
+  pt_r = srate / 29761;
+  sz = (0.85 + 0.3 * (1 - slider5 / 100)) * pt_r;     // a slack plate rings a little lower and slower
+  pt_sz = sz;
+  // DAMPER: open 5.5 s .. closed 0.4 s (COPENHAGEN's felt is thicker: a little shorter at the same place)
+  rt = 5.5 * (0.7 / 5.5) ^ (slider3 / 100) * (pt_fc ? 0.9 : 1);
+  pt_rt = rt;
+  loop = (672 + 4453 + 1800 + 3720) * sz / srate;       // one half of the figure eight, in seconds
+  pt_dec = 10 ^ (-1.5 * loop / rt);                      // (applied twice in each half)
+  // the plate's damping (TENSION: tight = brighter), the bandwidth into the tank
+  pt_kd = s57_k((pt_fc ? 5000 : 8000) * 2 ^ (slider5 / 100 * 1.4 - 0.7), srate);
+  pt_kb = s57_k(pt_fc ? 9000 : 13000, srate);
+  ptLC.s57_bqset(1, slider6, 0, 0.7, srate); ptLD.s57_bqset(1, slider6, 0, 0.7, srate);
+  ptHS.s57_bqset(5, 6000, slider7, 0.7, srate); ptHT.s57_bqset(5, 6000, slider7, 0.7, srate);
+  pt_og2 = 0.7 * (max(rt, 0.4) / 2) ^ 0.1 * (pt_fc ? 1.1 : 1);
+);
+function pt_srinit() (
+  pt_sr = srate; pt_sm = s57_kt(0.03, srate); pt_kpd = s57_kt(0.08, srate); pt_fd = 1 / (0.012 * srate);
+  pt_plate(); ost_init(0);
+);
+
+in_init();
+pt_fc = pt_tfc = slider19 >= 0.5;
+pt_update(); pt_srinit();
+pt_dfT.drift_init(0.6 + rand(0.4));
+pto.ost_ch_init(); ptp.ost_ch_init();
+pt_mix = pt_tmix; pt_og = pt_tog; pt_pd = pt_tpd; pt_fade = 1; pt_fst = 0; pt_dmp = slider3;
+
+function pt_set(dm, pd, tn, lc, hi, dr, pk, wi, mx) (
+  slider3 = dm; slider4 = pd; slider5 = tn; slider6 = lc; slider7 = hi; slider8 = dr; slider9 = pk; slider10 = wi; slider11 = mx;
+  slider_automate(2044);                                // sliders 3 - 11
+);
+#pt_pm = "Init|Vocal Plate|Snare Plate|Long Plate|Short Bright|Mono 1957|Dark Plate|Tight Steel|Slack Plate|Driven Plate|Damper Closed|Damper Open";
+function load_preset(p) (
+  //                dmp  pd   tn  lc   hi  drv pk  wid  mix
+  p == 1  ? pt_set( 45,  20,  50, 120,   0, 20, 1,  80, 25) :     // Init
+  p == 2  ? pt_set( 50,  60,  55, 180,   1, 15, 1,  80, 22) :     // Vocal Plate
+  p == 3  ? pt_set( 60,   0,  70, 150,   2, 30, 1,  90, 25) :     // Snare Plate
+  p == 4  ? pt_set( 15,  30,  45, 100,   0, 15, 1, 100, 25) :     // Long Plate
+  p == 5  ? pt_set( 75,  10,  80, 200,   3, 15, 1,  70, 22) :     // Short Bright
+  p == 6  ? pt_set( 45,  25,  50, 150,   0, 25, 0,  80, 25) :     // Mono 1957
+  p == 7  ? pt_set( 40,  20,  25, 100,  -4, 20, 1,  80, 25) :     // Dark Plate
+  p == 8  ? pt_set( 55,  15,  95, 160,   1, 15, 1,  80, 22) :     // Tight Steel
+  p == 9  ? pt_set( 35,  25,   5,  80,  -2, 20, 1,  80, 25) :     // Slack Plate
+  p == 10 ? pt_set( 50,  10,  60, 140,   0, 80, 1,  80, 25) :     // Driven Plate
+  p == 11 ? pt_set(100,   0,  60, 200,   0, 15, 1,  70, 25) :     // Damper Closed
+  p == 12 ? pt_set(  0,  40,  50, 120,   0, 15, 1, 100, 22) :     // Damper Open
+  p == 13 ? (
+    pt_set(45, 20, 50, 120, 0, 20, 1, 80, 25);
+    slider1 = 0; slider2 = 1; slider12 = 0; slider13 = 50; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3;
+    slider_automate(262143);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+pt_update();
+
+@block
+srate != pt_sr ? pt_srinit();
+pt_update();
+pt_tfc != pt_fc && pt_fst == 0 ? pt_fst = 1;
+(slider3 != pt_l3 || slider5 != pt_l5 || slider6 != pt_l6 || slider7 != pt_l7) && pt_fst == 0 ? pt_plate();
+pt_di = 0.12 * dm_s * samplesblock / srate;
+pt_dt = dm_a * 0.5 * pt_dfT.drift_tick(pt_di);
+pt_mi = 0.9 / srate; pt_ex = (12 + 4 * pt_dt) * pt_sz;      // the modulated all-passes' excursion (samples)
+pta_lv = max(pta_lv, pt_lvm); pt_lvm = 0;
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+pt_mix += (pt_tmix - pt_mix) * pt_sm; pt_og += (pt_tog - pt_og) * pt_sm; pt_pd += (pt_tpd - pt_pd) * pt_kpd;
+pt_fst == 1 ? ( pt_fade -= pt_fd; pt_fade <= 0 ? ( pt_fade = 0; pt_fc = pt_tfc; pt_plate(); pt_hold = 64; pt_fst = 2; ); ) :
+pt_fst == 2 ? ( pt_hold -= 1; pt_hold <= 0 ? pt_fst = 3; ) :
+pt_fst == 3 ? ( pt_fade += pt_fd; pt_fade >= 1 ? ( pt_fade = 1; pt_fst = 0; ); );
+
+in_process(spl0, spl1);
+pt_xl = in_l; pt_xr = in_r;
+// the valve drive amplifier (2x), the pre-delay
+pt_s = (pt_xl + pt_xr) * 0.5;
+pt_k = 1 + 5 * pt_drv;
+ptu.s57_up(pt_s);
+pt_s = ptd.s57_dn(s57_th(ptu.o0 * pt_k + 0.08) - s57_th(0.08), s57_th(ptu.o1 * pt_k + 0.08) - s57_th(0.08)) / pt_k * (1 + 0.4 * pt_drv);
+ptP.s57_dlw(pt_s);
+pt_in = ptP.s57_dlr(max(pt_pd - 31, 1));
+// the bandwidth into the plate, the input diffusers
+pt_bw += (pt_in - pt_bw) * pt_kb;
+pt_u = pti1.s57_ap(pt_bw, 142 * pt_sz, 0.75); pt_u = pti2.s57_ap(pt_u, 107 * pt_sz, 0.75);
+pt_u = pti3.s57_ap(pt_u, 379 * pt_sz, 0.625); pt_u = pti4.s57_ap(pt_u, 277 * pt_sz, 0.625);
+// the figure eight: each side feeds the other
+pt_ph += pt_mi; pt_ph >= 1 ? pt_ph -= 1;
+pt_a = pt_u + pt_bR * pt_dec;
+pt_a = ptm1.s57_ap(pt_a, 672 * pt_sz + pt_ex * sin(2 * $pi * pt_ph), -0.7);
+ptd1.s57_dlw(pt_a); pt_a = ptd1.s57_dlr(4453 * pt_sz);
+pt_lA += (pt_a - pt_lA) * pt_kd; pt_a = pt_lA * pt_dec;
+pt_a = pta1.s57_ap(pt_a, 1800 * pt_sz, 0.5);
+ptd2.s57_dlw(pt_a); pt_bL = ptd2.s57_dlr(3720 * pt_sz);
+pt_b = pt_u + pt_bL * pt_dec;
+pt_b = ptm2.s57_ap(pt_b, 908 * pt_sz + pt_ex * cos(2 * $pi * pt_ph), -0.7);
+ptd3.s57_dlw(pt_b); pt_b = ptd3.s57_dlr(4217 * pt_sz);
+pt_lB += (pt_b - pt_lB) * pt_kd; pt_b = pt_lB * pt_dec;
+pt_b = pta2.s57_ap(pt_b, 2656 * pt_sz, 0.5);
+ptd4.s57_dlw(pt_b); pt_bR = ptd4.s57_dlr(3163 * pt_sz);
+// the pickups: taps round the tank (two pickups), or one (MONO)
+pt_wl = ptd3.s57_dlr(266 * pt_sz) + ptd3.s57_dlr(2974 * pt_sz) - pta2.s57_dlr(1913 * pt_sz) + ptd4.s57_dlr(1996 * pt_sz) - ptd1.s57_dlr(1990 * pt_sz) - pta1.s57_dlr(187 * pt_sz) - ptd2.s57_dlr(1066 * pt_sz);
+pt_wr = ptd1.s57_dlr(353 * pt_sz) + ptd1.s57_dlr(3627 * pt_sz) - pta1.s57_dlr(1228 * pt_sz) + ptd2.s57_dlr(2673 * pt_sz) - ptd3.s57_dlr(2111 * pt_sz) - pta2.s57_dlr(335 * pt_sz) - ptd4.s57_dlr(121 * pt_sz);
+pt_ster ? ( pt_m = (pt_wl + pt_wr) * 0.5; pt_sd = (pt_wl - pt_wr) * 0.5 * pt_wid; pt_wl = pt_m + pt_sd; pt_wr = pt_m - pt_sd; ) : ( pt_wl = pt_wr = pt_wl * 0.85; );
+pt_wl = ptHS.s57_bq(ptLC.s57_bq(pt_wl)) * pt_og2 * pt_fade; pt_wr = ptHT.s57_bq(ptLD.s57_bq(pt_wr)) * pt_og2 * pt_fade;
+pt_lvm = max(pt_lvm, abs(pt_wl) + abs(pt_wr));
+pt_gd = min(1, 2 - 2 * pt_mix); pt_gw = min(1, 2 * pt_mix);
+pt_yl = pt_xl * pt_gd + pt_wl * pt_gw; pt_yr = pt_xr * pt_gd + pt_wr * pt_gw;
+pt_yl = pto.ost_band(pt_yl) * pt_og; pt_yr = ptp.ost_band(pt_yr) * pt_og;
+ost_out(pt_yl, pt_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider19);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "PLATTE57", "SERIES 57", "PLATE REVERB", #pt_pm, 19);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 4);
+s57_small(30, 378, "IN"); s57_small(330, 378, "DRIVE AMP"); s57_small(634, 378, "PLATE"); s57_small(892, 378, "OUT");
+
+// ---------- the plate in its frame, the driver, the pickups, the damper on its screw ----------
+s57_plate(20, 68, 440, 292);
+s57_title(32, 76, "THE PLATE");
+fx_ = 40; fy_ = 104; fw_ = 400; fh_ = 186;
+ui_col(S57_INK); s57_rr(fx_, fy_, fw_, fh_, 4);
+ui_col(0x8E9298); s57_r(fx_ + 14, fy_ + 14, fw_ - 28, fh_ - 28);
+// the steel's sheen, trembling with the return
+gl_ = min(pta_lv * 4, 1);
+i_ = 0; loop(9, ui_cola(0xFFFFFF, 0.05 + 0.04 * (i_ & 1) + gl_ * 0.06 * sin(time_precise() * 20 + i_)); s57_r(fx_ + 14 + i_ * 41, fy_ + 14, 20, fh_ - 28); i_ += 1; );
+// the springs holding the plate at the corners and along the frame
+i_ = 0; loop(8, ui_col(0x5A5E64);
+  s57_ln(fx_ + 30 + i_ * 48, fy_ + 4, fx_ + 30 + i_ * 48, fy_ + 14, 1.2); s57_ln(fx_ + 30 + i_ * 48, fy_ + fh_ - 4, fx_ + 30 + i_ * 48, fy_ + fh_ - 14, 1.2); i_ += 1; );
+// the driver (centre left) and the pickups
+ui_col(S57_INK); gfx_circle((fx_ + 120) * sc, (fy_ + 92) * sc, 11 * sc, 1, 1); ui_col(S57_ORNG); gfx_circle((fx_ + 120) * sc, (fy_ + 92) * sc, 5 * sc, 1, 1);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(fx_ + 120, fy_ + 116, "DRIVER");
+ui_col(S57_INK); gfx_circle((fx_ + 300) * sc, (fy_ + 58) * sc, 8 * sc, 1, 1);
+slider9 >= 0.5 ? ( gfx_circle((fx_ + 290) * sc, (fy_ + 130) * sc, 8 * sc, 1, 1); s57_tc(fx_ + 322, fy_ + 130, "R"); s57_tc(fx_ + 322, fy_ + 58, "L"); ) : ( s57_tc(fx_ + 332, fy_ + 58, "PICKUP"); );
+// the damper: a felt-covered plate that comes towards the steel as DAMPER closes (drawn as its shadow over the plate)
+pt_dmp += (slider3 - pt_dmp) * 0.15;
+dw_ = 40 + 300 * pt_dmp / 100;
+ui_cola(slider19 >= 0.5 ? 0x6E5C40 : 0x4A4038, 0.25 + 0.35 * pt_dmp / 100); s57_r(fx_ + fw_ - 14 - dw_, fy_ + 18, dw_, fh_ - 36);
+ui_col(S57_INK); s57_r(fx_ + fw_ - 16 - dw_, fy_ + 18, 3, fh_ - 36);
+gfx_setfont(13); ui_col(S57_PLATE); s57_tc(fx_ + fw_ - 14 - dw_ * 0.5, fy_ + fh_ - 26, "DAMPER");
+sprintf(#t_, "%.1f s", pt_rt); gfx_setfont(11); ui_col(S57_INK); s57_t(fx_, fy_ + fh_ + 8, #t_);
+s57_small(fx_ + 64, fy_ + fh_ + 12, "DECAY  (SET BY THE DAMPER)");
+s57_key(fx_ + fw_ - 140, fy_ + fh_ + 6, 66, 22, slider9 < 0.5, "MONO") ? s57_set(9, 0);
+s57_key(fx_ + fw_ - 70, fy_ + fh_ + 6, 70, 22, slider9 >= 0.5, "STEREO") ? s57_set(9, 1);
+
+// ---------- the controls ----------
+s57_well(476, 68, 256, 292);
+s57_title(488, 76, "DAMPER · TONE");
+s57_knob(546, 158, 30, 3, 0, 100, 45, 0, "DAMPER", "%.0f%%", 0);
+s57_small(492, 196, "OPEN"); s57_small(574, 196, "CLOSED");
+s57_knob(670, 158, 22, 4, 0, 250, 20, 0, "PRE-DELAY", "%.0f ms", 0);
+s57_knob(522, 290, 18, 5, 0, 100, 50, 0, "TENSION", "%.0f%%", 0);
+s57_knob(604, 290, 18, 6, 20, 400, 120, 1, "LOW CUT", "%.0f Hz", 0);
+s57_knob(686, 290, 18, 7, -6, 6, 0, 0, "HIGH", "%+.1f dB", 0);
+
+// ---------- IN / OUT ----------
+s57_plate(748, 68, 192, 292);
+s57_title(760, 76, "IN · OUT");
+s57_knob(792, 136, 14, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(886, 116, "GUARD");
+s57_key(862, 126, 48, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(918 * sc, 136 * sc, 3 * sc, 1, S57_ORNG); ); in_grd = 0;
+s57_knob(784, 226, 15, 8, 0, 100, 20, 0, "DRIVE", "%.0f%%", 0);
+s57_knob(844, 226, 15, 10, 0, 100, 80, 0, "WIDTH", "%.0f%%", 0);
+s57_knob(904, 226, 15, 11, 0, 100, 25, 0, "MIX", "%.0f%%", 0);
+s57_knob(784, 314, 13, 12, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(844, 314, 13, 13, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(904, 314, 13, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

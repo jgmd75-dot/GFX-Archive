@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX Vari-Mu57 - manual</title><meta name="description" content="Series 57's compressor: a variable-mu valve pair whose ratio rises as it works, six time constants, stereo, lateral / vertical or dual.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-vari-mu57">
+<div class="cat">Dynamics</div><h1>Vari-Mu57</h1>
+<p class="tagline">Series 57's compressor: a variable-mu valve pair whose ratio rises as it works, six time constants, stereo, lateral / vertical or dual.</p>
+<div class="shot"><img src="img/gfx-vari-mu57.webp" alt="The Vari-Mu57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-vari-mu57-cph.webp" alt="The Vari-Mu57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>Vari-Mu57 is the Series 57 counterpart of Fet81. There were no FETs in 1957, so the gain element is a push-pull pair of remote-cutoff valves: as the side-chain pushes their grid bias negative, their gain (mu) falls.</p><p>There is no ratio control. The ratio rises with the gain reduction, as on the valves: about 1.5:1 just over the threshold, past 6:1 when it is pushed hard. BIAS sets how quickly it rises. The side-chain hears the output (feedback), and six TIME CONSTANT positions cover everything from quick levelling to slow, programme-dependent recovery.</p><p>MODE runs the two channels linked (STEREO), as mid and side (LAT / VERT, as on a disc-cutting lathe) or independently (DUAL). The audio passes the valve pair and an output transformer at 2x oversampling.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Gentle glue on a mix bus or a group</li><li>Smooth levelling on vocals and bass</li><li>Programme limiting with a soft, musical knee</li><li>Mid / side control on a master</li><li>Parallel valve compression on drums</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert Vari-Mu57 on a track or bus. It opens on Init: about 3 - 4 dB of reduction on a typical mix.</li><li>Lower THRESHOLD until the GAIN REDUCTION needle moves as much as you want.</li><li>Pick a TIME CONSTANT: 1 - 2 for quick levelling, 3 - 4 for slower bus control, 5 - 6 for programme-dependent recovery.</li><li>Use BIAS to make it gentler or firmer, and OUTPUT to match the level.</li><li>Try LAT / VERT on a stereo mix to control the middle and the sides separately.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>LEVEL</h3><dl class="ctl"><dt>IN / OUT</dt><dd>Edgewise meters, -20 to +3 VU. 0 VU is about -18 dBFS RMS.</dd><dt>INPUT</dt><dd>Trim before the compressor, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard: eases very hot sources down (on by default). Its LED lights while it works.</dd></dl>
+<h3>GAIN REDUCTION</h3><dl class="ctl"><dt>The meter</dt><dd>An edgewise meter: the needle rests at 0 on the right and swings left as it compresses.</dd><dt>STEREO / LAT/VERT / DUAL</dt><dd>STEREO: both channels compressed together. LAT / VERT: the middle (lateral) and the sides (vertical) each with their own valve pair. DUAL: two independent channels. Changing it fades out and back in.</dd><dt>THRESHOLD</dt><dd>Where it starts, -40 to 0 dB (-18 dB).</dd><dt>TIME CONSTANT</dt><dd>Six positions (2): 1 - 0.2 ms / 0.3 s; 2 - 0.2 ms / 0.8 s; 3 - 0.4 ms / 2 s; 4 - 0.4 ms / 5 s; 5 - 0.4 ms / programme: 2 s, and 10 s after long passages; 6 - 0.2 ms / programme: 0.3 s, 10 s and 25 s.</dd><dt>BIAS</dt><dd>How quickly the ratio rises with the reduction, SOFT to FIRM (50%). SOFT stays gentle; FIRM leans towards a limiter.</dd></dl>
+<h3>SIDE-CHAIN &middot; OUTPUT</h3><dl class="ctl"><dt>SC FILTER</dt><dd>A high-pass in the side-chain, OFF or 20 - 300 Hz: the lows push it less.</dd><dt>MIX</dt><dd>Dry to compressed, 0 - 100% (100%). The dry signal is delayed to match.</dd><dt>OUTPUT</dt><dd>The make-up, -12 to +24 dB (+3.6 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the valves' bias wanders - the threshold and the balance of the pair - and the two channels never quite match.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). As a mix tool it has no clip stage; the red LED lights on an over.</dd><dt>The valve</dt><dd>Glows brighter the harder it works.</dd></dl>
+<h3>The signal path</h3><p>The line along the foot: IN, VALVE PAIR, OUTPUT IRON, OUT.</p>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>Quicker, with a firmer knee; the push-pull pair balanced (odd harmonics, clean) and a breath of air on top.</dd><dt>COPENHAGEN</dt><dd>Slower (about twice the attack time), a softer knee; the pair a little unbalanced (even harmonics, warmer), a fuller iron low end and a softer top.</dd></dl>
+<h2>Presets</h2><p>A preset sets THRESHOLD, TIME CONSTANT, BIAS, MODE, SC FILTER, OUTPUT and MIX; the face, INPUT, GUARD, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness.</p><dl class="ctl"><dt>Init</dt><dd>Moderate levelling: threshold -18 dB, time constant 2.</dd><dt>Gentle Bus</dt><dd>Light, slow bus control with the side-chain filtered.</dd><dt>Mix Glue</dt><dd>Programme-dependent recovery (5) for a whole mix.</dd><dt>Vocal Leveller</dt><dd>Dual channels, firmer, quick recovery.</dd><dt>Programme Limiter</dt><dd>High threshold, firm bias, fastest recovery: catches peaks.</dd><dt>Drum Squash</dt><dd>Pushed hard and fast.</dd><dt>Bass Hold</dt><dd>Steady bass with a 5 s recovery.</dd><dt>Lat-Vert Master</dt><dd>Mid and side compressed separately, time constant 6.</dd><dt>Slow Swell</dt><dd>Soft bias and a slow recovery: the level breathes.</dd><dt>Parallel Valves</dt><dd>Hard compression mixed in at 40%.</dd><dt>Pumping Room</dt><dd>Fast and filtered: the room pumps with the beat.</dd><dt>Brick Wall</dt><dd>Maximum bias near the top: a limiter.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>Because the ratio rises with the reduction, a little goes a long way: aim for 2 - 4 dB on a bus.</li><li>Time constants 5 and 6 recover quickly after a short peak and slowly after a long loud passage: ideal for whole mixes.</li><li>On a master, LAT / VERT lets you hold the middle steady while the sides breathe.</li><li>COPENHAGEN is slower and warmer: lovely on vocals and acoustic instruments.</li></ul>
+<p class="file">File: gfx-vari-mu57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

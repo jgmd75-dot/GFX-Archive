@@ -1,0 +1,632 @@
+desc:GFX Master92 [mastering]
+//tags: mastering valve opto bus compressor multiband limiter brickwall lookahead dither noise-shaping 16-bit cd lufs stereo series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// MASTER92 (Series 92: high-end home recording from the 90s): mastering for CD in a serious 90s home studio, with
+// two models on one switch.
+//   input -> TRIM / GUARD
+//   -> EQ (IN / OUT): LOW shelf (30 - 300 Hz), MID bell (200 Hz - 8 kHz), HIGH shelf / air (2 - 20 kHz), each -6 .. +6 dB
+//   -> COMPRESSOR (IN / OUT): THRESHOLD, RATIO (2:1, 4:1, 10:1), ATTACK (0.3 - 30 ms), RELEASE (0.1 - 1.2 s or AUTO),
+//      SC HPF (ANALOG: the side-chain high-pass, off, 60, 90, 150 Hz), XOVER (DIGITAL: the crossovers, 120 Hz / 2 kHz,
+//      200 Hz / 3 kHz, 300 Hz / 5 kHz), MAKEUP (a fader)
+//   -> STEREO (IN / OUT): WIDTH (0 - 200 %, M/S) and MONO BASS (below 60 / 100 / 150 Hz the sides are taken out)
+//   -> LIMITER (IN / OUT): DRIVE (a fader) into it, CEILING (dBFS), RELEASE
+//   -> OUTPUT (a fader) -> WORD LENGTH (IN / OUT, DIGITAL): BITS (16 / 20), TPDF dither, SHAPING (OFF, LIGHT, STRONG)
+//   -> the house output stage (band SAT, CLIP always on).
+// (The OUTPUT level comes before the word length, so the dither is the last thing done to the signal.)
+// ANALOG:  a valve mastering chain. A valve program EQ (broad, sweet curves into a valve stage: warmth); an opto bus
+//          compressor (RMS sensing, a wide knee, slow programme-dependent attack and the light cell's memory: the longer
+//          it works, the slower it lets go) with a valve make-up amp; a valve-and-iron soft limiter (the output iron
+//          thickens the lows, a gain rider, then an asymmetric valve clipper at 2x that rounds what it lets through).
+//          VALVE sets how hard the valves and the iron work. The word length is out of the path.
+// DIGITAL: the 90s digital mastering processor. Clean digital EQ (Butterworth shelves, a tighter bell); a 3-band
+//          compressor (Linkwitz-Riley crossovers, the bands summing flat; the low band slower, the high band faster);
+//          a look-ahead brickwall limiter (2 ms) with a dBFS ceiling; then the WORD LENGTH stage: down to 16 (or 20)
+//          bits for CD with TPDF dither and noise shaping - LIGHT (a 3-tap E-weighted curve) or STRONG (a 9-tap
+//          F-weighted psychoacoustic curve), the noise moved out of the ear's most sensitive band. The house clip is
+//          lifted clear of the limiter's ceiling, so the ceiling holds before it. VALVE is out of the path.
+// The two models are level matched at the default settings; the presets are levelled against Init.
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the valves warm up and the mains wander: the compressor's
+// threshold, the valves' drive and the two channels' gain drift slowly; DIGITAL - only a trace of threshold wander.
+// Changing the model, an IN / OUT switch, MONO BASS, XOVER, BITS or SHAPING fades the sound out and back in.
+// Latency: the limiter's lookahead (2 ms - 1 sample; 95 samples at 48 kHz), the same in both models and with the
+// limiter out, reported.
+// Meters: IN, compressor GR (DIGITAL: per band), limiter GR, OUT, short-term loudness (LUFS, K-weighted, 3 s).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:1<0,1,1{Out,In}>-EQ in
+slider4:0<-6,6,0.1>-Low (dB)
+slider5:80<30,300,1>-Low freq (Hz)
+slider6:0<-6,6,0.1>-Mid (dB)
+slider7:1500<200,8000,10>-Mid freq (Hz)
+slider8:0<-6,6,0.1>-High (dB)
+slider9:10000<2000,20000,10>-High freq (Hz)
+slider10:1<0,1,1{Out,In}>-Comp in
+slider11:-10<-30,0,0.1>-Threshold (dB)
+slider12:1<0,2,1{2:1,4:1,10:1}>-Ratio
+slider13:3<0,4,1{0.3 ms,1 ms,3 ms,10 ms,30 ms}>-Attack
+slider14:4<0,4,1{0.1 s,0.3 s,0.6 s,1.2 s,Auto}>-Release
+slider15:0<0,3,1{Off,60 Hz,90 Hz,150 Hz}>-SC high-pass (analog)
+slider16:1<0,2,1{120/2k,200/3k,300/5k}>-Crossovers (digital)
+slider17:0<0,12,0.1>-Makeup (dB)
+slider18:1<0,1,1{Out,In}>-Stereo in
+slider19:100<0,200,1>-Width (%)
+slider20:0<0,3,1{Off,60 Hz,100 Hz,150 Hz}>-Mono bass
+slider21:1<0,1,1{Out,In}>-Limiter in
+slider22:0<0,12,0.1>-Drive (dB)
+slider23:-0.3<-12,0,0.1>-Limiter ceiling (dBFS)
+slider24:100<10,1000,1>-Limiter release (ms)
+slider25:1<0,1,1{Out,In}>-Word length in (digital)
+slider26:0<0,1,1{16 bit,20 bit}>-Bits
+slider27:1<0,2,1{Off,Light,Strong}>-Noise shaping
+slider28:0<-24,12,0.1>-Output (dB)
+slider29:0<0,1,1{Analog,Digital}>-Model
+slider30:40<0,100,1>-Valve (%)
+slider31:50<0,100,1>-Drift (%)
+slider32:0<0,100,1>-Band sat (%)
+slider33:30<0,100,1>-Bias (output stage, %)
+slider34:120<40,400,1>-Sat low band (Hz)
+slider35:6000<2000,16000,10>-Sat high band (Hz)
+slider36:-0.3<-24,0,0.1>-Ceiling (dB)
+slider37:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-master92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+a9_XL = s92_alloc(2048); a9_XR = s92_alloc(2048);       // the limiter's input (doubled rings: x[n - j] = X[w + 1024 - j])
+a9_DQV = s92_alloc(1024); a9_DQI = s92_alloc(1024);     // the lookahead's sliding minimum (a monotonic queue)
+a9_BX = s92_alloc(1024);                                // the lookahead's moving average
+a9_OPL = s92_alloc(1024); a9_OPR = s92_alloc(1024);     // the ANALOG limiter's delay (to the same latency)
+a9_H = s92_alloc(64);                                   // the ANALOG clipper's 2x half-band
+a9_LB = s92_alloc(64);                                  // the loudness bins (100 ms each, 30 of them)
+a9_NH = s92_alloc(16);                                  // the noise shaper's coefficients
+a9_EL = s92_alloc(16); a9_ER = s92_alloc(16);           // the noise shaper's error history (rings of 16)
+a9_ostm = s92_alloc(4096);
+
+// ---------- the ANALOG clipper's 2x oversampling (31 samples) ----------
+s92_hbdesign(a9_H, 63, 8);
+a9uL.s92_upinit(63, a9_H, 64); a9uR.s92_upinit(63, a9_H, 64); a9dL.s92_dninit(63, a9_H, 64); a9dR.s92_dninit(63, a9_H, 64);
+a9_L2 = 31;
+
+// ---------- the stages ----------
+// the soft-knee gain computer (dB of reduction): ov over the threshold, sl the slope (1 - 1/ratio), w the knee
+function a9_gc(ov, sl, w) ( 2 * ov < -w ? 0 : 2 * ov > w ? sl * ov : sl * sqr(ov + 0.5 * w) / (2 * w); );
+// a valve stage: asymmetric, unity small-signal gain; the DC it makes is blocked (k drive, b bias, z0 / zd its rest
+// point and slope there)
+function a9_vs(x, k, b, z0, zd) instance(dx, dy) local(d) (
+  d = (s92_th(k * (x + b)) - z0) / zd - x;
+  dy = d - dx + 0.9995 * dy; dx = d;
+  x + dy;
+);
+// the ANALOG limiter's valve clipper: linear to its knee, then rounding into the ceiling, never past it; the negative
+// half rounds earlier (VALVE): even harmonics
+function a9_vc(x) local(a, k) (
+  k = x >= 0 ? a9_kp : a9_kn; a = abs(x);
+  a < k ? x : sign(x) * (k + (a9_cob - k) * s92_th((a - k) / (a9_cob - k)));
+);
+// one band of the DIGITAL 3-band compressor (stereo linked): RMS sensing, a 6 dB knee; returns its gain
+function a9_bd(xl, xr, km, ka, kr) instance(ms, g1, g2, gt) local(lv, gr) (
+  ms += ((xl * xl + xr * xr) * 0.5 - ms) * km;
+  lv = 10 * log10(max(ms, 0.000000000001)) + 3;
+  gr = a9_gc(lv - a9_th - a9_dth, a9_sl, 6);
+  g1 += (gr - g1) * (gr > g1 ? ka : kr);
+  g2 += (gr - g2) * (gr > g2 ? a9_ka2 : a9_kr2);         // AUTO's slow stage always runs; AUTO blends it in (glided)
+  gt = g1 + a9_aw * max(g2 - g1, 0);
+  exp(-0.11512925465 * gt);
+);
+// the word length: TPDF dither, error-feedback noise shaping (a9_nt taps), rounding to a9_qs steps; eb = the
+// channel's error ring
+function a9_wq(x, eb) local(u, s, k, y) (
+  u = x * a9_qs; s = 0; k = 0;
+  loop(a9_nt, s += a9_NH[k] * eb[(a9_ep - k) & 15]; k += 1; );
+  u -= s;
+  y = floor(u + rand(1) - rand(1) + 0.5);
+  y = min(max(y, -a9_qs), a9_qs - 1);
+  eb[(a9_ep + 1) & 15] = min(max(y - u, -1.5), 1.5);
+  y / a9_qs;
+);
+// the noise shaping curves (designed for 44.1 / 48 kHz): LIGHT a 3-tap E-weighted, STRONG a 9-tap F-weighted
+function a9_nsset() (
+  memset(a9_NH, 0, 16);
+  a9_ns == 1 ? ( a9_nt = 3; a9_NH[0] = 1.623; a9_NH[1] = -0.982; a9_NH[2] = 0.109; ) :
+  a9_ns == 2 ? ( a9_nt = 9; a9_NH[0] = 2.412; a9_NH[1] = -3.370; a9_NH[2] = 3.937; a9_NH[3] = -4.174; a9_NH[4] = 3.353;
+                 a9_NH[5] = -2.205; a9_NH[6] = 1.281; a9_NH[7] = -0.569; a9_NH[8] = 0.0847; ) : a9_nt = 0;
+  memset(a9_EL, 0, 16); memset(a9_ER, 0, 16); a9_ep = 0;
+  a9_qs = a9_bt ? 524288 : 32768;
+);
+
+// ---------- settings ----------
+function a9_ostset() local(c) (
+  // DIGITAL with the limiter in: the house clip is lifted clear of the limiter's ceiling (its knee starts 2 dB under
+  // its ceiling), so the brickwall ceiling holds before it; otherwise the house ceiling as set
+  c = slider36;
+  a9_mod && a9_li ? c = max(c, slider23 + slider28 + 2.5);
+  ost_setup(slider32 / 100, slider33 / 100, slider34, slider35, c, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = a9_LAT;
+);
+function a9_update() local(t, r) (
+  in_setup(slider1, slider2 >= 0.5);
+  a9_tmo = slider29 >= 0.5; a9_teq = slider3 >= 0.5; a9_tci = slider10 >= 0.5; a9_tst = slider18 >= 0.5; a9_tli = slider21 >= 0.5;
+  a9_tmb = slider20; a9_txo = slider16; a9_twl = slider25 >= 0.5; a9_tbt = slider26 >= 0.5; a9_tns = slider27;
+  a9_tlg = slider4; a9_tlf = log(slider5); a9_tmg = slider6; a9_tmf = log(slider7); a9_thg = slider8; a9_thf = log(slider9);
+  a9_tth = slider11;
+  a9_tsl = slider12 < 0.5 ? 0.5 : slider12 < 1.5 ? 0.75 : 0.9;
+  a9_tmk = 10 ^ (slider17 / 20);
+  a9_twd = slider19 / 100;
+  a9_tdr = 10 ^ (slider22 / 20); a9_tce = slider23;
+  a9_tog = 10 ^ (slider28 / 20);
+  a9_tva = slider30 / 100;
+  drift_macro(slider31);
+  // the compressor's times. ANALOG: the opto cell - slower attack, longer release and the cell's memory
+  t = slider13 < 0.5 ? 0.0003 : slider13 < 1.5 ? 0.001 : slider13 < 2.5 ? 0.003 : slider13 < 3.5 ? 0.01 : 0.03;
+  a9_aut = slider14 >= 3.5;
+  r = slider14 < 0.5 ? 0.1 : slider14 < 1.5 ? 0.3 : slider14 < 2.5 ? 0.6 : slider14 < 3.5 ? 1.2 : 0.15;
+  !a9_mod ? (
+    a9_ka = s92_kt(2 * t + 0.004, srate); a9_kr = s92_kt(1.5 * r, srate);
+    a9_ka2 = s92_kt(0.8, srate); a9_kr2 = s92_kt(a9_aut ? 4 : 2.5, srate);
+  ) : (
+    a9_kaL = s92_kt(2 * t, srate); a9_kaM = s92_kt(t, srate); a9_kaH = s92_kt(0.5 * t, srate);
+    a9_rbL = s92_kt(1.5 * r, srate); a9_rbM = s92_kt(r, srate); a9_rbH = s92_kt(0.7 * r, srate);
+    a9_ka2 = s92_kt(0.35, srate); a9_kr2 = s92_kt(1.5, srate);
+  );
+  a9_lrel = slider24 / 1000;
+  slider15 != a9_scf ? (
+    a9_scf = slider15;
+    a9_scf > 0 ? ( t = a9_scf < 1.5 ? 60 : a9_scf < 2.5 ? 90 : 150; a9sL.s92_bqset(1, t, 0, 0.707, srate); a9sR.s92_bqset(1, t, 0, 0.707, srate); );
+  );
+  a9_ostset();
+);
+// the EQ: trapezoidal state-variable filters (they stay smooth while their settings glide). t: 3 bell, 4 low shelf,
+// 5 high shelf. ANALOG broad, sweet curves; DIGITAL Butterworth shelves and a tighter bell
+function a9_svc(t, f, gdb, q) instance(a1, a2, a3, m0, m1, m2) local(ga, g, k) (
+  ga = 10 ^ (gdb / 40); g = tan($pi * min(f, 0.45 * srate) / srate); k = 1 / q;
+  t == 3 ? ( k = 1 / (q * ga); m0 = 1; m1 = k * (ga * ga - 1); m2 = 0; ) :
+  t == 4 ? ( g /= sqrt(ga); m0 = 1; m1 = k * (ga - 1); m2 = ga * ga - 1; ) :
+           ( g *= sqrt(ga); m0 = ga * ga; m1 = k * (1 - ga) * ga; m2 = 1 - ga * ga; );
+  a1 = 1 / (1 + g * (g + k)); a2 = g * a1; a3 = g * a2;
+);
+function a9_sv(x, a1, a2, a3, m0, m1, m2) instance(s1, s2) local(v1, v2, v3) (
+  v3 = x - s2; v1 = a1 * s1 + a2 * v3; v2 = s2 + a2 * s1 + a3 * v3;
+  s1 = 2 * v1 - s1; s2 = 2 * v2 - s2;
+  m0 * x + m1 * v1 + m2 * v2;
+);
+function a9_eqset() local(qs, qb) (
+  qs = a9_mod ? 0.707 : 0.6; qb = a9_mod ? 0.8 : 0.45;
+  a9qL.a9_svc(4, exp(a9_lf), a9_lg, qs); a9qM.a9_svc(3, exp(a9_mf), a9_mg, qb); a9qH.a9_svc(5, exp(a9_hf), a9_hg, qs);
+);
+// MONO BASS: a 4th-order Butterworth high-pass on the sides
+function a9_mbset() local(f) (
+  f = a9_mb < 1.5 ? 60 : a9_mb < 2.5 ? 100 : 150;
+  a9b1.s92_bqset(1, f, 0, 0.5412, srate); a9b2.s92_bqset(1, f, 0, 1.3066, srate);
+  a9b1.s92_bqclr(); a9b2.s92_bqclr();
+);
+// XOVER: the DIGITAL compressor's Linkwitz-Riley (4th order) crossovers; the low band gets the upper crossover's
+// all-pass, so the three bands sum flat
+function a9_xoset() local(f1, f2) (
+  f1 = a9_xo < 0.5 ? 120 : a9_xo < 1.5 ? 200 : 300; f2 = a9_xo < 0.5 ? 2000 : a9_xo < 1.5 ? 3000 : 5000;
+  a9xLa.s92_bqset(0, f1, 0, 0.7071, srate); a9xLb.s92_bqset(0, f1, 0, 0.7071, srate);
+  a9xLc.s92_bqset(1, f1, 0, 0.7071, srate); a9xLd.s92_bqset(1, f1, 0, 0.7071, srate);
+  a9xLe.s92_bqset(0, f2, 0, 0.7071, srate); a9xLf.s92_bqset(0, f2, 0, 0.7071, srate);
+  a9xLg.s92_bqset(1, f2, 0, 0.7071, srate); a9xLh.s92_bqset(1, f2, 0, 0.7071, srate);
+  a9xLi.s92_bqset(6, f2, 0, 0.7071, srate);
+  a9xRa.s92_bqset(0, f1, 0, 0.7071, srate); a9xRb.s92_bqset(0, f1, 0, 0.7071, srate);
+  a9xRc.s92_bqset(1, f1, 0, 0.7071, srate); a9xRd.s92_bqset(1, f1, 0, 0.7071, srate);
+  a9xRe.s92_bqset(0, f2, 0, 0.7071, srate); a9xRf.s92_bqset(0, f2, 0, 0.7071, srate);
+  a9xRg.s92_bqset(1, f2, 0, 0.7071, srate); a9xRh.s92_bqset(1, f2, 0, 0.7071, srate);
+  a9xRi.s92_bqset(6, f2, 0, 0.7071, srate);
+  a9xLa.s92_bqclr(); a9xLb.s92_bqclr(); a9xLc.s92_bqclr(); a9xLd.s92_bqclr(); a9xLe.s92_bqclr(); a9xLf.s92_bqclr();
+  a9xLg.s92_bqclr(); a9xLh.s92_bqclr(); a9xLi.s92_bqclr();
+  a9xRa.s92_bqclr(); a9xRb.s92_bqclr(); a9xRc.s92_bqclr(); a9xRd.s92_bqclr(); a9xRe.s92_bqclr(); a9xRf.s92_bqclr();
+  a9xRg.s92_bqclr(); a9xRh.s92_bqclr(); a9xRi.s92_bqclr();
+);
+// the level match of the two models (dB, at the default settings, measured on pink noise)
+function a9_trim() ( a9_mod ? 10 ^ (0 / 20) : 10 ^ (0 / 20); );
+function a9_srinit() (
+  a9_sr = srate;
+  a9_LA = floor(0.002 * srate + 0.5); a9_LAT = a9_LA - 1;
+  a9_sm = 1 - exp(-1 / (0.02 * srate));
+  a9_fd = 1 / (0.006 * srate);
+  a9_krms = s92_kt(0.012, srate);
+  a9_kmL = s92_kt(0.02, srate); a9_kmM = s92_kt(0.008, srate); a9_kmH = s92_kt(0.004, srate);
+  a9_kl1 = s92_k(110, srate);
+  a9_klo = s92_kt(2, srate);
+  a9_lka = s92_kt(0.0004, srate);
+  ost_init(a9_ostm);
+  a9k1L.s92_bqset(5, 1681.97, 4.0, 0.7072, srate); a9k1R.s92_bqset(5, 1681.97, 4.0, 0.7072, srate);
+  a9k2L.s92_bqset(1, 38.135, 0, 0.5003, srate); a9k2R.s92_bqset(1, 38.135, 0, 0.5003, srate);
+  a9_scf = -1;
+  a9_eqset(); a9_mbset(); a9_xoset();
+  a9_lbn = floor(0.1 * srate);
+);
+// resets the limiter (at a silent point; the compressor keeps its reduction, so the level carries on)
+function a9_dynclr() (
+  a9_gob = 1; a9_lng = 0; a9_rr = 1;
+  a9_qh = a9_qt = 0; a9_bs = a9_LA; memset(a9_BX, 1, 1024);
+);
+a9_mod = a9_tmo = slider29 >= 0.5; a9_eq = slider3 >= 0.5; a9_ci = slider10 >= 0.5; a9_st = slider18 >= 0.5; a9_li = slider21 >= 0.5;
+a9_mb = slider20; a9_xo = slider16; a9_wl = slider25 >= 0.5; a9_bt = slider26 >= 0.5; a9_ns = slider27;
+a9_lg = slider4; a9_lf = log(slider5); a9_mg = slider6; a9_mf = log(slider7); a9_hg = slider8; a9_hf = log(slider9);
+in_init();
+a9_srinit();
+a9_update();
+a9_nsset();
+a9_th = a9_tth; a9_sl = a9_tsl; a9_mk = a9_tmk; a9_wd = a9_twd; a9_dr = a9_tdr; a9_ce = a9_tce; a9_og = a9_tog; a9_va = a9_tva;
+a9_mt = a9_trim();
+a9_dfA.drift_init(0.8 + rand(0.4)); a9_dfB.drift_init(0.8 + rand(0.4)); a9_dfL.drift_init(0.8 + rand(0.4)); a9_dfR.drift_init(0.8 + rand(0.4));
+a9_dgl = a9_dgr = 1; a9_dkv = 1;
+a9L.ost_ch_init(); a9R.ost_ch_init();
+a9_dynclr(); a9_g1 = a9_g2 = 0; a9_ms = 0; a9_aw = a9_aut;
+a9_fade = 1; a9_fst = 0; a9_hold = 0; a9_w = 0; a9_n = 0;
+a9_lbi = 0; a9_lbc = 0; a9_ks = 0; a9_lu = -100;
+
+// ---------- presets ----------
+function a9_pa(eq, lo, lf, mi, mf, hi, hf, ci, th, ra, at, re) (
+  slider3 = eq; slider4 = lo; slider5 = lf; slider6 = mi; slider7 = mf; slider8 = hi; slider9 = hf;
+  slider10 = ci; slider11 = th; slider12 = ra; slider13 = at; slider14 = re;
+);
+function a9_pb(sc, xo, mk, si, wd, mb, li, dr, ce, lr) (
+  slider15 = sc; slider16 = xo; slider17 = mk; slider18 = si; slider19 = wd; slider20 = mb;
+  slider21 = li; slider22 = dr; slider23 = ce; slider24 = lr;
+);
+function a9_pc(wl, bt, ns, ou, mo, va) (
+  slider25 = wl; slider26 = bt; slider27 = ns; slider28 = ou; slider29 = mo; slider30 = va;
+  slider_automate(1073741820);                          // sliders 3 - 30 (TRIM, GUARD, DRIFT and the output stage stay)
+);
+#a9_pm = "Init|Valve Glue|Warm Album|Opto Ballad|Demo Polish|Britpop Loud|Valve Low End|Clean CD Master|Club Promo CD|Multiband Pop|Breakbeat Master|Quiet Acoustic CD";
+function load_preset(p) (
+  //                eq  lo   lf   mid  mf    hi   hf     ci  thr ra at re        sc xo mk  st wd  mb li dr   ce   lr     wl bt ns  out  mo va
+  p == 1  ? ( a9_pa(1,  0,   80,  0,   1500, 0,   10000, 1, -10, 1, 3, 4); a9_pb(0, 1, 0,  1, 100, 0, 1, 0, -0.3, 100); a9_pc(1, 0, 1, 0,    0, 40); ) :   // Init
+  p == 2  ? ( a9_pa(1,  0.5, 80,  0,   1500, 0.5, 12000, 1, -20, 0, 4, 4); a9_pb(1, 1, 1,  1, 100, 0, 1, 1, -0.3, 120); a9_pc(1, 0, 1, -1.7,    0, 50); ) :   // Valve Glue
+  p == 3  ? ( a9_pa(1,  1,   60, -0.5, 400,  1,   14000, 1, -18, 0, 3, 4); a9_pb(1, 1, 1,  1, 105, 1, 1, 2, -0.3, 150); a9_pc(1, 0, 1, -2.3,    0, 55); ) :   // Warm Album
+  p == 4  ? ( a9_pa(1,  0.5, 100, 0.5, 2500, 1,   12000, 1, -22, 0, 4, 4); a9_pb(1, 1, 1.5, 1, 100, 0, 1, 1, -0.3, 200); a9_pc(1, 0, 1, -1.7,   0, 40); ) :   // Opto Ballad
+  p == 5  ? ( a9_pa(1,  1,   80,  1,   3000, 1.5, 10000, 1, -20, 1, 3, 4); a9_pb(2, 1, 2,  1, 110, 1, 1, 3, -0.3, 100); a9_pc(1, 0, 1, -4.2,    0, 50); ) :   // Demo Polish
+  p == 6  ? ( a9_pa(1,  0.5, 80,  0.5, 2000, 1,   10000, 1, -20, 1, 2, 1); a9_pb(1, 1, 2,  1, 110, 1, 1, 6, -0.3, 60);  a9_pc(1, 0, 1, -7.0,    0, 60); ) :   // Britpop Loud
+  p == 7  ? ( a9_pa(1,  1.5, 60, -0.5, 500,  0,   10000, 1, -18, 0, 4, 4); a9_pb(1, 1, 1,  1, 100, 2, 1, 2, -0.3, 150); a9_pc(1, 0, 1, -1.9,    0, 85); ) :   // Valve Low End
+  p == 8  ? ( a9_pa(1,  0,   80,  0,   1500, 0.5, 16000, 1, -18, 0, 3, 4); a9_pb(0, 1, 1,  1, 100, 0, 1, 2, -0.3, 150); a9_pc(1, 0, 1, -3.1,    1, 40); ) :   // Clean CD Master
+  p == 9  ? ( a9_pa(1,  1,   60,  0,   1500, 1,   12000, 1, -20, 1, 2, 4); a9_pb(0, 0, 2,  1, 110, 2, 1, 6, -0.1, 80);  a9_pc(1, 0, 1, -7.7,    1, 40); ) :   // Club Promo CD
+  p == 10 ? ( a9_pa(1,  0.5, 80,  0.5, 3000, 1,   14000, 1, -22, 1, 3, 4); a9_pb(0, 1, 2,  1, 105, 1, 1, 4, -0.3, 100); a9_pc(1, 0, 1, -5.3,    1, 40); ) :   // Multiband Pop
+  p == 11 ? ( a9_pa(1,  1,   60, -0.5, 400,  0.5, 10000, 1, -20, 1, 4, 1); a9_pb(0, 2, 2,  1, 100, 2, 1, 5, -0.3, 60);  a9_pc(1, 0, 1, -6.1,    1, 40); ) :   // Breakbeat Master
+  p == 12 ? ( a9_pa(1,  0,   80,  0,   1500, 0.5, 16000, 1, -24, 0, 4, 4); a9_pb(0, 1, 1,  1, 100, 0, 1, 1, -0.3, 300); a9_pc(1, 0, 2, -1.3,    1, 40); ) :   // Quiet Acoustic CD
+  p == 13 ? (                                               // Reset all to defaults
+    a9_pa(1, 0, 80, 0, 1500, 0, 10000, 1, -10, 1, 3, 4); a9_pb(0, 1, 0, 1, 100, 0, 1, 0, -0.3, 100); a9_pc(1, 0, 1, 0, 0, 40);
+    slider1 = 0; slider2 = 1; slider31 = 50; slider32 = 0; slider33 = 30; slider34 = 120; slider35 = 6000; slider36 = -0.3; slider37 = 1;
+    slider_automate(137438953471);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+a9_update();
+
+@block
+srate != a9_sr ? ( a9_srinit(); a9_dynclr(); );
+a9_update();                                            // knobs moved on the panel do not run @slider
+a9_kb = 1 - exp(-samplesblock / (0.02 * srate));
+// the EQ glides per sample (in @sample) while its settings move
+a9_eqg = abs(a9_tlg - a9_lg) + abs(a9_tmg - a9_mg) + abs(a9_thg - a9_hg) + abs(a9_tlf - a9_lf) + abs(a9_tmf - a9_mf) + abs(a9_thf - a9_hf) > 0;
+// DRIFT: ANALOG - the threshold, the valves' drive and the channels' gain wander; DIGITAL - a trace of threshold wander
+a9_di = 0.12 * dm_s * samplesblock / srate;
+a9_dth = dm_a * (a9_mod ? 0.05 : 0.5) * a9_dfA.drift_tick(a9_di);
+a9_dkv = 1 + (a9_mod ? 0 : dm_a * 0.08 * a9_dfB.drift_tick(a9_di));
+a9_dgl = 1 + (a9_mod ? 0 : dm_a * 0.004 * a9_dfL.drift_tick(a9_di));
+a9_dgr = 1 + (a9_mod ? 0 : dm_a * 0.004 * a9_dfR.drift_tick(a9_di));
+// VALVE (ANALOG): the EQ's valve stage, the compressor's make-up valve and the limiter's iron, glided at block rate
+a9_va += (a9_tva - a9_va) * a9_kb;
+a9_vb = 0.15;
+a9_ke = (0.04 + 0.5 * a9_va) * a9_dkv;
+a9_ze = s92_th(a9_ke * a9_vb); a9_zde = (s92_th(a9_ke * (a9_vb + 0.0001)) - s92_th(a9_ke * (a9_vb - 0.0001))) / 0.0002;
+a9_kc = (0.04 + 0.5 * a9_va) * a9_dkv;
+a9_zc = s92_th(a9_kc * a9_vb); a9_zdc = (s92_th(a9_kc * (a9_vb + 0.0001)) - s92_th(a9_kc * (a9_vb - 0.0001))) / 0.0002;
+a9_ki = 0.05 + 1.4 * a9_va;
+// the limiter's release: programme dependent (it slows while the limiter works); ANALOG snappier
+a9_krl = s92_kt(a9_lrel * (1 + 2 * a9_lng) * (a9_mod ? 1.5 : 1), srate);
+// the loudness bins
+a9_lbc >= a9_lbn ? (
+  a9_LB[a9_lbi] = a9_ks; a9_LB[32 + a9_lbi] = a9_lbc; a9_lbi = (a9_lbi + 1) % 30; a9_ks = 0; a9_lbc = 0;
+  a9_t = 0; a9_c = 0; a9_i = 0; loop(30, a9_t += a9_LB[a9_i]; a9_c += a9_LB[32 + a9_i]; a9_i += 1; );
+  a9_lu = a9_c > 0 && a9_t > 0 ? -0.691 + 10 * log10(a9_t / a9_c) : -100;
+);
+// the lookahead's sample counter is rebased now and then (its queue indices stay exact for days)
+a9_n > 1073741824 ? ( a9_n -= 1073741824; a9_i = 0; loop(1024, a9_DQI[a9_i] -= 1073741824; a9_i += 1; );
+                      a9_t = floor(a9_qh / 1024) * 1024; a9_qh -= a9_t; a9_qt -= a9_t; );
+// the meters' hand-off to the panel
+a9a_vi = max(a9a_vi, a9_viL); a9a_vo = max(a9a_vo, a9_vL);
+a9a_c0 = max(a9a_c0, a9_cgm0); a9a_c1 = max(a9a_c1, a9_cgm1); a9a_c2 = max(a9a_c2, a9_cgm2); a9_cgm0 = a9_cgm1 = a9_cgm2 = 0;
+a9a_lg = max(a9a_lg, a9_lgm); a9_lgm = 0;
+a9a_lu = a9_lu;
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+a9_th += (a9_tth - a9_th) * a9_sm; a9_sl += (a9_tsl - a9_sl) * a9_sm; a9_mk += (a9_tmk - a9_mk) * a9_sm;
+a9_wd += (a9_twd - a9_wd) * a9_sm; a9_dr += (a9_tdr - a9_dr) * a9_sm; a9_ce += (a9_tce - a9_ce) * a9_sm;
+a9_og += (a9_tog - a9_og) * a9_sm; a9_aw += (a9_aut - a9_aw) * a9_sm;
+// a change of model, an IN / OUT switch, MONO BASS, XOVER, BITS or SHAPING: fade out, switch at the silent point,
+// wait, fade in
+(a9_tmo != a9_mod || a9_teq != a9_eq || a9_tci != a9_ci || a9_tst != a9_st || a9_tli != a9_li || a9_tmb != a9_mb ||
+ a9_txo != a9_xo || a9_twl != a9_wl || a9_tbt != a9_bt || a9_tns != a9_ns) && a9_fst == 0 ? a9_fst = 1;
+a9_fst == 1 ? ( a9_fade -= a9_fd; a9_fade <= 0 ? (
+  a9_fade = 0;
+  a9_tmo != a9_mod ? ( a9_mod = a9_tmo; a9_mt = a9_trim(); a9_eqset(); a9_update(); );
+  a9_eq = a9_teq; a9_ci = a9_tci; a9_st = a9_tst; a9_li = a9_tli;
+  a9_tmb != a9_mb ? ( a9_mb = a9_tmb; a9_mb > 0 ? a9_mbset(); );
+  a9_txo != a9_xo ? ( a9_xo = a9_txo; a9_xoset(); );
+  a9_wl = a9_twl; a9_bt = a9_tbt; a9_ns = a9_tns; a9_nsset();
+  a9_dynclr(); a9_ostset();
+  a9_hold = a9_LAT + 8; a9_fst = 2; ); ) :
+a9_fst == 2 ? ( a9_hold -= 1; a9_hold <= 0 ? a9_fst = 3; ) :
+a9_fst == 3 ? ( a9_fade += a9_fd; a9_fade >= 1 ? ( a9_fade = 1; a9_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+a9_l = in_l; a9_r = in_r;
+a9_viL = max(a9_viL * 0.9995, abs(a9_l) + abs(a9_r));
+
+// ---------- EQ (ANALOG: then the valve stage) ----------
+a9_eqg ? (
+  a9_lg += (a9_tlg - a9_lg) * a9_sm; a9_mg += (a9_tmg - a9_mg) * a9_sm; a9_hg += (a9_thg - a9_hg) * a9_sm;
+  a9_lf += (a9_tlf - a9_lf) * a9_sm; a9_mf += (a9_tmf - a9_mf) * a9_sm; a9_hf += (a9_thf - a9_hf) * a9_sm;
+  abs(a9_tlg - a9_lg) + abs(a9_tmg - a9_mg) + abs(a9_thg - a9_hg) + abs(a9_tlf - a9_lf) + abs(a9_tmf - a9_mf) + abs(a9_thf - a9_hf) < 0.0005 ? (
+    a9_lg = a9_tlg; a9_mg = a9_tmg; a9_hg = a9_thg; a9_lf = a9_tlf; a9_mf = a9_tmf; a9_hf = a9_thf; a9_eqg = 0; );
+  a9_eqset();
+);
+a9_eq ? (
+  // a band at 0 dB is left out (its filter is then identity); it starts from rest when it comes back
+  a9_lg != 0 ? ( a9_l = a9sLl.a9_sv(a9_l, a9qL.a1, a9qL.a2, a9qL.a3, a9qL.m0, a9qL.m1, a9qL.m2); a9_r = a9sLr.a9_sv(a9_r, a9qL.a1, a9qL.a2, a9qL.a3, a9qL.m0, a9qL.m1, a9qL.m2); )
+             : a9sLl.s1 = a9sLl.s2 = a9sLr.s1 = a9sLr.s2 = 0;
+  a9_mg != 0 ? ( a9_l = a9sMl.a9_sv(a9_l, a9qM.a1, a9qM.a2, a9qM.a3, a9qM.m0, a9qM.m1, a9qM.m2); a9_r = a9sMr.a9_sv(a9_r, a9qM.a1, a9qM.a2, a9qM.a3, a9qM.m0, a9qM.m1, a9qM.m2); )
+             : a9sMl.s1 = a9sMl.s2 = a9sMr.s1 = a9sMr.s2 = 0;
+  a9_hg != 0 ? ( a9_l = a9sHl.a9_sv(a9_l, a9qH.a1, a9qH.a2, a9qH.a3, a9qH.m0, a9qH.m1, a9qH.m2); a9_r = a9sHr.a9_sv(a9_r, a9qH.a1, a9qH.a2, a9qH.a3, a9qH.m0, a9qH.m1, a9qH.m2); )
+             : a9sHl.s1 = a9sHl.s2 = a9sHr.s1 = a9sHr.s2 = 0;
+  !a9_mod ? ( a9_l = a9eL.a9_vs(a9_l, a9_ke, a9_vb, a9_ze, a9_zde); a9_r = a9eR.a9_vs(a9_r, a9_ke, a9_vb, a9_ze, a9_zde); );
+);
+
+// ---------- COMPRESSOR ----------
+a9_ci ? (
+  a9_mod ? (
+    // DIGITAL: three bands (Linkwitz-Riley), each its own stereo-linked compressor
+    a9_bl = a9xLb.s92_bq(a9xLa.s92_bq(a9_l)); a9_hpl = a9xLd.s92_bq(a9xLc.s92_bq(a9_l));
+    a9_bml = a9xLf.s92_bq(a9xLe.s92_bq(a9_hpl)); a9_bhl = a9xLh.s92_bq(a9xLg.s92_bq(a9_hpl)); a9_bl = a9xLi.s92_bq(a9_bl);
+    a9_br = a9xRb.s92_bq(a9xRa.s92_bq(a9_r)); a9_hpr = a9xRd.s92_bq(a9xRc.s92_bq(a9_r));
+    a9_bmr = a9xRf.s92_bq(a9xRe.s92_bq(a9_hpr)); a9_bhr = a9xRh.s92_bq(a9xRg.s92_bq(a9_hpr)); a9_br = a9xRi.s92_bq(a9_br);
+    a9_ga = a9cL.a9_bd(a9_bl, a9_br, a9_kmL, a9_kaL, a9_rbL);
+    a9_gb = a9cM.a9_bd(a9_bml, a9_bmr, a9_kmM, a9_kaM, a9_rbM);
+    a9_gh = a9cH.a9_bd(a9_bhl, a9_bhr, a9_kmH, a9_kaH, a9_rbH);
+    a9_cgm0 = max(a9_cgm0, a9cL.gt); a9_cgm1 = max(a9_cgm1, a9cM.gt); a9_cgm2 = max(a9_cgm2, a9cH.gt);
+    a9_l = (a9_bl * a9_ga + a9_bml * a9_gb + a9_bhl * a9_gh) * a9_mk;
+    a9_r = (a9_br * a9_ga + a9_bmr * a9_gb + a9_bhr * a9_gh) * a9_mk;
+  ) : (
+    // ANALOG: the opto bus compressor (RMS, a wide knee, the cell's programme-dependent attack and memory)
+    a9_sl_ = a9_scf > 0 ? a9sL.s92_bq(a9_l) : a9_l; a9_sr_ = a9_scf > 0 ? a9sR.s92_bq(a9_r) : a9_r;
+    a9_ms += ((a9_sl_ * a9_sl_ + a9_sr_ * a9_sr_) * 0.5 - a9_ms) * a9_krms;
+    a9_lv = 10 * log10(max(a9_ms, 0.000000000001)) + 3;
+    a9_gr = a9_gc(a9_lv - a9_th - a9_dth, a9_sl * 0.85, 8);
+    a9_g1 += (a9_gr - a9_g1) * (a9_gr > a9_g1 ? min(a9_ka * (1 + 0.25 * (a9_gr - a9_g1)), 1) : a9_kr);
+    a9_g2 += (a9_g1 - a9_g2) * (a9_g1 > a9_g2 ? a9_ka2 : a9_kr2);
+    a9_gt = max(a9_g1, a9_g2);
+    a9_cgm0 = max(a9_cgm0, a9_gt);
+    a9_g = exp(-0.11512925465 * a9_gt) * a9_mk;
+    // the valve make-up amp (and the two channels' drift)
+    a9_l = a9vL.a9_vs(a9_l * a9_g * a9_dgl, a9_kc, a9_vb, a9_zc, a9_zdc); a9_r = a9vR.a9_vs(a9_r * a9_g * a9_dgr, a9_kc, a9_vb, a9_zc, a9_zdc);
+  );
+);
+a9_l *= a9_mt; a9_r *= a9_mt;
+
+// ---------- STEREO: WIDTH (M/S), MONO BASS ----------
+a9_st ? (
+  a9_m = (a9_l + a9_r) * 0.5; a9_s = (a9_l - a9_r) * 0.5;
+  a9_mb > 0 ? a9_s = a9b2.s92_bq(a9b1.s92_bq(a9_s));
+  a9_s *= a9_wd;
+  a9_l = a9_m + a9_s; a9_r = a9_m - a9_s;
+);
+
+// ---------- LIMITER ----------
+a9_dre = a9_li ? a9_dr : 1;
+a9_l *= a9_dre; a9_r *= a9_dre;
+a9_w = (a9_w + 1) & 1023; a9_n += 1;
+a9_XL[a9_w] = a9_XL[a9_w + 1024] = a9_l; a9_XR[a9_w] = a9_XR[a9_w + 1024] = a9_r;
+a9_rd = a9_w + 1024 - a9_LAT;
+!a9_li ? (
+  a9_yl = a9_XL[a9_rd]; a9_yr = a9_XR[a9_rd];
+) : a9_mod ? (
+  // DIGITAL: the look-ahead brickwall: the gain each sample needs, held over the lookahead and averaged over it, so
+  // the gain is all the way down when the peak comes out
+  a9_pk = max(abs(a9_l), abs(a9_r));
+  a9_cl = 10 ^ ((a9_ce - 0.05) / 20);
+  a9_req = a9_pk > a9_cl ? a9_cl / a9_pk : 1;
+  while (a9_qt > a9_qh && a9_DQV[(a9_qt - 1) & 1023] >= a9_req) ( a9_qt -= 1; );
+  a9_DQV[a9_qt & 1023] = a9_req; a9_DQI[a9_qt & 1023] = a9_n; a9_qt += 1;
+  while (a9_DQI[a9_qh & 1023] <= a9_n - a9_LA) ( a9_qh += 1; );
+  a9_mn = a9_DQV[a9_qh & 1023];
+  a9_rr = a9_mn < a9_rr ? a9_mn : a9_rr + (a9_mn - a9_rr) * a9_krl;
+  a9_bs += a9_rr - a9_BX[(a9_n - a9_LA) & 1023]; a9_BX[a9_n & 1023] = a9_rr;
+  a9_gl = min(a9_bs / a9_LA, 1);
+  a9_lgm = max(a9_lgm, -20 * log10(max(a9_gl, 0.0001)));
+  a9_lng += ((a9_gl < 0.8) - a9_lng) * a9_klo;
+  a9_yl = a9_XL[a9_rd] * a9_gl; a9_yr = a9_XR[a9_rd] * a9_gl;
+) : (
+  // ANALOG: the output iron (the lows saturate first), a gain rider (no lookahead), the valve clipper at 2x
+  a9_i1 += (a9_l - a9_i1) * a9_kl1; a9_l += s92_th(a9_i1 * a9_ki) / a9_ki - a9_i1;
+  a9_i2 += (a9_r - a9_i2) * a9_kl1; a9_r += s92_th(a9_i2 * a9_ki) / a9_ki - a9_i2;
+  a9_cob = 10 ^ ((a9_ce - 0.3) / 20);                 // (0.3 dB in hand for the down-sampling's overshoot)
+  a9_kp = 0.8 * a9_cob; a9_kn = (0.8 - 0.3 * a9_va) * a9_cob;
+  a9_pk = max(abs(a9_l), abs(a9_r)); a9_cth = a9_cob * 0.89;
+  a9_req = a9_pk > a9_cth ? a9_cth / a9_pk : 1;
+  a9_gob += (a9_req - a9_gob) * (a9_req < a9_gob ? a9_lka : a9_krl);
+  a9_lng += ((a9_gob < 0.8) - a9_lng) * a9_klo;
+  a9uL.s92_up(a9_l * a9_gob); a9uR.s92_up(a9_r * a9_gob);
+  a9_q0l = a9_vc(a9uL.o0); a9_q1l = a9_vc(a9uL.o1); a9_q0r = a9_vc(a9uR.o0); a9_q1r = a9_vc(a9uR.o1);
+  a9_cg = max(max(abs(a9uL.o0), abs(a9uL.o1)), max(abs(a9uR.o0), abs(a9uR.o1)));
+  a9_cg = a9_cg > a9_kn ? a9_cg / max(max(max(abs(a9_q0l), abs(a9_q1l)), max(abs(a9_q0r), abs(a9_q1r))), 0.000001) : 1;
+  a9_lgm = max(a9_lgm, 20 * log10(a9_cg / max(a9_gob, 0.0001)));
+  a9_OPL[a9_w] = a9dL.s92_dn(a9_q0l, a9_q1l); a9_OPR[a9_w] = a9dR.s92_dn(a9_q0r, a9_q1r);
+  a9_o = (a9_w - (a9_LAT - a9_L2)) & 1023; a9_yl = a9_OPL[a9_o]; a9_yr = a9_OPR[a9_o];
+);
+
+// ---------- OUTPUT, the fade, the meters ----------
+a9_yl *= a9_og * a9_fade; a9_yr *= a9_og * a9_fade;
+a9_vL = max(a9_vL * 0.9995, abs(a9_yl) + abs(a9_yr));
+a9_kl = a9k2L.s92_bq(a9k1L.s92_bq(a9_yl)); a9_kr_ = a9k2R.s92_bq(a9k1R.s92_bq(a9_yr));
+a9_ks += a9_kl * a9_kl + a9_kr_ * a9_kr_; a9_lbc += 1;
+
+// ---------- WORD LENGTH (DIGITAL): TPDF dither, noise shaping, 16 / 20 bits ----------
+a9_mod && a9_wl ? (
+  a9_yl = a9_wq(a9_yl, a9_EL); a9_yr = a9_wq(a9_yr, a9_ER); a9_ep = (a9_ep + 1) & 15;
+);
+
+// ---------- the house output stage ----------
+a9_yl = a9L.ost_band(a9_yl); a9_yr = a9R.ost_band(a9_yr);
+ost_out(a9_yl, a9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 590
+ui_begin(960, 590);
+s92_pal(slider29);
+s92_fonts();
+s92_face(960, 590);
+gd_ = slider29 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "MASTER92", "SERIES 92", "MASTERING PROCESSOR", #a9_pm, 29);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the IN ladder, TRIM, GUARD ----------
+s92_mod(20, 62, 200, 276, "INPUT");
+a9mI.s92_edge(30, 94, 180, 46, a9a_vi * 2.83, "IN");
+a9a_vi *= 0.6;
+s92_knob(76, 224, 24, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(170, 196, "GUARD");
+s92_key(142, 206, 56, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(170 * sc, 244 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+s92_smallc(120, 300, "MASTER BUS IN");
+s92_smallc(120, 316, gd_ ? "20-BIT DSP" : "VALVE CHAIN");
+
+// ---------- EQ: LOW brown, MID green, HIGH red ----------
+s92_mod(232, 62, 268, 276, gd_ ? "EQ · DIGITAL" : "EQ · VALVE");
+s92_onoff(418, 64, 3);
+s92_kc = S92_C_LF;
+s92_knob(278, 132, 22, 4, -6, 6, 0, 0, "LOW", "%+.1f dB", 0);
+s92_knob(278, 230, 16, 5, 30, 300, 80, 1, "FREQ", "%.0f Hz", 0);
+s92_kc = S92_C_HMF;
+s92_knob(366, 132, 22, 6, -6, 6, 0, 0, "MID", "%+.1f dB", 0);
+s92_knob(366, 230, 16, 7, 200, 8000, 1500, 1, "FREQ", "%.0f Hz", 0);
+s92_kc = S92_C_HF;
+s92_knob(454, 132, 22, 8, -6, 6, 0, 0, "HIGH", "%+.1f dB", 0);
+s92_knob(454, 230, 16, 9, 2000, 20000, 10000, 1, "FREQ", "%.0f Hz", 0);
+s92_kc = 0;
+s92_smallc(366, 300, "SHELF  ·  BELL  ·  SHELF / AIR");
+s92_smallc(366, 316, gd_ ? "CLEAN DIGITAL FILTERS" : "BROAD CURVES INTO A VALVE");
+
+// ---------- COMPRESSOR: OPTO (ANALOG) / 3-BAND (DIGITAL); MAKEUP on a fader ----------
+s92_mod(512, 62, 428, 276, gd_ ? "COMPRESSOR · 3-BAND" : "COMPRESSOR · OPTO");
+s92_onoff(856, 64, 10);
+gd_ ? (
+  a9mC0.s92_gredge(524, 92, 196, 36, slider10 >= 0.5 ? a9a_c0 : 0, "LO");
+  a9mC1.s92_gredge(524, 132, 196, 36, slider10 >= 0.5 ? a9a_c1 : 0, "MID");
+  a9mC2.s92_gredge(524, 172, 196, 36, slider10 >= 0.5 ? a9a_c2 : 0, "HI");
+) : (
+  a9mC0.s92_gredge(524, 94, 196, 46, slider10 >= 0.5 ? a9a_c0 : 0, "GR");
+  s92_smallc(622, 162, "OPTO CELL  ·  VALVE MAKE-UP");
+  s92_smallc(622, 180, "PROGRAMME RELEASE");
+);
+a9a_c0 *= 0.5; a9a_c1 *= 0.5; a9a_c2 *= 0.5;
+s92_knob(572, 272, 24, 11, -30, 0, -10, 0, "THRESHOLD", "%.1f dB", 0);
+s92_fc = S92_F_YELLOW; s92_fader(680, 220, 72, 17, 0, 12, 0, 0, "MAKEUP", "%+.1f dB", 0); s92_fc = 0;
+s92_smallc(830, 96, "RATIO");
+gi_ = 0; loop(3, pk_pitem("2:1|4:1|10:1", gi_ + 1, #gt_);
+  s92_key(732 + gi_ * 66, 104, 62, 22, slider12 == gi_, #gt_) ? s92_set(12, gi_); gi_ += 1; );
+s92_smallc(830, 140, "ATTACK  ·  MS");
+gi_ = 0; loop(5, pk_pitem("0.3|1|3|10|30", gi_ + 1, #gt_);
+  s92_key(732 + gi_ * 40, 148, 36, 22, slider13 == gi_, #gt_) ? s92_set(13, gi_); gi_ += 1; );
+s92_smallc(830, 184, "RELEASE  ·  S");
+gi_ = 0; loop(5, pk_pitem("0.1|0.3|0.6|1.2|AUTO", gi_ + 1, #gt_);
+  s92_key(732 + gi_ * 38, 192, gi_ == 4 ? 44 : 34, 22, slider14 == gi_, #gt_) ? s92_set(14, gi_); gi_ += 1; );
+s92_smallc(830, 228, gd_ ? "SC HPF  ·  ANALOG ONLY" : "SC HPF  ·  HZ");
+s92_lc = S92_C_HPF;
+gi_ = 0; loop(4, pk_pitem("OFF|60|90|150", gi_ + 1, #gt_);
+  s92_key(732 + gi_ * 50, 236, 46, 22, slider15 == gi_ && !gd_, #gt_) ? s92_set(15, gi_); gi_ += 1; );
+s92_lc = 0;
+s92_smallc(830, 272, gd_ ? "XOVER  ·  HZ" : "XOVER  ·  DIGITAL ONLY");
+gi_ = 0; loop(3, pk_pitem("120/2K|200/3K|300/5K", gi_ + 1, #gt_);
+  s92_key(732 + gi_ * 66, 280, 62, 22, slider16 == gi_ && gd_, #gt_) ? s92_set(16, gi_); gi_ += 1; );
+
+// ---------- STEREO: WIDTH, MONO BASS ----------
+s92_mod(20, 350, 168, 228, "STEREO");
+s92_onoff(108, 352, 18);
+s92_knob(104, 424, 26, 19, 0, 200, 100, 0, "WIDTH", "%.0f%%", 0);
+s92_small(30, 444, "MONO"); s92_small(150, 444, "WIDE");
+s92_smallc(104, 500, "MONO BASS  ·  HZ");
+s92_lc = S92_C_HPF;
+gi_ = 0; loop(4, pk_pitem("OFF|60|100|150", gi_ + 1, #gt_);
+  s92_key(28 + gi_ * 38, 510, 34, 24, slider20 == gi_, #gt_) ? s92_set(20, gi_); gi_ += 1; );
+s92_lc = 0;
+s92_smallc(104, 556, "SIDES HIGH-PASSED");
+
+// ---------- LIMITER: VALVE + IRON (ANALOG) / BRICKWALL (DIGITAL); DRIVE on a fader ----------
+s92_mod(200, 350, 286, 228, gd_ ? "LIMITER · BRICKWALL" : "LIMITER · VALVE + IRON");
+s92_onoff(402, 352, 21);
+a9mL.s92_gredge(212, 382, 196, 46, slider21 >= 0.5 ? a9a_lg : 0, "GR");
+a9a_lg *= 0.5;
+sprintf(#gl_, "CEIL %.1f dBFS", slider23); s92_lcd(214, 442, 192, 24, #gl_);
+s92_knob(250, 506, 20, 23, -12, 0, -0.3, 0, "CEILING", "%.1f dBFS", 0);
+s92_knob(340, 508, 16, 24, 10, 1000, 100, 1, "RELEASE", "%.0f ms", 0);
+gd_ ? sprintf(#gt_, "LOOKAHEAD 2 MS  ·  LATENCY %d", a9_LAT) : sprintf(#gt_, "SOFT CLIP 2X  ·  LATENCY %d", a9_LAT);
+s92_smallc(310, 562, #gt_);
+s92_fc = S92_F_YELLOW; s92_fader(450, 386, 118, 22, 0, 12, 0, 0, "DRIVE", "%+.1f dB", 0); s92_fc = 0;
+
+// ---------- WORD LENGTH (DIGITAL): BITS, SHAPING ----------
+s92_mod(498, 350, 200, 228, "WORD LENGTH");
+s92_onoff(614, 352, 25);
+gd_ && slider25 >= 0.5 ? sprintf(#gl_, "%s  %s", slider26 >= 0.5 ? "20-BIT" : "16-BIT", slider27 < 0.5 ? "TPDF" : slider27 < 1.5 ? "LIGHT" : "STRONG")
+                       : strcpy(#gl_, gd_ ? "FLOAT OUT" : "ANALOG OUT");
+s92_lcd(512, 386, 172, 26, #gl_);
+s92_smallc(598, 432, "BITS");
+gi_ = 0; loop(2, pk_pitem("16|20", gi_ + 1, #gt_);
+  s92_key(538 + gi_ * 62, 442, 58, 24, slider26 == gi_ && gd_, #gt_) ? s92_set(26, gi_); gi_ += 1; );
+s92_smallc(598, 484, "NOISE SHAPING");
+gi_ = 0; loop(3, pk_pitem("OFF|LIGHT|STRONG", gi_ + 1, #gt_);
+  s92_key(512 + gi_ * 59, 494, 55, 24, slider27 == gi_ && gd_, #gt_) ? s92_set(27, gi_); gi_ += 1; );
+s92_smallc(598, 540, gd_ ? "TPDF DITHER  ·  FOR CD" : "DIGITAL ONLY");
+s92_smallc(598, 558, gd_ ? "THE LAST STAGE" : "OUT OF THE VALVE PATH");
+
+// ---------- OUTPUT: the OUT ladder, LUFS, VALVE, DRIFT, SAT; OUTPUT on a fader ----------
+s92_mod(710, 350, 230, 228, "OUTPUT");
+a9mO.s92_edge(720, 382, 150, 46, a9a_vo * 2.83, "OUT");
+a9a_vo *= 0.6;
+a9a_lu > -70 ? sprintf(#gl_, "%.1f LUFS", a9a_lu) : strcpy(#gl_, "--.- LUFS");
+s92_lcd(722, 440, 146, 26, #gl_);
+s92_smallc(795, 478, "SHORT-TERM  ·  3 S");
+s92_off = gd_; s92_knob(740, 520, 14, 30, 0, 100, 40, 0, "VALVE", "%.0f%%", 0); s92_off = 0;
+s92_knob(796, 520, 14, 31, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(850, 520, 12, 32, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(866 * sc, 506 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fader(906, 386, 118, 28, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+
+pk_end();
+ui_end();

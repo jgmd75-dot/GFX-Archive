@@ -1,0 +1,494 @@
+desc:GFX VRB74 [OB reverb]
+//tags: reverb room hall chamber cathedral fdn algorithmic vintage broadcast series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// VRB74 (Series 74: the OB remote and broadcast series): the remote space unit from an outside-broadcast truck, with
+// two models on one switch.
+//   input -> TRIM / GUARD -> (OB: the input iron) -> PRE-DELAY (0 - 250 ms) ->
+//   OB:    the vintage algorithmic unit: the send is band-limited and sampled at a reduced rate (about 22 - 24 kHz,
+//          about 10 kHz of bandwidth) by a 12-bit converter, then a figure-eight all-pass loop of modest density with
+//          audibly chorused delays (MOD); a characterful, slightly grainy decay; back through a 12-bit converter and
+//          the output iron.
+//   CLEAN: the pristine acoustic room simulator: early reflections, input diffusion, an eight-line feedback delay
+//          network (Hadamard matrix) with frequency-dependent decay, very low modulation, full bandwidth.
+//   -> WIDTH -> MIX (send law: the dry stays at full up to 50 %, the wet reaches full at 50 %) -> OUTPUT -> the house
+//   output stage (band SAT, CLIP always on).
+// SPACE (the lenses): ROOM, HALL, CHAMBER, CATHEDRAL - the lines' lengths, the early pattern, the crossovers.
+// SIZE: the space within its kind (0.6x - 1.4x). DECAY: the mid-band reverb time (RT60, 0.2 - 12 s). LOW RT / HIGH RT:
+// the low and the high band's reverb time as a multiple of DECAY. DIFFUSION: how fast the echoes smear into a wash.
+// MOD: the chorusing of the tail (on CLEAN only a trace). EARLY: the early reflections' level. WIDTH: the wet's
+// stereo width (0 - 150 %).
+// The wet is level-normalised against DECAY and SIZE, and the two models are matched to each other.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the chorus's rate and depth and the loop's delays wander; on
+// CLEAN only a trace remains.
+// Changing the model or the space fades the wet out and back in (the tank is cleared at the silent point).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:20<0,250,0.1>-Pre-delay (ms)
+slider4:50<0,100,1>-Size (%)
+slider5:1.8<0.2,12,0.01>-Decay (s)
+slider6:1.2<0.5,2,0.01>-Low RT (x)
+slider7:0.55<0.1,1,0.01>-High RT (x)
+slider8:70<0,100,1>-Diffusion (%)
+slider9:40<0,100,1>-Mod (%)
+slider10:1<0,3,1{Room,Hall,Chamber,Cathedral}>-Space
+slider11:50<0,100,1>-Early (%)
+slider12:100<0,150,1>-Width (%)
+slider13:25<0,100,1>-Mix (%)
+slider14:0<-24,12,0.1>-Output (dB)
+slider15:0<0,1,1{OB,Clean}>-Model
+slider16:50<0,100,1>-Wander (%)
+slider17:0<0,100,1>-Band sat (%)
+slider18:30<0,100,1>-Bias (output stage, %)
+slider19:120<40,400,1>-Sat low band (Hz)
+slider20:6000<2000,16000,10>-Sat high band (Hz)
+slider21:-0.3<-24,0,0.1>-Ceiling (dB)
+slider22:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-vrb74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+b4_ostm = s74_alloc(4096);
+b4_BD = s74_alloc(8); b4_GL = s74_alloc(8); b4_GM = s74_alloc(8); b4_GH = s74_alloc(8); b4_YY = s74_alloc(8);
+b4_BMS = s74_alloc(32);                                 // the CLEAN lines' lengths (ms), 4 spaces x 8
+b4_ETL = s74_alloc(12); b4_ETR = s74_alloc(12); b4_EGL = s74_alloc(12); b4_EGR = s74_alloc(12);   // early pattern
+b4pL.s74_dlinit(131072); b4pR.s74_dlinit(131072);       // the pre-delay (and the early taps)
+// CLEAN: eight lines, four diffusers a side
+b4_RC0 = s74_mem;
+b4c0.s74_dlinit(65536); b4c1.s74_dlinit(65536); b4c2.s74_dlinit(65536); b4c3.s74_dlinit(65536);
+b4c4.s74_dlinit(65536); b4c5.s74_dlinit(65536); b4c6.s74_dlinit(65536); b4c7.s74_dlinit(65536);
+b4dl0.s74_dlinit(8192); b4dl1.s74_dlinit(8192); b4dl2.s74_dlinit(8192); b4dl3.s74_dlinit(8192);
+b4dr0.s74_dlinit(8192); b4dr1.s74_dlinit(8192); b4dr2.s74_dlinit(8192); b4dr3.s74_dlinit(8192);
+b4_RC1 = s74_mem;
+// OB: four input diffusers, the figure-eight loop (a modulated all-pass, a delay, an all-pass, a delay a side)
+b4_RO0 = s74_mem;
+b4oi0.s74_dlinit(2048); b4oi1.s74_dlinit(2048); b4oi2.s74_dlinit(2048); b4oi3.s74_dlinit(2048);
+b4oa1.s74_dlinit(4096); b4od1.s74_dlinit(16384); b4ob1.s74_dlinit(8192); b4oe1.s74_dlinit(16384);
+b4oa2.s74_dlinit(4096); b4od2.s74_dlinit(16384); b4ob2.s74_dlinit(8192); b4oe2.s74_dlinit(16384);
+b4_RO1 = s74_mem;
+
+// ---------- the spaces ----------
+function b4_row(k, a, b, c, d, e, f, g, h) local(p) (
+  p = b4_BMS + k * 8; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h;
+);
+b4_row(0, 11.3, 13.7, 16.1, 18.9, 21.7, 24.1, 27.3, 30.7);         // ROOM
+b4_row(1, 31.1, 37.3, 43.9, 50.3, 57.7, 64.1, 71.9, 79.3);         // HALL
+b4_row(2, 17.9, 21.3, 24.7, 28.1, 32.3, 36.1, 40.3, 44.9);         // CHAMBER
+b4_row(3, 53.3, 64.7, 76.1, 88.3, 101.9, 114.7, 129.1, 143.3);     // CATHEDRAL
+// the early pattern: 12 taps a side (fractions of the space's early span), gains falling with time, signs mixed
+function b4_erset(i, tl, tr) (
+  b4_ETL[i] = tl; b4_ETR[i] = tr;
+  b4_EGL[i] = (1 - 0.7 * tl) ^ 1.5 * ((i * 7) % 3 == 1 ? -1 : 1);
+  b4_EGR[i] = (1 - 0.7 * tr) ^ 1.5 * ((i * 5) % 3 == 2 ? -1 : 1);
+);
+b4_erset(0, 0.071, 0.052); b4_erset(1, 0.128, 0.113); b4_erset(2, 0.193, 0.168); b4_erset(3, 0.262, 0.234);
+b4_erset(4, 0.327, 0.309); b4_erset(5, 0.414, 0.381); b4_erset(6, 0.479, 0.458); b4_erset(7, 0.571, 0.542);
+b4_erset(8, 0.663, 0.631); b4_erset(9, 0.748, 0.722); b4_erset(10, 0.861, 0.829); b4_erset(11, 1.0, 0.951);
+// a space's lengths, crossovers, early span and level, and the OB loop's scale
+function b4_space() local(i, p) (
+  p = b4_BMS + b4_sp * 8;
+  i = 0; loop(8, b4_BD[i] = p[i] * srate / 1000; i += 1; );
+  b4_sp == 0 ? ( b4_fl = 300; b4_fh = 4500; b4_ers = 24;  b4_erg = 1.0;  b4_obs = 0.32; ) :
+  b4_sp == 1 ? ( b4_fl = 220; b4_fh = 4000; b4_ers = 70;  b4_erg = 0.62; b4_obs = 0.80; ) :
+  b4_sp == 2 ? ( b4_fl = 250; b4_fh = 6000; b4_ers = 40;  b4_erg = 0.9;  b4_obs = 0.50; ) :
+               ( b4_fl = 180; b4_fh = 3000; b4_ers = 110; b4_erg = 0.5;  b4_obs = 1.20; );
+  b4_k1 = s74_k(b4_fl, srate); b4_k2 = s74_k(b4_fh, srate);
+  b4_ok1 = s74_k(b4_fl, b4_fsr); b4_ok2 = s74_k(b4_fh, b4_fsr);
+  b4_oss = b4_obs * b4_fsr / 29761;
+  // the wet's normaliser: the steady level goes as decay / line length
+  b4_dms = (p[0] + p[7]) * 0.5;
+);
+
+// ---------- the line parts ----------
+function b4_clr(a, b) ( memset(a, 0, b - a); );
+// a Schroeder all-pass on a whole number of samples (the CLEAN diffusers)
+function b4_api(x, d, g) instance(buf, len, w) local(v, y, p) (
+  p = w - d; p < 0 ? p += len; v = buf[p]; y = v - g * x;
+  w += 1; w >= len ? w = 0; buf[w] = x + g * y; y;
+);
+// a modulated Schroeder all-pass (cubic read)
+function b4_apm(x, d, g) instance(buf, len, w) local(v, y) ( v = this.s74_dlr3(d); y = v - g * x; this.s74_dlw(x + g * y); y; );
+// the three-band loss: the lows (below fl), the middle, the highs (above fh), each with its own gain
+function b4_b3(x, k1, k2, gl, gm, gh) instance(l1, l2) (
+  l1 += (x - l1) * k1; l2 += (x - l2) * k2;
+  gl * l1 + gm * (l2 - l1) + gh * (x - l2);
+);
+// a CLEAN line: read (the odd lines modulated a hair), the three-band loss
+function b4_rd(i, m) instance(buf, len, w, l1, l2) local(y) (
+  y = m != 0 ? this.s74_dlr3(b4_BD[i] * b4_sz + m) : this.s74_dlr(b4_BD[i] * b4_sz);
+  this.b4_b3(y, b4_k1, b4_k2, b4_GL[i], b4_GM[i], b4_GH[i]);
+);
+function b4_wln(x) instance(buf, len, w) ( this.s74_dlw(abs(x) > 4 ? sign(x) * 4 : x); );
+function b4_fs(x) instance(l1, l2) ( l1 = l2 = 0; );
+// the 12-bit converter (OB): a soft ceiling, then the steps
+function b4_cv(x) ( x = 1.6 * s74_th(x / 1.6); floor(x * 2048 + 0.5) / 2048; );
+
+// ---------- the gains: the loop's losses per band for the current decay and size ----------
+function b4_gains() local(i, d, tm, tl, th) (
+  tm = max(b4_dec, 0.1); tl = tm * b4_lrt; th = tm * b4_hrt;
+  i = 0; loop(8, d = b4_BD[i] * b4_sz;
+    b4_GM[i] = min(10 ^ (-3 * d / (tm * srate)), 0.9995);
+    b4_GL[i] = min(10 ^ (-3 * d / (tl * srate)), 0.9995);
+    b4_GH[i] = min(10 ^ (-3 * d / (th * srate)), 0.9995);
+    i += 1; );
+  d = 10645 * b4_oss * b4_sz;                           // the OB half-loop: 672 + 4453 + 1800 + 3720 (at 29761 Hz)
+  b4_ogm = min(10 ^ (-3 * d / (tm * b4_fsr)), 0.9995);
+  b4_ogl = min(10 ^ (-3 * d / (tl * b4_fsr)), 0.9995);
+  b4_ogh = min(10 ^ (-3 * d / (th * b4_fsr)), 0.9995);
+  // the wet's level: normalised against decay (weighted towards the lows, as pink noise is) and line length
+  tm = tm * (0.45 * b4_lrt + 0.43 + 0.12 * b4_hrt);
+  b4_tnw = b4_mod ? 0.42 * sqrt(b4_dms * b4_sz / 40 / (tm / 1.8))
+                  : 0.96 * sqrt(b4_obs * b4_sz / 0.8 / ((tm + 2 * b4_obs * b4_sz) / 3.4));   // (the first pass dominates short decays)
+);
+
+// ---------- OB: one sample of the figure-eight loop, at the reduced rate ----------
+function b4_obt(x) local(s, a, f1, f2, ss) (
+  s = b4_oss * b4_sz; ss = b4_fsr / 29761;
+  x = b4oi0.s74_ap(x, 142 * ss, b4_id1); x = b4oi1.s74_ap(x, 107 * ss, b4_id1);
+  x = b4oi2.s74_ap(x, 379 * ss, b4_id2); x = b4oi3.s74_ap(x, 277 * ss, b4_id2);
+  f1 = b4oe1.s74_dlr(3720 * s); f2 = b4oe2.s74_dlr(3163 * s);
+  // the left half
+  a = b4oa1.b4_apm(x + f2, 672 * s + b4_m1, -b4_dd1);
+  b4od1.s74_dlw(a); a = b4od1.s74_dlr(4453 * s + b4_w1);
+  a = b4q1.b4_b3(a, b4_ok1, b4_ok2, b4_ogl, b4_ogm, b4_ogh);
+  a = b4ob1.s74_ap(a, 1800 * s, b4_dd2);
+  b4oe1.s74_dlw(2 * s74_th(a * 0.5));
+  // the right half
+  a = b4oa2.b4_apm(x + f1, 908 * s + b4_m2, -b4_dd1);
+  b4od2.s74_dlw(a); a = b4od2.s74_dlr(4217 * s + b4_w2);
+  a = b4q2.b4_b3(a, b4_ok1, b4_ok2, b4_ogl, b4_ogm, b4_ogh);
+  a = b4ob2.s74_ap(a, 2656 * s, b4_dd2);
+  b4oe2.s74_dlw(2 * s74_th(a * 0.5));
+  // the output taps (Dattorro's)
+  b4_tl = b4od2.s74_dlr(266 * s) + b4od2.s74_dlr(2974 * s) - b4ob2.s74_dlr(1913 * s) + b4oe2.s74_dlr(1996 * s)
+        - b4od1.s74_dlr(1990 * s) - b4ob1.s74_dlr(187 * s) - b4oe1.s74_dlr(1066 * s);
+  b4_tr = b4od1.s74_dlr(353 * s) + b4od1.s74_dlr(3627 * s) - b4ob1.s74_dlr(1228 * s) + b4oe1.s74_dlr(2673 * s)
+        - b4od2.s74_dlr(2111 * s) - b4ob2.s74_dlr(335 * s) - b4oe2.s74_dlr(121 * s);
+);
+
+// ---------- settings ----------
+function b4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  b4_tpd = slider3 / 1000 * srate;
+  b4_tsz = 0.6 + 0.8 * slider4 / 100;
+  b4_tdec = slider5; b4_tlrt = slider6; b4_thrt = slider7;
+  b4_tdf = slider8 / 100; b4_tmd = slider9 / 100;
+  b4_tsp = min(max(floor(slider10 + 0.5), 0), 3);
+  b4_tea = slider11 / 100; b4_twd = slider12 / 100;
+  b4_tmix = slider13 / 100; b4_tog = 10 ^ (slider14 / 20);
+  b4_tmo = slider15 >= 0.5;
+  drift_macro(slider16);
+  ost_setup(slider17 / 100, slider18 / 100, slider19, slider20, slider21, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+function b4_srinit() local(w) (
+  b4_sr = srate;
+  b4_R = max(1, floor(srate / 22000)); b4_fsr = srate / b4_R;
+  b4_sm = 1 - exp(-1 / (0.02 * srate));
+  b4_kpd = 1 - exp(-1 / (0.08 * srate)); b4_ksz = 1 - exp(-1 / (0.4 * srate));
+  b4_fd = 1 / (0.015 * srate);
+  // OB: the converters' band limit (4th-order Butterworth): the anti-alias filter and the reconstruction filter
+  w = min(0.43 * b4_fsr, 10500);
+  b4aa1.s74_bqset(0, w, 0, 0.5412, srate); b4aa2.s74_bqset(0, w, 0, 1.3066, srate);
+  b4rl1.s74_bqset(0, w, 0, 0.5412, srate); b4rl2.s74_bqset(0, w, 0, 1.3066, srate);
+  b4rr1.s74_bqset(0, w, 0, 0.5412, srate); b4rr2.s74_bqset(0, w, 0, 1.3066, srate);
+  b4_n0 = floor(4.77 * srate / 1000); b4_n1 = floor(3.59 * srate / 1000); b4_n2 = floor(12.73 * srate / 1000); b4_n3 = floor(9.30 * srate / 1000);
+  b4_n4 = floor(4.31 * srate / 1000); b4_n5 = floor(3.83 * srate / 1000); b4_n6 = floor(11.87 * srate / 1000); b4_n7 = floor(9.91 * srate / 1000);
+  b4_ki1 = s74_k(120, srate); b4_ki2 = s74_k(80, srate); b4_kih = s74_k(15000, srate);
+  ost_init(b4_ostm);
+  b4_space();
+);
+function b4_reset() (
+  b4_mod ? b4_clr(b4_RC0, b4_RC1) : b4_clr(b4_RO0, b4_RO1);
+  b4c0.b4_fs(); b4c1.b4_fs(); b4c2.b4_fs(); b4c3.b4_fs(); b4c4.b4_fs(); b4c5.b4_fs(); b4c6.b4_fs(); b4c7.b4_fs();
+  b4q1.b4_fs(); b4q2.b4_fs();
+  b4aa1.s74_bqclr(); b4aa2.s74_bqclr(); b4rl1.s74_bqclr(); b4rl2.s74_bqclr(); b4rr1.s74_bqclr(); b4rr2.s74_bqclr();
+  b4_ph = 0; b4_opl = b4_ocl = b4_opr = b4_ocr = 0;
+);
+in_init();
+b4_mod = b4_tmo = slider15 >= 0.5; b4_sp = b4_tsp = min(max(floor(slider10 + 0.5), 0), 3);
+b4_update();
+b4_srinit();
+b4_sz = b4_tsz; b4_pd = b4_tpd; b4_dec = b4_tdec; b4_lrt = b4_tlrt; b4_hrt = b4_thrt;
+b4_df = b4_tdf; b4_md = b4_tmd; b4_ea = b4_tea; b4_wd = b4_twd; b4_mix = b4_tmix; b4_og = b4_tog;
+b4_gains(); b4_nw = b4_tnw;
+b4_reset(); b4_clr(b4_RC0, b4_RO1);
+b4_fade = 1; b4_fst = 0; b4_hold = 0; b4_pa = 0; b4_pb = 0.25;
+b4_dfA.drift_init(0.7 + rand(0.4)); b4_dfB.drift_init(0.7 + rand(0.4)); b4_dfC.drift_init(0.8 + rand(0.4)); b4_dfD.drift_init(0.8 + rand(0.4));
+b4L.ost_ch_init(); b4R.ost_ch_init();
+
+// ---------- presets ----------
+function b4_set(pd, sz, dc, lr, hr, df, md, sp, ea, wd, mx, ou, mo) (
+  slider3 = pd; slider4 = sz; slider5 = dc; slider6 = lr; slider7 = hr; slider8 = df; slider9 = md; slider10 = sp;
+  slider11 = ea; slider12 = wd; slider13 = mx; slider14 = ou; slider15 = mo;
+  slider_automate(32764);                               // sliders 3-15 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#b4_pm = "Init|Commentary Room|Remote Chamber|Stadium Hall|Cathedral Service|Choir Relay|Drama Studio|Truck Vocal Verb|Concert Relay|Vintage Long Tail|Chorus Wash|Live Drum Room";
+function load_preset(p) (
+  //                pd   sz   dec   lrt   hrt  dif mod sp  ear wid mix  out  mo
+  p == 1  ? b4_set( 20,  50,  1.8,  1.2, 0.55, 70, 40, 1,  50, 100, 25,     0, 0) :     // Init
+  p == 2  ? b4_set(  4,  35, 0.45,  1.0, 0.7,  80, 10, 0,  60,  80, 18,   0.6, 1) :     // Commentary Room
+  p == 3  ? b4_set( 12,  55,  1.4,  1.1, 0.6,  85, 45, 2,  55, 100, 25,   0.1, 0) :     // Remote Chamber
+  p == 4  ? b4_set( 60,  80,  3.2,  1.4, 0.45, 70, 50, 1,  35, 130, 25,  -0.2, 0) :     // Stadium Hall
+  p == 5  ? b4_set( 45,  85,  6.5,  1.5, 0.4,  75, 20, 3,  40, 120, 28,  -0.8, 1) :     // Cathedral Service
+  p == 6  ? b4_set( 30,  65,  2.6,  1.2, 0.6,  80, 25, 1,  45, 110, 25,  -0.3, 1) :     // Choir Relay
+  p == 7  ? b4_set(  2,  25, 0.35,  0.9, 0.8,  60,  5, 0,  75,  70, 22,   0.0, 1) :     // Drama Studio
+  p == 8  ? b4_set( 35,  45,  1.6,  0.9, 0.5,  90, 55, 2,  30, 100, 22,   0.4, 0) :     // Truck Vocal Verb
+  p == 9  ? b4_set( 25,  70,  2.2,  1.3, 0.55, 75, 15, 1,  50, 100, 25,   0.1, 1) :     // Concert Relay
+  p == 10 ? b4_set( 40,  90,  8.0,  1.6, 0.35, 80, 70, 3,  25, 120, 30,  -0.5, 0) :     // Vintage Long Tail
+  p == 11 ? b4_set( 25,  70,  3.5,  1.2, 0.5,  90, 95, 1,  20, 150, 30,  -0.8, 0) :     // Chorus Wash
+  p == 12 ? b4_set(  0,  40,  0.7,  1.1, 0.6,  50, 25, 0,  85, 110, 30,  -0.9, 0) :     // Live Drum Room
+  p == 13 ? (                                               // Reset all to defaults
+    b4_set(20, 50, 1.8, 1.2, 0.55, 70, 40, 1, 50, 100, 25, 0, 0);
+    slider1 = 0; slider2 = 1; slider16 = 50; slider17 = 0; slider18 = 30; slider19 = 120; slider20 = 6000; slider21 = -0.3; slider22 = 1;
+    slider_automate(4194303);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+b4_update();
+
+@block
+srate != b4_sr ? ( b4_srinit(); b4_gains(); );
+b4_update();                                            // knobs moved on the panel do not run @slider
+// the decay's controls glide at the block rate (about 50 ms), then the losses follow
+b4_kb = 1 - exp(-samplesblock / (0.05 * srate));
+b4_dec += (b4_tdec - b4_dec) * b4_kb; b4_lrt += (b4_tlrt - b4_lrt) * b4_kb; b4_hrt += (b4_thrt - b4_hrt) * b4_kb;
+abs(b4_dec - b4_tdec) < 0.0005 ? b4_dec = b4_tdec;
+b4_gains();
+// WANDER: on OB the chorus's rate and depth and the loop's delays wander; on CLEAN only a trace
+b4_di = 0.1 * dm_s * samplesblock / srate;
+b4_wa = b4_mod ? 0.15 : 1;
+b4_wr1 = b4_dfA.drift_tick(b4_di); b4_wr2 = b4_dfB.drift_tick(b4_di);
+b4_wr3 = b4_dfC.drift_tick(b4_di * 0.6); b4_wr4 = b4_dfD.drift_tick(b4_di * 0.6);
+b4_tw1 = b4_wa * dm_a * 2.5 * b4_wr3 * b4_fsr / 29761; b4_tw2 = b4_wa * dm_a * 2.5 * b4_wr4 * b4_fsr / 29761;
+b4_twm = 1 + b4_wa * dm_a * 0.25 * b4_wr1;
+// the chorus: OB a lively one (0.5 - 1.3 Hz, up to about 0.8 ms), CLEAN a slow trace (up to 2 samples at 48 kHz)
+b4_rt = b4_mod ? (0.5 + 0.8 * b4_md) * (1 + b4_wa * dm_a * 0.15 * b4_wr2) : 0.21;
+b4_ia = 2 * $pi * b4_rt / srate; b4_ib = b4_ia * (b4_mod ? 0.77 : 0.71);
+b4a_vi = max(b4a_vi, b4_viL); b4a_vo = max(b4a_vo, b4_voL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+b4_pd += (b4_tpd - b4_pd) * b4_kpd; b4_sz += (b4_tsz - b4_sz) * b4_ksz;
+b4_df += (b4_tdf - b4_df) * b4_sm; b4_md += (b4_tmd - b4_md) * b4_sm; b4_ea += (b4_tea - b4_ea) * b4_sm;
+b4_wd += (b4_twd - b4_wd) * b4_sm; b4_mix += (b4_tmix - b4_mix) * b4_sm; b4_og += (b4_tog - b4_og) * b4_sm;
+b4_nw += (b4_tnw - b4_nw) * b4_sm;
+b4_w1 += (b4_tw1 - b4_w1) * b4_sm; b4_w2 += (b4_tw2 - b4_w2) * b4_sm; b4_wm += (b4_twm - b4_wm) * b4_sm;
+// a change of model or space: fade the wet out, switch and clear the tank at the silent point, wait, fade in
+(b4_tmo != b4_mod || b4_tsp != b4_sp) && b4_fst == 0 ? b4_fst = 1;
+b4_fst == 1 ? ( b4_fade -= b4_fd; b4_fade <= 0 ? (
+  b4_fade = 0; b4_mod = b4_tmo; b4_sp = b4_tsp;
+  b4_space(); b4_reset(); b4_gains(); b4_nw = b4_tnw;
+  b4_hold = 64; b4_fst = 2; ); ) :
+b4_fst == 2 ? ( b4_hold -= 1; b4_hold <= 0 ? b4_fst = 3; ) :
+b4_fst == 3 ? ( b4_fade += b4_fd; b4_fade >= 1 ? ( b4_fade = 1; b4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD; OB: the input iron on the send ----------
+in_process(spl0, spl1);
+b4_xl = in_l; b4_xr = in_r;
+b4_viL = max(b4_viL * 0.9995, abs(b4_xl) + abs(b4_xr));
+b4_sl = b4_xl; b4_sr2 = b4_xr;
+!b4_mod ? (
+  b4_i1l += (b4_sl - b4_i1l) * b4_ki1; b4_sl = b4_sl - b4_i1l + s74_th(b4_i1l * 2.2) / 2.2;
+  b4_i1r += (b4_sr2 - b4_i1r) * b4_ki1; b4_sr2 = b4_sr2 - b4_i1r + s74_th(b4_i1r * 2.2) / 2.2;
+);
+b4pL.s74_dlw(b4_sl); b4pR.s74_dlw(b4_sr2);
+// (the fade also closes the tank's input, so the cleared tank starts from a smooth onset, never a step)
+b4_inl = b4pL.s74_dlr(b4_pd) * b4_fade; b4_inr = b4pR.s74_dlr(b4_pd) * b4_fade;
+
+// ---------- the chorus's oscillators ----------
+b4_pa += b4_ia; b4_pa > 2 * $pi ? b4_pa -= 2 * $pi;
+b4_pb += b4_ib; b4_pb > 2 * $pi ? b4_pb -= 2 * $pi;
+
+// ---------- the early reflections ----------
+b4_es = b4_ers * b4_sz * srate / 1000;
+b4_el = b4_er = 0;
+b4_mod ? (
+  i_ = 0; loop(12, b4_tt = b4_pd + b4_ETL[i_] * b4_es; b4_el += b4_EGL[i_] * (i_ & 1 ? b4pR.s74_dlr(b4_tt) : b4pL.s74_dlr(b4_tt));
+                   b4_tt = b4_pd + b4_ETR[i_] * b4_es; b4_er += b4_EGR[i_] * (i_ & 1 ? b4pL.s74_dlr(b4_tt) : b4pR.s74_dlr(b4_tt)); i_ += 1; );
+  b4_el *= 0.38; b4_er *= 0.38;
+) : (
+  // OB: sparse - every other tap, the early span stretched a little
+  i_ = 0; loop(6, b4_el += b4_EGL[2 * i_ + 1] * b4pL.s74_dlr(b4_pd + b4_ETL[2 * i_ + 1] * b4_es * 1.15);
+                  b4_er += b4_EGR[2 * i_] * b4pR.s74_dlr(b4_pd + b4_ETR[2 * i_] * b4_es * 1.15); i_ += 1; );
+  b4_el *= 0.5; b4_er *= 0.5;
+);
+b4_eg = b4_ea * b4_erg;
+
+b4_mod ? (
+  // ---------- CLEAN: diffusion, then the eight-line network ----------
+  b4_g1 = 0.72 * b4_df;
+  b4_g2 = b4_g1 * 0.85;
+  b4_dl = b4dl3.b4_api(b4dl2.b4_api(b4dl1.b4_api(b4dl0.b4_api(b4_inl, b4_n0, b4_g1), b4_n1, b4_g1), b4_n2, b4_g2), b4_n3, b4_g2);
+  b4_dr = b4dr3.b4_api(b4dr2.b4_api(b4dr1.b4_api(b4dr0.b4_api(b4_inr, b4_n4, b4_g1), b4_n5, b4_g1), b4_n6, b4_g2), b4_n7, b4_g2);
+  b4_mc = 2 * b4_md * b4_wm * srate / 48000;
+  b4_YY[0] = b4c0.b4_rd(0, 0); b4_YY[1] = b4c1.b4_rd(1, b4_mc * sin(b4_pa) + b4_w1 * 0.4);
+  b4_YY[2] = b4c2.b4_rd(2, 0); b4_YY[3] = b4c3.b4_rd(3, b4_mc * cos(b4_pb));
+  b4_YY[4] = b4c4.b4_rd(4, 0); b4_YY[5] = b4c5.b4_rd(5, -b4_mc * cos(b4_pa) + b4_w2 * 0.4);
+  b4_YY[6] = b4c6.b4_rd(6, 0); b4_YY[7] = b4c7.b4_rd(7, -b4_mc * sin(b4_pb));
+  b4_wl = b4_YY[0] - b4_YY[2] + b4_YY[4] - b4_YY[6] + 0.5 * (b4_YY[3] - b4_YY[5]);
+  b4_wr = b4_YY[1] - b4_YY[3] + b4_YY[5] - b4_YY[7] + 0.5 * (b4_YY[2] - b4_YY[4]);
+  // Hadamard 8
+  b4_a = b4_YY[0] + b4_YY[1]; b4_b = b4_YY[0] - b4_YY[1]; b4_c = b4_YY[2] + b4_YY[3]; b4_e = b4_YY[2] - b4_YY[3];
+  b4_f = b4_YY[4] + b4_YY[5]; b4_g = b4_YY[4] - b4_YY[5]; b4_h = b4_YY[6] + b4_YY[7]; b4_j = b4_YY[6] - b4_YY[7];
+  b4_YY[0] = b4_a + b4_c; b4_YY[2] = b4_a - b4_c; b4_YY[1] = b4_b + b4_e; b4_YY[3] = b4_b - b4_e;
+  b4_YY[4] = b4_f + b4_h; b4_YY[6] = b4_f - b4_h; b4_YY[5] = b4_g + b4_j; b4_YY[7] = b4_g - b4_j;
+  b4_a = b4_YY[0]; b4_YY[0] = (b4_a + b4_YY[4]) * 0.35355339; b4_YY[4] = (b4_a - b4_YY[4]) * 0.35355339;
+  b4_a = b4_YY[1]; b4_YY[1] = (b4_a + b4_YY[5]) * 0.35355339; b4_YY[5] = (b4_a - b4_YY[5]) * 0.35355339;
+  b4_a = b4_YY[2]; b4_YY[2] = (b4_a + b4_YY[6]) * 0.35355339; b4_YY[6] = (b4_a - b4_YY[6]) * 0.35355339;
+  b4_a = b4_YY[3]; b4_YY[3] = (b4_a + b4_YY[7]) * 0.35355339; b4_YY[7] = (b4_a - b4_YY[7]) * 0.35355339;
+  b4c0.b4_wln(b4_YY[0] + b4_dl); b4c1.b4_wln(b4_YY[1] + b4_dr); b4c2.b4_wln(b4_YY[2] - b4_dl * 0.7); b4c3.b4_wln(b4_YY[3] - b4_dr * 0.7);
+  b4c4.b4_wln(b4_YY[4] + b4_dl * 0.5); b4c5.b4_wln(b4_YY[5] + b4_dr * 0.5); b4c6.b4_wln(b4_YY[6] - b4_dl * 0.3); b4c7.b4_wln(b4_YY[7] - b4_dr * 0.3);
+  b4_wl = b4_wl * b4_nw + b4_el * b4_eg; b4_wr = b4_wr * b4_nw + b4_er * b4_eg;
+) : (
+  // ---------- OB: band-limit, the 12-bit converter, the loop at the reduced rate, back out ----------
+  b4_u = b4aa2.s74_bq(b4aa1.s74_bq((b4_inl + b4_inr) * 0.5));
+  b4_ph == 0 ? (
+    b4_id1 = 0.75 * (0.25 + 0.75 * b4_df); b4_id2 = 0.625 * (0.25 + 0.75 * b4_df);
+    b4_dd1 = 0.45 + 0.25 * b4_df; b4_dd2 = 0.3 + 0.2 * b4_df;
+    b4_mo = 22 * b4_md * b4_wm * b4_fsr / 29761;
+    b4_m1 = b4_mo * sin(b4_pa); b4_m2 = b4_mo * cos(b4_pb);
+    b4_obt(b4_cv(b4_u));
+    b4_opl = b4_ocl; b4_opr = b4_ocr;
+    b4_ocl = b4_cv(b4_tl * 0.6); b4_ocr = b4_cv(b4_tr * 0.6);
+  );
+  b4_ph += 1; b4_t = b4_ph / b4_R; b4_ph >= b4_R ? b4_ph = 0;
+  b4_wl = (b4_opl + (b4_ocl - b4_opl) * b4_t) * b4_nw + b4_el * b4_eg;
+  b4_wr = (b4_opr + (b4_ocr - b4_opr) * b4_t) * b4_nw + b4_er * b4_eg;
+  b4_wl = b4rl2.s74_bq(b4rl1.s74_bq(b4_wl)); b4_wr = b4rr2.s74_bq(b4rr1.s74_bq(b4_wr));
+  // the output iron: the lows thicken, a soft ceiling
+  b4_i2l += (b4_wl - b4_i2l) * b4_ki2; b4_wl = b4_wl - b4_i2l + s74_th(b4_i2l * 1.6) / 1.6;
+  b4_i2r += (b4_wr - b4_i2r) * b4_ki2; b4_wr = b4_wr - b4_i2r + s74_th(b4_i2r * 1.6) / 1.6;
+  b4_wl = 1.25 * s74_th(b4_wl * 0.8); b4_wr = 1.25 * s74_th(b4_wr * 0.8);
+);
+
+// ---------- WIDTH, the fade, MIX (send law), OUTPUT, the house output stage ----------
+b4_m = (b4_wl + b4_wr) * 0.5; b4_d = (b4_wl - b4_wr) * 0.5 * b4_wd;
+b4_wl = (b4_m + b4_d) * b4_fade; b4_wr = (b4_m - b4_d) * b4_fade;
+b4_gd = min(1, 2 - 2 * b4_mix); b4_gw = min(1, 2 * b4_mix);
+b4_yl = b4_xl * b4_gd + b4_wl * b4_gw; b4_yr = b4_xr * b4_gd + b4_wr * b4_gw;
+b4_voL = max(b4_voL * 0.9995, abs(b4_yl) + abs(b4_yr));
+b4_yl = b4L.ost_band(b4_yl) * b4_og; b4_yr = b4R.ost_band(b4_yr) * b4_og;
+ost_out(b4_yl, b4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider15);
+s74_fonts();
+s74_face(960, 366);
+b4_cln = slider15 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "VRB74", "SERIES 74", "OB REVERB", #b4_pm, 15);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 180, 292, "INPUT");
+b4mI.s74_edge(24, 92, 160, 58, b4a_vi * 2.83, "IN");
+b4mO.s74_edge(24, 158, 160, 58, b4a_vo * 2.83, "OUT");
+b4a_vi *= 0.6; b4a_vo *= 0.6;
+s74_knob(62, 278, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(144, 250, "GUARD");
+s74_lens(118, 262, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(178 * sc, 274 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- SPACE: the four lenses, the decay drawn ----------
+s74_mod(206, 62, 262, 292, "SPACE");
+i_ = 0; loop(4, pk_pitem("ROOM|HALL|CHAMBER|CATHEDRAL", i_ + 1, #t_);
+  s74_lens(220 + (i_ & 1) * 120, 94 + (i_ >> 1) * 30, 114, 24, floor(slider10 + 0.5) == i_, #t_) ? s74_set(10, i_); i_ += 1; );
+// the window: the pre-delay gap, the early reflections, the decay of the low, middle and high bands
+x0_ = 218; y0_ = 160; w_ = 238; h_ = 146;
+ui_cola(0x000000, 0.4); s74_r(x0_ + 1, y0_ + 2, w_, h_);
+ui_col(0x101112); s74_r(x0_, y0_, w_, h_);
+ui_col(S74_LAMPD); s74_r(x0_ + 5, y0_ + 5, w_ - 10, h_ - 10);
+i_ = 0; loop(10, ui_cola(S74_LAMPW, 0.12); s74_r(x0_ + 5 + (w_ - 10) * 0.03 * i_, y0_ + 5 + i_ * 0.6, (w_ - 10) * (1 - 0.06 * i_), h_ - 10 - i_ * 1.2); i_ += 1; );
+px0_ = x0_ + 16; px1_ = x0_ + w_ - 14; yt_ = y0_ + 26; yb_ = y0_ + h_ - 30;
+pd_ = slider3 / 1000; sz_ = 0.6 + 0.8 * slider4 / 100;
+tm_ = min(max(1, (pd_ + slider5 * max(slider6, 1)) * 1.1), 30);
+ui_cola(S74_CHAR, 0.8); s74_r(px0_, yb_, px1_ - px0_, 1);
+st_ = tm_ <= 2 ? 0.25 : tm_ <= 5 ? 1 : tm_ <= 12 ? 2 : 5;
+i_ = 0; loop(floor(tm_ / st_) + 1, s74_r(px0_ + (px1_ - px0_) * i_ * st_ / tm_, yb_, 1, 4); i_ += 1; );
+gfx_setfont(13); ui_col(S74_CHAR);
+s74_t(px0_, yb_ + 6, "0"); sprintf(#t_, "%.1f s", tm_); gfx_measurestr(#t_, tw_, th_); s74_t(px1_ - tw_ / sc, yb_ + 6, #t_);
+// the early reflections
+sp_ = floor(slider10 + 0.5);
+es_ = (sp_ == 0 ? 24 : sp_ == 1 ? 70 : sp_ == 2 ? 40 : 110) * sz_ / 1000 * (b4_cln ? 1 : 1.15);
+eg_ = slider11 / 100 * (sp_ == 0 ? 1 : sp_ == 1 ? 0.62 : sp_ == 2 ? 0.9 : 0.5);
+i_ = 0; loop(12, (b4_cln || (i_ & 1)) ? (
+    t_ = pd_ + b4_ETL[i_] * es_; xx_ = px0_ + (px1_ - px0_) * t_ / tm_;
+    ui_cola(S74_CHAR, 0.75); s74_r(xx_, yb_ - (yb_ - yt_) * eg_ * abs(b4_EGL[i_]) * 0.8, 1.4, (yb_ - yt_) * eg_ * abs(b4_EGL[i_]) * 0.8); );
+  i_ += 1; );
+// the three bands' decay lines (dB, 0 .. -60): the high and the low fainter, the middle bold
+k_ = 0; loop(3,
+  rt_ = slider5 * (k_ == 0 ? slider7 : k_ == 1 ? slider6 : 1);
+  t0_ = pd_ + 0.004 + (sp_ == 3 ? 0.06 : sp_ == 1 ? 0.04 : 0.02) * sz_;
+  xa_ = px0_ + (px1_ - px0_) * pd_ / tm_; xb_ = px0_ + (px1_ - px0_) * t0_ / tm_;
+  t1_ = t0_ + rt_; xc_ = px0_ + (px1_ - px0_) * min(t1_, tm_) / tm_;
+  yc_ = t1_ <= tm_ ? yb_ : yt_ + (yb_ - yt_) * (tm_ - t0_) / rt_;
+  ui_cola(S74_NDL, k_ == 2 ? 1 : 0.55);
+  s74_ln(xa_, yb_, xb_, yt_, k_ == 2 ? 1.8 : 1.1); s74_ln(xb_, yt_, xc_, yc_, k_ == 2 ? 1.8 : 1.1);
+  // the labels at three quarters of the way down: HIGH to the left of its line, LOW to the right of its own
+  t_ = t0_ + rt_ * 0.75; xx_ = px0_ + (px1_ - px0_) * t_ / tm_; yy_ = yt_ + (yb_ - yt_) * 0.75;
+  gfx_setfont(13); gfx_measurestr(k_ == 0 ? "HIGH" : "LOW", tw_, th_);
+  k_ == 0 && t_ < tm_ ? s74_t(xx_ - 6 - tw_ / sc, yy_ - 4, "HIGH");
+  k_ == 1 && t_ < tm_ ? s74_t(min(xx_ + 6, px1_ - tw_ / sc), yy_ - 12, "LOW");
+  k_ += 1; );
+gfx_setfont(13); ui_col(S74_CHAR);
+s74_t(x0_ + 12, y0_ + 10, sp_ == 0 ? "THE ROOM" : sp_ == 1 ? "THE HALL" : sp_ == 2 ? "THE CHAMBER" : "THE CATHEDRAL");
+sprintf(#t_, "%.2f S", slider5); gfx_measurestr(#t_, tw_, th_); s74_t(x0_ + w_ - 12 - tw_ / sc, y0_ + 10, #t_);
+b4_cln ? ( s74_smallc(337, 324, "EIGHT-LINE FDN  ·  FULL BAND"); ) : ( s74_smallc(337, 324, "REDUCED RATE  ·  12-BIT  ·  IRON"); );
+
+// ---------- TAIL: the reverb's controls (the bands' reverb times colour coded: LOW brown, MID green, HIGH red) ----------
+s74_mod(480, 62, 276, 292, "TAIL");
+s74_knob(528, 120, 20, 3, 0, 250, 20, 0, "PRE-DELAY", "%.0f ms", 0);
+s74_knob(618, 120, 20, 4, 0, 100, 50, 0, "SIZE", "%.0f%%", 0);
+s74_kc = S74_C_HMF; s74_knob(708, 120, 20, 5, 0.2, 12, 1.8, 1, "DECAY", "%.2f s", 0);
+s74_kc = S74_C_LF;  s74_knob(528, 208, 20, 6, 0.5, 2, 1.2, 1, "LOW RT", "x%.2f", 0);
+s74_kc = S74_C_HF;  s74_knob(618, 208, 20, 7, 0.1, 1, 0.55, 1, "HIGH RT", "x%.2f", 0);
+s74_kc = 0;
+s74_knob(708, 208, 20, 8, 0, 100, 70, 0, "DIFFUSION", "%.0f%%", 0);
+s74_knob(528, 296, 20, 9, 0, 100, 40, 0, "MOD", "%.0f%%", 0);
+s74_knob(618, 296, 20, 11, 0, 100, 50, 0, "EARLY", "%.0f%%", 0);
+s74_knob(708, 296, 20, 12, 0, 150, 100, 0, "WIDTH", "%.0f%%", 0);
+
+// ---------- OUTPUT: WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(768, 62, 178, 292, "OUTPUT");
+s74_knob(806, 126, 18, 16, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(806, 230, 13, 17, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(826 * sc, 216 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(868, 106, 140, 13, 0, 100, 25, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(918, 106, 140, 14, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(857, 316, "SEND-LAW MIX");
+
+pk_end();
+ui_end();

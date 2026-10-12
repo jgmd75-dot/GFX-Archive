@@ -1,0 +1,353 @@
+desc:GFX KRT74 [OB maximizer]
+//tags: maximizer enhancer bass harmonics psychoacoustic exciter punch phase all-pass broadcast series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// KRT74 (Series 74: the OB remote and broadcast series): the low-end maximizer from the truck, with two models on
+// one switch.
+//   input -> TRIM / GUARD -> 2x oversampling ->
+//   OB:    DRIVE (the input iron, level matched) -> the lows below TUNE (40 - 160 Hz) are split off:
+//          PUNCH  a transient shaper on the low band: the attack of each kick and bass note is lifted
+//          IRON   the low band through a saturating transformer core: thicker, rounder lows
+//          LOW AMOUNT  the bass's own 2nd and 3rd harmonics (envelope-normalised Chebyshev generators, so the colour
+//                 is the same at any level) are added above TUNE: the low end reads on small speakers without more
+//                 low-frequency energy
+//          HIGH   a presence exciter: the top above about 3 kHz is driven, only the new harmonics are added back
+//   CLEAN: a surgical phase and spectral corrector, no added harmonics:
+//          PUNCH  phase rotation: two all-pass sections below TUNE hold the lows back, lowering the crest factor
+//                 and tightening the low end (0 = none). The level of every frequency stays the same.
+//          LOW AMOUNT  low-band level correction: a shelf at TUNE, -6 .. +6 dB (50 % = flat)
+//          LOW-MID (the IRON knob)  a dynamic evener: when the low mids (about 3 x TUNE) build up against the rest of
+//                 the spectrum, a gentle dip pulls them back (up to about -6 dB)
+//          HIGH   a high-band tilt: a shelf at 4.5 kHz, -4 .. +4 dB (50 % = flat)
+//          DRIVE is out of the path.
+//   -> back to 1x -> MIX (with the dry signal, delayed to match) -> OUTPUT -> the house output stage (band SAT, CLIP
+//   always on).
+// DRIVE is level matched, and the two models are matched to each other at the defaults.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the iron's bias and the gain wander slowly, the channels never
+// quite matched; on CLEAN only a trace of gain wander remains.
+// Changing the model fades the sound out and back in. The latency is 31 samples (reported).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:20<0,100,1>-Drive (%)
+slider4:50<0,100,1>-Low amount (%)
+slider5:80<40,160,1>-Tune (Hz)
+slider6:30<0,100,1>-Punch (%)
+slider7:40<0,100,1>-Iron (CLEAN: low-mid, %)
+slider8:50<0,100,1>-High (%)
+slider9:100<0,100,1>-Mix (%)
+slider10:0<-24,12,0.1>-Output (dB)
+slider11:0<0,1,1{OB,Clean}>-Model
+slider12:50<0,100,1>-Wander (%)
+slider13:0<0,100,1>-Band sat (%)
+slider14:30<0,100,1>-Bias (output stage, %)
+slider15:120<40,400,1>-Sat low band (Hz)
+slider16:6000<2000,16000,10>-Sat high band (Hz)
+slider17:-0.3<-24,0,0.1>-Ceiling (dB)
+slider18:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-krt74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+k4_HB = s74_alloc(64);
+k4_MK = s74_alloc(16);                                  // the DRIVE makeup (OB, 0 .. 100 % in 10 % steps, dB)
+k4_ostm = s74_alloc(4096);
+k4_DRY = s74_alloc(256);                                // the dry signal's delay (L at 0, R at 128)
+
+// ---------- oversampling: 2x, the house half-band ----------
+s74_hbdesign(k4_HB, 63, 8);
+k4uL.s74_upinit(63, k4_HB, 64); k4uR.s74_upinit(63, k4_HB, 64); k4dL.s74_dninit(63, k4_HB, 64); k4dR.s74_dninit(63, k4_HB, 64);
+k4_LAT = 31;
+
+// the DRIVE makeup (measured on pink noise)
+function k4_row(a, b, c, d, e, f, g, h, i, j, l) local(p) (
+  p = k4_MK; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l;
+);
+k4_row(-0.12, -0.11, -0.12, -0.08, -0.05, -0.04, 0.0, 0.03, 0.05, 0.09, 0.13);
+function k4_mk(d) local(p, i, f) (
+  p = min(max(d, 0), 100) / 10; i = min(floor(p), 9); f = p - i;
+  10 ^ ((k4_MK[i] * (1 - f) + k4_MK[i + 1] * f) / 20);
+);
+
+// ---------- one channel at 2x ----------
+// OB: the input iron, the low band (PUNCH, IRON, the bass harmonics), the presence exciter
+function k4_ob(x) instance(lp1, lp2, hb, hh, xh1, xh2, xp, eb, ep, ef, es) local(y, lo, a, g, u, h, hi) (
+  // DRIVE: the input iron (bias = even harmonics; level matched)
+  a = 1 + 3 * k4_drv;
+  y = (s74_th(x * a * 0.6 * k4_dg + k4_vb + k4_db) - s74_th(k4_vb + k4_db)) / (a * 0.6);
+  // the low band below TUNE (the rest is y - lo: they sum back exactly)
+  lo = lp2.s74_bq(lp1.s74_bq(y));
+  // PUNCH: a fast and a slow envelope on the low band; the attack (fast above slow) is lifted
+  a = abs(lo);
+  ef += (a - ef) * (a > ef ? k4_kfa : k4_kfr);
+  es += (a - es) * (a > es ? k4_ksa : k4_ksr);
+  g = k4_pun * 1.6 * min(max(ef / (es + 0.00001) - 1, 0), 1.5);
+  // IRON: the low band through the transformer core
+  y = (y - lo) + s74_th(lo * k4_ki) / k4_ki * (1 + g);
+  // LOW AMOUNT: the bass's 2nd and 3rd harmonics, generated at a steady level (divided by the band's envelope,
+  // shaped, scaled back); band-passed above TUNE so the new energy sits where small speakers can play it
+  eb += (a - eb) * (a > eb ? k4_kba : k4_kbr);
+  u = min(max(lo / max(eb, 0.00003), -1.2), 1.2);
+  h = ((2 * u * u - 1) * 0.6 + (4 * u * u * u - 3 * u) * 0.4) * eb;
+  h = hh.s74_bq(hb.s74_bq(h));
+  // HIGH: the presence exciter (only the new harmonics are added back)
+  hi = xh1.s74_bq(y);
+  ep += (abs(hi) - ep) * (abs(hi) > ep ? k4_kea : k4_ker);
+  u = min(max(hi / max(ep, 0.00003), -1.2), 1.2);
+  hi = ((2 * u * u - 1) * 0.45 + (4 * u * u * u - 3 * u) * 0.55) * ep;
+  hi = xp.s74_bq(xh2.s74_bq(hi));
+  (y + h * k4_ba + hi * k4_ha) * k4_m;
+);
+// CLEAN: the all-pass phase rotation, the low shelf, the dynamic low-mid evener, the high tilt
+function k4_cl(x) instance(ap1, ap2, ls, hs, lm, el, ea, c) local(y, b, r, t) (
+  y = ap2.s74_bq(ap1.s74_bq(x * k4_dg));
+  y = hs.s74_bq(ls.s74_bq(y));
+  b = lm.s74_bq(y);
+  el += (abs(b) - el) * k4_kdy; ea += (abs(y) - ea) * k4_kdy;
+  r = el / (ea + 0.00001);
+  t = k4_lmd * 0.5 * min(max((r - k4_r0) / k4_r0 * 2, 0), 1);
+  c += (t - c) * k4_kdc;
+  (y - b * c) * k4_m;
+);
+function k4_ch(x) ( k4_mod ? this.k4_cl(x) : this.k4_ob(x); );
+
+// ---------- settings ----------
+function k4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  k4_tmo = slider11 >= 0.5;
+  k4_tdrv = slider3 / 100;
+  k4_tm = k4_mod ? k4_mcl : k4_mk(slider3) * k4_mob;
+  k4_tba = slider4 / 100 * 1.2; k4_tpun = slider6 / 100;
+  k4_tki = 0.4 + 5.6 * slider7 / 100; k4_tlmd = slider7 / 100;
+  k4_tha = slider8 / 100 * 1.2;
+  k4_tmix = slider9 / 100; k4_tog = 10 ^ (slider10 / 20);
+  drift_macro(slider12);
+  ost_setup(slider13 / 100, slider14 / 100, slider15, slider16, slider17, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = k4_LAT;
+);
+// the filters: (re)computed from the glided TUNE / LOW / HIGH / PUNCH (fs2 = the oversampled rate)
+function k4_filters() local(fs, f, fa, gl, gh, fm) (
+  fs = k4_fs2; f = k4_tu;
+  // OB
+  k4L.lp1.s74_bqset(0, f, 0, 0.707, fs); k4R.lp1.s74_bqset(0, f, 0, 0.707, fs);
+  k4L.lp2.s74_bqset(0, f, 0, 0.707, fs); k4R.lp2.s74_bqset(0, f, 0, 0.707, fs);
+  k4L.hb.s74_bqset(2, f * 2.6, 0, 0.75, fs); k4R.hb.s74_bqset(2, f * 2.6, 0, 0.75, fs);
+  k4L.hh.s74_bqset(1, f * 1.3, 0, 0.707, fs); k4R.hh.s74_bqset(1, f * 1.3, 0, 0.707, fs);
+  // CLEAN
+  fa = 5 * (f * 1.2 / 5) ^ k4_pg;                       // PUNCH 0: 5 Hz (nothing audible) .. 100 %: 1.2 x TUNE
+  k4L.ap1.s74_bqset(6, fa, 0, 0.6, fs); k4R.ap1.s74_bqset(6, fa, 0, 0.6, fs);
+  k4L.ap2.s74_bqset(6, fa * 1.8, 0, 0.6, fs); k4R.ap2.s74_bqset(6, fa * 1.8, 0, 0.6, fs);
+  gl = (k4_lg - 0.5) * 12; gh = (k4_hg - 0.5) * 8;
+  k4L.ls.s74_bqset(4, f, gl, 0.6, fs); k4R.ls.s74_bqset(4, f, gl, 0.6, fs);
+  k4L.hs.s74_bqset(5, 4500, gh, 0.6, fs); k4R.hs.s74_bqset(5, 4500, gh, 0.6, fs);
+  fm = min(max(f * 3, 160), 480);
+  k4L.lm.s74_bqset(2, fm, 0, 0.9, fs); k4R.lm.s74_bqset(2, fm, 0, 0.9, fs);
+  k4_ftu = k4_tu; k4_fpg = k4_pg; k4_flg = k4_lg; k4_fhg = k4_hg;
+);
+function k4_fixed() local(fs) (
+  fs = k4_fs2;
+  k4L.xh1.s74_bqset(1, 3200, 0, 0.707, fs); k4R.xh1.s74_bqset(1, 3200, 0, 0.707, fs);
+  k4L.xh2.s74_bqset(1, 4500, 0, 0.707, fs); k4R.xh2.s74_bqset(1, 4500, 0, 0.707, fs);
+  k4L.xp.s74_bqset(0, min(17000, 0.45 * fs), 0, 0.707, fs); k4R.xp.s74_bqset(0, min(17000, 0.45 * fs), 0, 0.707, fs);
+);
+function k4_srinit() (
+  k4_sr = srate; k4_fs2 = 2 * srate;
+  k4_kfa = s74_kt(0.0005, k4_fs2); k4_kfr = s74_kt(0.025, k4_fs2);
+  k4_ksa = s74_kt(0.03, k4_fs2); k4_ksr = s74_kt(0.2, k4_fs2);
+  k4_kba = s74_kt(0.001, k4_fs2); k4_kbr = s74_kt(0.08, k4_fs2);
+  k4_kea = s74_kt(0.001, k4_fs2); k4_ker = s74_kt(0.06, k4_fs2);
+  k4_kdy = s74_kt(0.15, k4_fs2); k4_kdc = s74_kt(0.08, k4_fs2);
+  k4_sm = 1 - exp(-1 / (0.02 * srate));
+  k4_fd = 1 / (0.006 * srate);
+  ost_init(k4_ostm);
+  k4_fixed(); k4_filters();
+);
+// the model makeups (dB, measured on pink noise) and the low-mid evener's threshold (pink noise's own ratio)
+k4_mob = 10 ^ (0 / 20); k4_mcl = 10 ^ (0.15 / 20); k4_r0 = 0.45;
+k4_mod = k4_tmo = slider11 >= 0.5;
+in_init();
+k4_tu = slider5; k4_pg = slider6 / 100; k4_lg = slider4 / 100; k4_hg = slider8 / 100;
+k4_srinit();
+k4_dbL.drift_init(0.8 + rand(0.4)); k4_dbR.drift_init(0.8 + rand(0.4)); k4_dgL.drift_init(0.8 + rand(0.4)); k4_dgR.drift_init(0.8 + rand(0.4));
+k4_sbL = rand(2) - 1; k4_sbR = rand(2) - 1; k4_sgL = rand(2) - 1; k4_sgR = rand(2) - 1;
+k4oL.ost_ch_init(); k4oR.ost_ch_init();
+k4_update();
+k4_drv = k4_tdrv; k4_m = k4_tm; k4_ba = k4_tba; k4_pun = k4_tpun; k4_ki = k4_tki; k4_lmd = k4_tlmd; k4_ha = k4_tha;
+k4_mix = k4_tmix; k4_og = k4_tog; k4_vb = 0.12;
+k4_fade = 1; k4_fst = 0; k4_hold = 0; k4_dw = 0;
+
+// ---------- presets ----------
+function k4_set(dr, lo, tu, pu, ir, hi, mx, ou, mo) (
+  slider3 = dr; slider4 = lo; slider5 = tu; slider6 = pu; slider7 = ir; slider8 = hi; slider9 = mx; slider10 = ou; slider11 = mo;
+  slider_automate(2044);                                // sliders 3-11 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#k4_pm = "Init|Truck Kick|Bass on Phones|Field Bass DI|Stadium Low End|Commentary Chest|Small Speaker Feed|Iron Floor|Parallel Weight|Clean Phase Align|Clean Mud Control|Clean Broadcast Tilt";
+function load_preset(p) (
+  //                 drv  low tune pun iron high mix  out  model
+  p == 1  ? k4_set(20, 50,  80, 30, 40, 50, 100,  0,   0) :     // Init
+  p == 2  ? k4_set(30, 45,  60, 75, 50, 40, 100, -0.3, 0) :     // Truck Kick
+  p == 3  ? k4_set(15, 85, 100, 20, 30, 35, 100, 0.1, 0) :     // Bass on Phones
+  p == 4  ? k4_set(35, 60,  70, 40, 65, 30, 100,  0,   0) :     // Field Bass DI
+  p == 5  ? k4_set(25, 55,  50, 55, 55, 45, 100,  0,   0) :     // Stadium Low End
+  p == 6  ? k4_set(20, 35, 140, 15, 35, 65, 100,  0,   0) :     // Commentary Chest
+  p == 7  ? k4_set(20, 100, 120, 35, 40, 60, 100, -0.3, 0) :     // Small Speaker Feed
+  p == 8  ? k4_set(60, 40,  70, 30, 90, 30, 100, 0.1, 0) :     // Iron Floor
+  p == 9  ? k4_set(70, 90,  90, 70, 80, 60,  45, -0.2, 0) :     // Parallel Weight
+  p == 10 ? k4_set(20, 50,  80, 70, 0,  50, 100,  0,   1) :     // Clean Phase Align
+  p == 11 ? k4_set(20, 45, 100, 40, 80, 55, 100, 0.1, 1) :     // Clean Mud Control
+  p == 12 ? k4_set(20, 55,  70, 50, 40, 65, 100, -0.6, 1) :     // Clean Broadcast Tilt
+  p == 13 ? (                                               // Reset all to defaults
+    k4_set(20, 50, 80, 30, 40, 50, 100, 0, 0);
+    slider1 = 0; slider2 = 1; slider12 = 50; slider13 = 0; slider14 = 30; slider15 = 120; slider16 = 6000; slider17 = -0.3; slider18 = 1;
+    slider_automate(262143);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+k4_update();
+
+@block
+srate != k4_sr ? k4_srinit();
+k4_update();                                            // knobs moved on the panel do not run @slider
+// the filter glides (about 20 ms), recomputed once per block while they move
+k4_kb = 1 - exp(-samplesblock / (0.02 * srate));
+k4_tu += (slider5 - k4_tu) * k4_kb; abs(k4_tu - slider5) < 0.01 ? k4_tu = slider5;
+k4_pg += (slider6 / 100 - k4_pg) * k4_kb; abs(k4_pg - slider6 / 100) < 0.0002 ? k4_pg = slider6 / 100;
+k4_lg += (slider4 / 100 - k4_lg) * k4_kb; abs(k4_lg - slider4 / 100) < 0.0002 ? k4_lg = slider4 / 100;
+k4_hg += (slider8 / 100 - k4_hg) * k4_kb; abs(k4_hg - slider8 / 100) < 0.0002 ? k4_hg = slider8 / 100;
+(k4_tu != k4_ftu || k4_pg != k4_fpg || k4_lg != k4_flg || k4_hg != k4_fhg) ? k4_filters();
+// WANDER: on OB the iron's bias and the gain wander; on CLEAN only a trace of gain wander
+k4_di = 0.12 * dm_s * samplesblock / srate;
+k4_wb = k4_mod ? 0 : 1; k4_wg = k4_mod ? 0.2 : 1;
+k4_dbLv = k4_wb * dm_a * (0.04 * k4_dbL.drift_tick(k4_di) + 0.012 * k4_sbL); k4_dbRv = k4_wb * dm_a * (0.04 * k4_dbR.drift_tick(k4_di) + 0.012 * k4_sbR);
+k4_dgLv = 1 + k4_wg * dm_a * (0.02 * k4_dgL.drift_tick(k4_di) + 0.006 * k4_sgL); k4_dgRv = 1 + k4_wg * dm_a * (0.02 * k4_dgR.drift_tick(k4_di) + 0.006 * k4_sgR);
+k4a_vi = max(k4a_vi, k4_viL); k4a_vo = max(k4a_vo, k4_vL);
+k4a_cl = max(k4a_cl, max(k4L.c, k4R.c));
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+k4_drv += (k4_tdrv - k4_drv) * k4_sm; k4_m += (k4_tm - k4_m) * k4_sm; k4_ba += (k4_tba - k4_ba) * k4_sm;
+k4_pun += (k4_tpun - k4_pun) * k4_sm; k4_ki += (k4_tki - k4_ki) * k4_sm; k4_lmd += (k4_tlmd - k4_lmd) * k4_sm;
+k4_ha += (k4_tha - k4_ha) * k4_sm; k4_mix += (k4_tmix - k4_mix) * k4_sm; k4_og += (k4_tog - k4_og) * k4_sm;
+// a change of model: fade out, switch at the silent point, wait, fade in
+k4_tmo != k4_mod && k4_fst == 0 ? k4_fst = 1;
+k4_fst == 1 ? ( k4_fade -= k4_fd; k4_fade <= 0 ? (
+  k4_fade = 0; k4_mod = k4_tmo; k4_m = k4_tm = k4_mod ? k4_mcl : k4_mk(slider3) * k4_mob;
+  k4L.c = k4R.c = 0;
+  k4_hold = k4_LAT + floor(0.025 * srate); k4_fst = 2; ); ) :      // the wait lets the new model's envelopes settle
+k4_fst == 2 ? ( k4_hold -= 1; k4_hold <= 0 ? k4_fst = 3; ) :
+k4_fst == 3 ? ( k4_fade += k4_fd; k4_fade >= 1 ? ( k4_fade = 1; k4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+k4_xl = in_l; k4_xr = in_r;
+k4_viL = max(k4_viL * 0.9995, abs(k4_xl) + abs(k4_xr));
+k4_DRY[k4_dw] = k4_xl; k4_DRY[128 + k4_dw] = k4_xr;
+k4_dr = (k4_dw - k4_LAT) & 127; k4_yld = k4_DRY[k4_dr]; k4_yrd = k4_DRY[128 + k4_dr]; k4_dw = (k4_dw + 1) & 127;
+
+// ---------- the maximizer, at 2x ----------
+k4uL.s74_up(k4_xl); k4uR.s74_up(k4_xr);
+k4_dg = k4_dgLv; k4_db = k4_dbLv; k4_q0l = k4L.k4_ch(k4uL.o0); k4_q1l = k4L.k4_ch(k4uL.o1);
+k4_dg = k4_dgRv; k4_db = k4_dbRv; k4_q0r = k4R.k4_ch(k4uR.o0); k4_q1r = k4R.k4_ch(k4uR.o1);
+k4_yl = k4dL.s74_dn(k4_q0l, k4_q1l); k4_yr = k4dR.s74_dn(k4_q0r, k4_q1r);
+
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+k4_yl = (k4_yld + (k4_yl - k4_yld) * k4_mix) * k4_fade; k4_yr = (k4_yrd + (k4_yr - k4_yrd) * k4_mix) * k4_fade;
+k4_vL = max(k4_vL * 0.9995, abs(k4_yl) + abs(k4_yr));
+k4_yl = k4oL.ost_band(k4_yl) * k4_og; k4_yr = k4oR.ost_band(k4_yr) * k4_og;
+ost_out(k4_yl, k4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider11);
+s74_fonts();
+s74_face(960, 366);
+k4_cln = slider11 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "KRT74", "SERIES 74", "OB MAXIMIZER", #k4_pm, 11);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 226, 292, "INPUT");
+k4mI.s74_edge(28, 92, 198, 62, k4a_vi * 2.83, "IN");
+k4mO.s74_edge(28, 162, 198, 62, k4a_vo * 2.83, "OUT");
+k4a_vi *= 0.6; k4a_vo *= 0.6;
+s74_off = 0; s74_knob(70, 288, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(176, 266, "GUARD");
+s74_lens(150, 278, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(212 * sc, 290 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- LOW: the bass enhancer (OB) / the low corrector (CLEAN) ----------
+s74_mod(252, 62, 340, 292, k4_cln ? "LOW · PHASE CORRECTOR" : "LOW · BASS ENHANCER");
+s74_kc = S74_C_LF;
+s74_knob(338, 168, 46, 4, 0, 100, 50, 0, k4_cln ? "LOW LEVEL" : "LOW AMOUNT", "%.0f%%", 0);
+s74_small(268, 222, k4_cln ? "-6" : "0"); s74_small(392, 222, k4_cln ? "+6" : "100");
+s74_knob(474, 134, 22, 5, 40, 160, 80, 1, "TUNE", "%.0f Hz", 0);
+s74_kc = 0;
+s74_knob(552, 134, 22, 6, 0, 100, 30, 0, k4_cln ? "ROTATE" : "PUNCH", "%.0f%%", 0);
+s74_kc = k4_cln ? S74_C_LMF : 0;
+s74_knob(474, 238, 22, 7, 0, 100, 40, 0, k4_cln ? "LOW-MID" : "IRON", "%.0f%%", 0);
+s74_kc = 0;
+// the read-out window: OB the harmonics generated, CLEAN the low-mid evener's dip
+ui_col(0x101112); s74_r(520, 214, 64, 52);
+ui_col(S74_LAMPD); s74_r(524, 218, 56, 44);
+k4_cln ? (
+  k4a_cl = min(k4a_cl, 0.5); y_ = 36 * k4a_cl / 0.5;
+  ui_col(S74_NDL); s74_r(546, 222, 12, y_);
+  ui_cola(S74_CHAR, 0.8); s74_r(530, 222, 44, 1);
+  k4a_cl *= 0.85;
+) : (
+  i_ = 0; loop(4, h_ = 34 * slider4 / 100 / (i_ * 0.7 + 1) * (i_ < 2 ? 1 : 0.55);
+    ui_cola(S74_LAMP, i_ < 2 ? 1 : 0.55); s74_r(530 + i_ * 12, 256 - h_, 8, h_); i_ += 1; );
+);
+s74_smallc(552, 286, k4_cln ? "DIP" : "2ND · 3RD");
+s74_smallc(422, 330, k4_cln ? "ALL-PASS · SHELF · DYNAMIC EVENER" : "HARMONICS · IRON · PUNCH");
+
+// ---------- HIGH · DRIVE ----------
+s74_mod(604, 62, 130, 292, "HIGH · DRIVE");
+s74_kc = S74_C_HF; s74_knob(669, 140, 26, 8, 0, 100, 50, 0, k4_cln ? "TILT" : "HIGH", "%.0f%%", 0); s74_kc = 0;
+s74_off = k4_cln;
+s74_knob(669, 254, 26, 3, 0, 100, 20, 0, "DRIVE", "%.0f%%", 0);
+s74_off = 0;
+s74_smallc(669, 330, k4_cln ? "DRIVE: OB ONLY" : "EXCITER · IRON");
+
+// ---------- OUTPUT: WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(746, 62, 200, 292, "OUTPUT");
+s74_knob(790, 140, 20, 12, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(790, 250, 16, 13, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(814 * sc, 236 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(858, 106, 130, 9, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(912, 106, 130, 10, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(846, 330, "CLIP ALWAYS ON");
+
+pk_end();
+ui_end();

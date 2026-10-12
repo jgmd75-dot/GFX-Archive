@@ -1,0 +1,354 @@
+desc:GFX KRT92 [enhancer]
+//tags: enhancer exciter harmonics valve bass contour clarity spectral multiband punch phase align 20-bit home-studio series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// KRT92 (Series 92: high-end home recording from the 90s): the "enhancer" box in the rack of a 90s home studio, with
+// two models on one switch.
+//   input -> TRIM / GUARD -> 2x oversampling ->
+//   ANALOG:  a valve harmonic exciter.
+//            WARMTH  a little valve warmth over the whole signal (a gently biased valve stage, level matched)
+//            HIGH    the band above TUNE (1.5 - 8 kHz) is driven through a valve at a steady level (divided by its own
+//                    envelope, so the colour is the same at any level); only the new harmonics are kept and mixed
+//                    back in by AMOUNT
+//            BASS    the bass contour: the lows below 100 Hz are rounded by a valve, lifted, and their sub rumble
+//                    pulled back - tighter and warmer below 100 Hz, a little scoop of the low mids
+//   DIGITAL: a late-90s DSP multiband maximiser - three bands (below 120 Hz, 120 Hz to TUNE, above TUNE), no added
+//            harmonics, 20-bit clean.
+//            HIGH    frequency-dependent upward expansion: the band above TUNE is lifted, and more on its transients
+//                    (AMOUNT) - clarity and definition
+//            BASS    low-band punch: a transient shaper lifts the attack of each kick and bass note
+//            ALIGN   (the WARMTH knob) phase alignment: the low band is delayed up to 1.5 ms, so the mids and highs
+//                    arrive first
+//            The result leaves on a 20-bit word (TPDF dither).
+//   -> back to 1x -> MIX (with the dry signal, delayed to match) -> OUTPUT -> the house output stage (band SAT, CLIP
+//   always on).
+// HIGH and BASS each have an IN / OUT pair (the section glides in and out). LISTEN solos what the high section adds
+// (ANALOG: the harmonics; DIGITAL: the enhanced high band).
+// AMOUNT, TUNE, BASS and WARMTH / ALIGN are level matched in both models, and the two models are matched to each other.
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the valves warm up and the mains wander: their bias and the gain
+// drift slowly, the channels never quite matched; DIGITAL - the DSP clock is steady: only a trace of gain drift.
+// Changing the model or LISTEN fades the sound out and back in. The latency is 31 samples (reported).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:40<0,100,1>-Amount (%)
+slider4:3500<1500,8000,10>-Tune (Hz)
+slider5:30<0,100,1>-Bass (%)
+slider6:30<0,100,1>-Warmth / align (%)
+slider7:100<0,100,1>-Mix (%)
+slider8:0<-24,12,0.1>-Output (dB)
+slider9:0<0,1,1{Analog,Digital}>-Model
+slider10:50<0,100,1>-Drift (%)
+slider11:1<0,1,1{Out,In}>-High section
+slider12:1<0,1,1{Out,In}>-Bass section
+slider13:0<0,1,1{Off,On}>-Listen
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-krt92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+k9_HB = s92_alloc(64);
+k9_MKT = s92_alloc(96);                                  // the makeups: per model AMOUNT, TUNE, BASS, WARMTH (11 points each, dB)
+k9_ostm = s92_alloc(4096);
+k9_DRY = s92_alloc(256);                                // the dry signal's delay (L at 0, R at 128)
+
+// ---------- oversampling: 2x, the house half-band ----------
+s92_hbdesign(k9_HB, 63, 8);
+k9uL.s92_upinit(63, k9_HB, 64); k9uR.s92_upinit(63, k9_HB, 64); k9dL.s92_dninit(63, k9_HB, 64); k9dR.s92_dninit(63, k9_HB, 64);
+k9_LAT = 31;
+// DIGITAL: the align delays (the low band, up to 1.5 ms at the 2x rate, 192 kHz)
+k9L.dlo.s92_dlinit(1024); k9R.dlo.s92_dlinit(1024);
+
+// ---------- the valve curves' fixed points ----------
+function k9_sl(b) ( (s92_th(b + 0.0001) - s92_th(b - 0.0001)) / 0.0002; );
+k9_t18 = s92_th(0.18); k9_s18 = k9_sl(0.18);            // WARMTH: the valve's bias point
+k9_t10 = s92_th(0.1);  k9_s10 = k9_sl(0.1);             // the bass contour's valve
+
+// ---------- the makeups (dB, measured on pink noise): row k = model * 4 + (0 AMOUNT, 1 TUNE, 2 BASS, 3 WARMTH) ----------
+function k9_row(k, a, b, c, d, e, f, g, h, i, j, l) local(p) (
+  p = k9_MKT + k * 11; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l;
+);
+k9_row(0, 0.19, 0.08, 0.01, -0.01, 0.00, 0.04, 0.08, 0.12, 0.15, 0.15, 0.11);
+k9_row(1, 0.05, 0.00, -0.02, -0.03, -0.02, 0.00, 0.02, 0.02, -0.00, -0.04, -0.11);
+k9_row(2, 0.21, 0.17, 0.10, -0.00, -0.12, -0.24, -0.37, -0.50, -0.62, -0.73, -0.81);
+k9_row(3, 0.13, 0.10, 0.04, 0.00, -0.03, -0.04, -0.04, -0.01, 0.07, 0.17, 0.30);
+k9_row(4, 0.19, 0.17, 0.14, 0.08, 0.00, -0.10, -0.20, -0.32, -0.45, -0.58, -0.71);
+k9_row(5, -0.41, -0.32, -0.23, -0.15, -0.07, -0.00, 0.06, 0.11, 0.15, 0.19, 0.21);
+k9_row(6, 0.23, 0.20, 0.12, -0.00, -0.14, -0.29, -0.45, -0.59, -0.72, -0.81, -0.87);
+k9_row(7, 0.05, 0.02, 0.01, 0.00, -0.00, 0.02, 0.04, 0.06, 0.10, 0.15, 0.20);
+k9_mb0 = -0.07; k9_mb1 = -0.36;                                 // the models' base makeups (dB)
+function k9_tb(k, n) local(p, i, f, q) (
+  p = min(max(n, 0), 1) * 10; i = min(floor(p), 9); f = p - i; q = k9_MKT + k * 11;
+  q[i] * (1 - f) + q[i + 1] * f;
+);
+function k9_mk(md, am, tu, ba, wm) (
+  10 ^ (((md ? k9_mb1 : k9_mb0) + k9_tb(md * 4, am) + k9_tb(md * 4 + 1, log(tu / 1500) / log(8000 / 1500))
+        + k9_tb(md * 4 + 2, ba) + k9_tb(md * 4 + 3, wm)) / 20);
+);
+
+// ---------- one channel at 2x ----------
+// ANALOG: the valve warmth, the valve exciter above TUNE, the bass contour below 100 Hz
+function k9_an(x) instance(xh1, xh2, xp, bl, bs, ep) local(y, a, b, hi, v, w, h, lo, ls, sb) (
+  // WARMTH: a gently biased valve stage over everything (unity small-signal gain)
+  a = k9_wa; b = 0.18 + k9_db;
+  y = (s92_th(x * k9_dg * a + b) - s92_th(b)) / (a * k9_s18);
+  // HIGH: the band above TUNE at a steady level through the exciter's valve; only the new harmonics are kept
+  hi = xh1.s92_bq(y);
+  a = abs(hi); ep += (a - ep) * (a > ep ? k9_kea : k9_ker);
+  v = min(max(hi / max(ep, 0.00003), -1.2), 1.2);
+  w = 0.62 + 3 * k9_db;
+  h = (w * (2 * v * v - 1) + 0.3 * (4 * v * v * v - 3 * v) + 0.14 * (8 * v * v * (v * v - 1) + 1)) * ep;
+  h = xp.s92_bq(xh2.s92_bq(h));
+  // BASS: the lows below 100 Hz rounded by a valve and lifted, the sub rumble pulled back
+  lo = bl.s92_bq(y);
+  ls = (s92_th(lo * k9_kb + 0.1) - k9_t10) / (k9_kb * k9_s10);
+  sb = bs.s92_bq(lo);
+  y += k9_bas * (ls * 1.68 - lo - 0.6 * sb);
+  k9_lis ? h * k9_amt * 1.2 : (y + h * k9_amt * 0.3) * k9_m;
+);
+// DIGITAL: three bands - upward expansion above TUNE, punch below 120 Hz, the align delays
+function k9_di(x) instance(h1, h2, l1, l2, dlo, ef, es, lf, lsl, gs, gb) local(hi, lm, lo, mi, a, g) (
+  x *= k9_dg;
+  hi = h2.s92_bq(h1.s92_bq(x)); lm = x - hi;
+  lo = l2.s92_bq(l1.s92_bq(lm)); mi = lm - lo;
+  // HIGH: upward expansion - a lift that grows on the band's transients
+  a = abs(hi);
+  ef += (a - ef) * (a > ef ? k9_kfa : k9_kfr); es += (a - es) * (a > es ? k9_ksa : k9_ksr);
+  g = 1 + k9_amt * (0.45 + 1.1 * min(max(ef / (es + 0.00001) - 1, 0), 1.5));
+  gs += (g - gs) * k9_kgs;
+  // BASS: the low band's attack lifted
+  a = abs(lo);
+  lf += (a - lf) * (a > lf ? k9_kfa : k9_kpr); lsl += (a - lsl) * (a > lsl ? k9_ksa : k9_ksr);
+  g = 1 + k9_bas * 1.5 * min(max(lf / (lsl + 0.00001) - 1, 0), 1.5);
+  gb += (g - gb) * k9_kgs;
+  // ALIGN: the low band delayed, so the mids and highs lead
+  dlo.s92_dlw(lo * gb); lo = dlo.s92_dlr(k9_ad);
+  k9_lis ? hi * gs : (lo + mi + hi * gs) * k9_m;
+);
+function k9_ch(x) ( k9_mod ? this.k9_di(x) : this.k9_an(x); );
+
+// ---------- settings ----------
+function k9_update() local(am, ba) (
+  in_setup(slider1, slider2 >= 0.5);
+  k9_tmo = slider9 >= 0.5; k9_tlis = slider13 >= 0.5;
+  am = slider11 >= 0.5 ? slider3 / 100 : 0; ba = slider12 >= 0.5 ? slider5 / 100 : 0;
+  k9_tamt = am; k9_tbas = ba; k9_twm = slider6 / 100;
+  k9_tm = k9_mk(k9_mod, am, slider4, ba, slider6 / 100);
+  k9_tmix = slider7 / 100; k9_tog = 10 ^ (slider8 / 20);
+  drift_macro(slider10);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = k9_LAT;
+);
+// the TUNE filters, recomputed from the glided TUNE (fs2 = the oversampled rate)
+function k9_filters() local(fs, f) (
+  fs = k9_fs2; f = k9_tu;
+  k9L.xh1.s92_bqset(1, f, 0, 0.707, fs); k9R.xh1.s92_bqset(1, f, 0, 0.707, fs);
+  k9L.xh2.s92_bqset(1, f * 1.2, 0, 0.707, fs); k9R.xh2.s92_bqset(1, f * 1.2, 0, 0.707, fs);
+  k9L.h1.s92_bqset(1, f, 0, 0.707, fs); k9R.h1.s92_bqset(1, f, 0, 0.707, fs);
+  k9L.h2.s92_bqset(1, f, 0, 0.707, fs); k9R.h2.s92_bqset(1, f, 0, 0.707, fs);
+  k9_ftu = k9_tu;
+);
+function k9_fixed() local(fs) (
+  fs = k9_fs2;
+  k9L.xp.s92_bqset(0, min(16000, 0.45 * fs), 0, 0.707, fs); k9R.xp.s92_bqset(0, min(16000, 0.45 * fs), 0, 0.707, fs);
+  k9L.bl.s92_bqset(0, 100, 0, 0.707, fs); k9R.bl.s92_bqset(0, 100, 0, 0.707, fs);
+  k9L.bs.s92_bqset(0, 35, 0, 0.707, fs); k9R.bs.s92_bqset(0, 35, 0, 0.707, fs);
+  k9L.l1.s92_bqset(0, 120, 0, 0.707, fs); k9R.l1.s92_bqset(0, 120, 0, 0.707, fs);
+  k9L.l2.s92_bqset(0, 120, 0, 0.707, fs); k9R.l2.s92_bqset(0, 120, 0, 0.707, fs);
+);
+function k9_srinit() (
+  k9_sr = srate; k9_fs2 = 2 * srate;
+  k9_kea = s92_kt(0.001, k9_fs2); k9_ker = s92_kt(0.06, k9_fs2);
+  k9_kfa = s92_kt(0.0005, k9_fs2); k9_kfr = s92_kt(0.03, k9_fs2); k9_kpr = s92_kt(0.025, k9_fs2);
+  k9_ksa = s92_kt(0.04, k9_fs2); k9_ksr = s92_kt(0.25, k9_fs2);
+  k9_kgs = s92_kt(0.0015, k9_fs2);
+  k9_sm = 1 - exp(-1 / (0.02 * srate));
+  k9_fd = 1 / (0.006 * srate);
+  ost_init(k9_ostm);
+  k9_fixed(); k9_filters();
+);
+k9_mod = k9_tmo = slider9 >= 0.5; k9_lis = k9_tlis = slider13 >= 0.5;
+in_init();
+k9_tu = slider4;
+k9_srinit();
+k9_dbL.drift_init(0.8 + rand(0.4)); k9_dbR.drift_init(0.8 + rand(0.4)); k9_dgL.drift_init(0.8 + rand(0.4)); k9_dgR.drift_init(0.8 + rand(0.4));
+k9_sbL = rand(2) - 1; k9_sbR = rand(2) - 1; k9_sgL = rand(2) - 1; k9_sgR = rand(2) - 1;
+k9oL.ost_ch_init(); k9oR.ost_ch_init();
+k9L.gs = k9R.gs = k9L.gb = k9R.gb = 1;
+k9_update();
+k9_m = k9_tm; k9_amt = k9_tamt; k9_bas = k9_tbas; k9_wm = k9_twm; k9_mix = k9_tmix; k9_og = k9_tog;
+k9_fade = 1; k9_fst = 0; k9_hold = 0; k9_dw = 0;
+
+// ---------- presets ----------
+function k9_set(am, tu, ba, wm, hin, bin, mx, ou, mo) (
+  slider3 = am; slider4 = tu; slider5 = ba; slider6 = wm; slider7 = mx; slider8 = ou; slider9 = mo;
+  slider11 = hin; slider12 = bin; slider13 = 0;
+  slider_automate(7676);                                // sliders 3-9, 11-13 (TRIM, GUARD, DRIFT and the output stage stay)
+);
+#k9_pm = "Init|Vocal Air|Acoustic Sparkle|Bass DI Contour|Warm Mix Bus|Parallel Excite|Tape Transfer Lift|DSP Mix Clarity|Drum Bus Punch|Kick and Bass Punch|Demo Master Polish|Dull Sample Fix";
+function load_preset(p) (
+  //                 amt  tune  bass warm hi bs mix  out  model
+  p == 1  ? k9_set(40, 3500, 30, 30, 1, 1, 100,  0,   0) :     // Init
+  p == 2  ? k9_set(55, 5000, 10, 25, 1, 0, 100,  0,   0) :     // Vocal Air
+  p == 3  ? k9_set(60, 4000, 20, 20, 1, 1, 100,  0,   0) :     // Acoustic Sparkle
+  p == 4  ? k9_set(20, 2500, 70, 45, 1, 1, 100,  0,   0) :     // Bass DI Contour
+  p == 5  ? k9_set(30, 6000, 35, 60, 1, 1, 100,  0,   0) :     // Warm Mix Bus
+  p == 6  ? k9_set(90, 3000, 50, 50, 1, 1,  45,  0,   0) :     // Parallel Excite
+  p == 7  ? k9_set(70, 2200, 40, 35, 1, 1, 100, -0.2, 0) :     // Tape Transfer Lift
+  p == 8  ? k9_set(45, 4500, 30, 40, 1, 1, 100,  0,   1) :     // DSP Mix Clarity
+  p == 9  ? k9_set(35, 3000, 70, 50, 1, 1, 100,  0,   1) :     // Drum Bus Punch
+  p == 10 ? k9_set(15, 5000, 90, 70, 0, 1, 100,  0,   1) :     // Kick and Bass Punch
+  p == 11 ? k9_set(30, 6500, 25, 25, 1, 1, 100,  0,   1) :     // Demo Master Polish
+  p == 12 ? k9_set(80, 2000, 20, 30, 1, 1, 100, -0.2, 1) :     // Dull Sample Fix
+  p == 13 ? (                                               // Reset all to defaults
+    k9_set(40, 3500, 30, 30, 1, 1, 100, 0, 0);
+    slider1 = 0; slider2 = 1; slider10 = 50; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3; slider19 = 1;
+    slider_automate(524287);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+k9_update();
+
+@block
+srate != k9_sr ? k9_srinit();
+k9_update();                                            // knobs moved on the panel do not run @slider
+// the TUNE glide (about 20 ms), the filters recomputed once per block while it moves
+k9_kb0 = 1 - exp(-samplesblock / (0.02 * srate));
+k9_tu += (slider4 - k9_tu) * k9_kb0; abs(k9_tu - slider4) < 0.05 ? k9_tu = slider4;
+k9_tu != k9_ftu ? k9_filters();
+// DRIFT: ANALOG - the valves' bias and the gain drift as they warm and the mains wander; DIGITAL - a trace of gain drift
+k9_dt = 0.12 * dm_s * samplesblock / srate;
+k9_wb = k9_mod ? 0 : 1; k9_wg = k9_mod ? 0.2 : 1;
+k9_dbLv = k9_wb * dm_a * (0.03 * k9_dbL.drift_tick(k9_dt) + 0.01 * k9_sbL); k9_dbRv = k9_wb * dm_a * (0.03 * k9_dbR.drift_tick(k9_dt) + 0.01 * k9_sbR);
+k9_dgLv = 1 + k9_wg * dm_a * (0.02 * k9_dgL.drift_tick(k9_dt) + 0.006 * k9_sgL); k9_dgRv = 1 + k9_wg * dm_a * (0.02 * k9_dgR.drift_tick(k9_dt) + 0.006 * k9_sgR);
+k9a_vi = max(k9a_vi, k9_viL); k9a_vo = max(k9a_vo, k9_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+k9_m += (k9_tm - k9_m) * k9_sm; k9_amt += (k9_tamt - k9_amt) * k9_sm; k9_bas += (k9_tbas - k9_bas) * k9_sm;
+k9_wm += (k9_twm - k9_wm) * k9_sm; k9_mix += (k9_tmix - k9_mix) * k9_sm; k9_og += (k9_tog - k9_og) * k9_sm;
+k9_wa = 0.1 + 1.5 * k9_wm * sqrt(k9_wm); k9_ad = k9_wm * 0.0015 * k9_fs2; k9_kb = 2 + 4 * k9_bas;
+// a change of model or LISTEN: fade out, switch at the silent point, wait, fade in
+(k9_tmo != k9_mod || k9_tlis != k9_lis) && k9_fst == 0 ? k9_fst = 1;
+k9_fst == 1 ? ( k9_fade -= k9_fd; k9_fade <= 0 ? (
+  k9_fade = 0; k9_lis = k9_tlis;
+  k9_tmo != k9_mod ? ( k9_mod = k9_tmo; k9_update(); k9_m = k9_tm; );
+  k9_hold = k9_LAT + floor(0.025 * srate); k9_fst = 2; ); ) :      // the wait lets the new model's envelopes settle
+k9_fst == 2 ? ( k9_hold -= 1; k9_hold <= 0 ? k9_fst = 3; ) :
+k9_fst == 3 ? ( k9_fade += k9_fd; k9_fade >= 1 ? ( k9_fade = 1; k9_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+k9_xl = in_l; k9_xr = in_r;
+k9_viL = max(k9_viL * 0.9995, abs(k9_xl) + abs(k9_xr));
+k9_DRY[k9_dw] = k9_xl; k9_DRY[128 + k9_dw] = k9_xr;
+k9_dr = (k9_dw - k9_LAT) & 127; k9_yld = k9_DRY[k9_dr]; k9_yrd = k9_DRY[128 + k9_dr]; k9_dw = (k9_dw + 1) & 127;
+
+// ---------- the enhancer, at 2x ----------
+k9uL.s92_up(k9_xl); k9uR.s92_up(k9_xr);
+k9_dg = k9_dgLv; k9_db = k9_dbLv; k9_q0l = k9L.k9_ch(k9uL.o0); k9_q1l = k9L.k9_ch(k9uL.o1);
+k9_dg = k9_dgRv; k9_db = k9_dbRv; k9_q0r = k9R.k9_ch(k9uR.o0); k9_q1r = k9R.k9_ch(k9uR.o1);
+k9_yl = k9dL.s92_dn(k9_q0l, k9_q1l); k9_yr = k9dR.s92_dn(k9_q0r, k9_q1r);
+
+// ---------- DIGITAL: the 20-bit word (TPDF dither) ----------
+k9_mod ? (
+  k9_yl = floor(k9_yl * 524288 + rand(1) - rand(1) + 0.5) / 524288; k9_yr = floor(k9_yr * 524288 + rand(1) - rand(1) + 0.5) / 524288;
+);
+// ---------- MIX (LISTEN: the high section alone), the fade, OUTPUT and the house output stage ----------
+!k9_lis ? ( k9_yl = k9_yld + (k9_yl - k9_yld) * k9_mix; k9_yr = k9_yrd + (k9_yr - k9_yrd) * k9_mix; );
+k9_yl *= k9_fade; k9_yr *= k9_fade;
+k9_vL = max(k9_vL * 0.9995, abs(k9_yl) + abs(k9_yr));
+k9_yl = k9oL.ost_band(k9_yl) * k9_og; k9_yr = k9oR.ost_band(k9_yr) * k9_og;
+ost_out(k9_yl, k9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider9);
+s92_fonts();
+s92_face(960, 366);
+k9g_d = slider9 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "KRT92", "SERIES 92", "STUDIO ENHANCER", #k9_pm, 9);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the LED ladders, the trim, GUARD ----------
+s92_mod(20, 62, 222, 292, "INPUT");
+k9mI.s92_edge(30, 94, 202, 46, k9a_vi * 2.83, "IN");
+k9mO.s92_edge(30, 148, 202, 46, k9a_vo * 2.83, "OUT");
+k9a_vi *= 0.6; k9a_vo *= 0.6;
+s92_off = 0; s92_knob(72, 282, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(180, 250, "GUARD");
+s92_key(152, 260, 56, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(220 * sc, 272 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+
+// ---------- HIGH: the valve exciter (ANALOG) / the spectral enhancer (DIGITAL) ----------
+s92_mod(254, 62, 270, 292, k9g_d ? "HF ENHANCER" : "VALVE EXCITER");
+s92_onoff(444, 64, 11);
+sprintf(#k9g_l, "TUNE  %.2f kHz", slider4 / 1000);
+s92_lcd(270, 94, 238, 26, #k9g_l);
+s92_kc = S92_C_HF;
+s92_knob(326, 190, 32, 4, 1500, 8000, 3500, 1, "TUNE", "%.0f Hz", 0);
+s92_knob(452, 190, 32, 3, 0, 100, 40, 0, "AMOUNT", "%.0f%%", 0);
+s92_kc = 0;
+s92_smallc(389, 266, "LISTEN");
+s92_lc = S92_C_HF; s92_key(355, 276, 68, 24, slider13 >= 0.5, "SOLO") ? s92_set(13, slider13 >= 0.5 ? 0 : 1); s92_lc = 0;
+s92_smallc(389, 330, k9g_d ? "UPWARD EXPANSION ABOVE TUNE" : "VALVE HARMONICS ABOVE TUNE");
+
+// ---------- BASS: the bass contour (ANALOG) / low punch (DIGITAL) ----------
+s92_mod(536, 62, 198, 292, k9g_d ? "LOW PUNCH" : "BASS CONTOUR");
+s92_onoff(654, 64, 12);
+s92_lcd(552, 94, 166, 26, k9g_d ? "XOVER 120 Hz" : "BELOW 100 Hz");
+s92_kc = S92_C_LF;
+s92_knob(635, 196, 40, 5, 0, 100, 30, 0, k9g_d ? "PUNCH" : "BASS", "%.0f%%", 0);
+s92_kc = 0;
+s92_smallc(635, 296, k9g_d ? "LOW-BAND TRANSIENTS" : "TIGHTER · WARMER");
+s92_smallc(635, 330, k9g_d ? "NO ADDED HARMONICS" : "VALVE ON THE LOWS");
+
+// ---------- OUTPUT: WARMTH / ALIGN, DRIFT, SAT; MIX and OUTPUT on faders ----------
+s92_mod(746, 62, 194, 292, "OUTPUT");
+s92_knob(788, 118, 18, 6, 0, 100, 30, 0, k9g_d ? "ALIGN" : "WARMTH", "%.0f%%", 0);
+s92_knob(788, 206, 18, 10, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(788, 290, 12, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(810 * sc, 278 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fc = S92_F_BLUE; s92_fader(852, 106, 130, 7, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(906, 106, 130, 8, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s92_smallc(879, 300, k9g_d ? "20-BIT · 2x" : "VALVE · 2x");
+s92_smallc(879, 318, "CLIP ALWAYS ON");
+
+pk_end();
+ui_end();

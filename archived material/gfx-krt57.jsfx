@@ -1,0 +1,255 @@
+desc:GFX KRT57 [enhancer]
+//tags: enhancer exciter presence harmonics bass phase delay equaliser valve mastering series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// KRT57 (Series 57). The 1957 counterpart of KRT81, the phase and frequency corrector: the same idea - hold the
+// lows back a little so the edge arrives first, and restore what the chain has dulled - with the means of the
+// valve broadcast house.
+//   ALIGN  the line's delay equaliser: two all-pass sections hold the lows back against the top (the sections'
+//     frequency moves from 20 Hz - practically nothing - to 300 Hz). An all-pass: the level of every frequency
+//     stays the same, only the timing changes.
+//   BASS  a valve harmonic generator on the lows: FREQ (50 - 200 Hz) picks the band, AMOUNT adds its harmonics -
+//     the bass is heard more clearly on small speakers without more low-frequency energy.
+//   PRESENCE  a valve exciter on the top: the band above FREQ (1.5 - 8 kHz) is driven, and only the new harmonics
+//     are added back (AMOUNT) - brightness that sounds natural rather than boosted.
+//   BRILLIANCE  a gentle top shelf at 10 kHz, -6 .. +6 dB.
+//   DRIVE  the input valve, level matched. The harmonic stages run oversampled 2x.
+//   MIX, OUTPUT, the IN button (by the title: a crossfade to the untouched input). The house output stage.
+// ULM / COPENHAGEN (the face): ULM - a crisp, even-and-odd exciter, a tight bass generator, the presence band as set.
+//   COPENHAGEN - warmer, mostly even harmonics, the presence band a little lower, a softer brilliance, a rounder
+//   bass. Level matched.
+// DRIFT (0 - 100 %, 50 % = standard): the valves' bias wanders, so the harmonic colour breathes a little.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:20<0,100,1>-Drive (%)
+slider4:40<0,100,1>-Align (%)
+slider5:90<50,200,1>-Bass freq (Hz)
+slider6:30<0,100,1>-Bass amount (%)
+slider7:3500<1500,8000,10>-Presence freq (Hz)
+slider8:30<0,100,1>-Presence amount (%)
+slider9:0<-6,6,0.1>-Brilliance (dB)
+slider10:100<0,100,1>-Mix (%)
+slider11:0<-24,12,0.1>-Output (dB)
+slider12:50<0,100,1>-Drift (%)
+slider13:0<0,100,1>-Band sat (%)
+slider14:30<0,100,1>-Bias (output stage, %)
+slider15:120<40,400,1>-Sat low band (Hz)
+slider16:6000<2000,16000,10>-Sat high band (Hz)
+slider17:-0.3<-24,0,0.1>-Ceiling (dB)
+slider18:0<0,1,1{Ulm,Copenhagen}>-Face
+slider19:1<0,1,1{Out,In}>-In
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-krt57";
+ext_noinit = 1;
+s57_mem = 0;
+
+kr_HB = s57_alloc(64); s57_hbdesign(kr_HB, 63, 8);
+kruL.s57_upinit(63, kr_HB, 64); kruR.s57_upinit(63, kr_HB, 64); krdL.s57_dninit(63, kr_HB, 64); krdR.s57_dninit(63, kr_HB, 64);
+kr_LAT = 31;
+kr_DRY = s57_alloc(256);
+
+// one channel at 2x: the input valve, the bass generator, the presence exciter
+function kr_ch(x) instance(bl, bh, ph, pp, ph2, eb, ep) local(y, k, b, lo, hb, hi, he, u) (
+  // the input valve (level matched)
+  k = 1 + 4 * kr_drv; b = kr_vb + kr_db;
+  y = (s57_th(x * k * 0.7 + b) - s57_th(b)) / (k * 0.7) * kr_dmk;
+  // The generators work at a steady level whatever comes in (as the exciters did, with a limiter ahead of the
+  // valve): the band is divided by its own envelope, driven, and the harmonics are scaled back by the envelope.
+  // BASS: the band through a valve; only the new harmonics are kept
+  lo = bl.s57_bq(y);
+  eb += (abs(lo) - eb) * (abs(lo) > eb ? kr_ka : kr_kr);
+  u = min(max(lo / max(eb, 0.00003), -1.2), 1.2);
+  hb = ((2 * u * u - 1) * kr_w2 + (4 * u * u * u - 3 * u) * kr_w3) * eb;   // the 2nd and 3rd harmonics (Chebyshev)
+  hb = bh.s57_bq(hb);
+  // PRESENCE: the top above FREQ, driven; only the new harmonics are added back
+  hi = ph.s57_bq(y);
+  ep += (abs(hi) - ep) * (abs(hi) > ep ? kr_ka : kr_kr);
+  u = min(max(hi / max(ep, 0.00003), -1.2), 1.2);
+  he = ((2 * u * u - 1) * kr_w2 + (4 * u * u * u - 3 * u) * kr_w3) * ep;
+  he = pp.s57_bq(ph2.s57_bq(he));
+  y + hb * kr_ba + he * kr_pa;
+);
+
+function kr_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  kr_drv = slider3 / 100;
+  kr_dmk = 1 + 0.25 * kr_drv;
+  kr_ba = slider6 / 100 * 1.4; kr_pa = slider8 / 100 * 1.4;
+  kr_tmix = slider10 / 100; kr_tog = 10 ^ (slider11 / 20); kr_tin = slider19 >= 0.5;
+  kr_tfc = slider18 >= 0.5;
+  drift_macro(slider12);
+  ost_setup(slider13 / 100, slider14 / 100, slider15, slider16, slider17, 1);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = kr_LAT;
+);
+function kr_filters() local(fs, fp, fa) (
+  fs = kr_fs2;
+  kr_vb = kr_fc ? 0.18 : 0.06; kr_pb = kr_fc ? 0.35 : 0.12;
+  kr_w2 = kr_fc ? 0.85 : 0.5; kr_w3 = kr_fc ? 0.15 : 0.5;   // even (warm) and odd (crisp) harmonics
+  kr_ka = s57_kt(0.001, fs); kr_kr = s57_kt(0.06, fs);
+  fp = slider7 * (kr_fc ? 0.8 : 1);
+  krL.bl.s57_bqset(0, slider5, 0, 0.7, fs); krR.bl.s57_bqset(0, slider5, 0, 0.7, fs);
+  krL.bh.s57_bqset(2, slider5 * (kr_fc ? 2.2 : 2.8), 0, kr_fc ? 0.6 : 0.9, fs); krR.bh.s57_bqset(2, slider5 * (kr_fc ? 2.2 : 2.8), 0, kr_fc ? 0.6 : 0.9, fs);
+  krL.ph.s57_bqset(1, fp, 0, 0.7, fs); krR.ph.s57_bqset(1, fp, 0, 0.7, fs);
+  krL.ph2.s57_bqset(1, fp * 1.4, 0, 0.7, fs); krR.ph2.s57_bqset(1, fp * 1.4, 0, 0.7, fs);
+  krL.pp.s57_bqset(0, kr_fc ? 14000 : 19000, 0, 0.7, fs); krR.pp.s57_bqset(0, kr_fc ? 14000 : 19000, 0, 0.7, fs);
+  // ALIGN: two all-pass sections (1x), BRILLIANCE (1x)
+  fa = 20 * 15 ^ (slider4 / 100);
+  krA1L.s57_bqset(6, fa, 0, 0.6, srate); krA1R.s57_bqset(6, fa, 0, 0.6, srate);
+  krA2L.s57_bqset(6, fa * 2.6, 0, 0.6, srate); krA2R.s57_bqset(6, fa * 2.6, 0, 0.6, srate);
+  krBL.s57_bqset(5, 10000, slider9 * (kr_fc ? 0.75 : 1), 0.6, srate); krBR.s57_bqset(5, 10000, slider9 * (kr_fc ? 0.75 : 1), 0.6, srate);
+  kr_l4 = slider4; kr_l5 = slider5; kr_l7 = slider7; kr_l9 = slider9;
+);
+function kr_srinit() (
+  kr_sr = srate; kr_fs2 = 2 * srate;
+  kr_sm = s57_kt(0.02, srate); kr_fd = 1 / (0.006 * srate);
+  kr_filters();
+  ost_init(0);
+);
+
+in_init();
+kr_fc = kr_tfc = slider18 >= 0.5;
+kr_update(); kr_srinit();
+kr_dfB.drift_init(0.8 + rand(0.4));
+kro.ost_ch_init(); krp.ost_ch_init();
+kr_mix = kr_tmix; kr_og = kr_tog; kr_in = kr_tin; kr_ing = kr_in; kr_fade = 1; kr_fst = 0;
+
+function kr_set(dr, al, bf, ba, pf, pa, br, mx) (
+  slider3 = dr; slider4 = al; slider5 = bf; slider6 = ba; slider7 = pf; slider8 = pa; slider9 = br; slider10 = mx; slider19 = 1;
+  slider_automate(263164);                              // sliders 3 - 10 and 19
+);
+#kr_pm = "Init|Gentle Polish|Vocal Presence|Bass Restore|Small Speakers|Air and Edge|Mix Bus Lift|Warm Valves|Dull Tape Rescue|Snare Crack|Subtle Align|Full Restore";
+function load_preset(p) (
+  //                drv alg  bf  ba    pf   pa   br   mix
+  p == 1  ? kr_set(20, 40,  90, 30, 3500, 30,  0,   100) :     // Init
+  p == 2  ? kr_set(10, 30,  80, 15, 4500, 15,  1,   100) :     // Gentle Polish
+  p == 3  ? kr_set(25, 35, 120, 10, 2800, 45,  1.5, 100) :     // Vocal Presence
+  p == 4  ? kr_set(20, 50,  70, 60, 4000, 10,  0,   100) :     // Bass Restore
+  p == 5  ? kr_set(25, 45, 110, 75, 3500, 25,  0,   100) :     // Small Speakers
+  p == 6  ? kr_set(10, 30,  90, 10, 6000, 50,  3,   100) :     // Air and Edge
+  p == 7  ? kr_set(15, 50,  80, 25, 4000, 25,  1,   100) :     // Mix Bus Lift
+  p == 8  ? kr_set(55, 40, 100, 35, 3000, 30, -1,   100) :     // Warm Valves
+  p == 9  ? kr_set(20, 40,  90, 30, 2500, 70,  4,   100) :     // Dull Tape Rescue
+  p == 10 ? kr_set(30, 60, 150, 20, 2200, 60,  2,   100) :     // Snare Crack
+  p == 11 ? kr_set( 0, 70,  90,  0, 3500,  0,  0,   100) :     // Subtle Align
+  p == 12 ? kr_set(40, 60,  90, 70, 3500, 70,  2,   100) :     // Full Restore
+  p == 13 ? (
+    kr_set(20, 40, 90, 30, 3500, 30, 0, 100);
+    slider1 = 0; slider2 = 1; slider11 = 0; slider12 = 50; slider13 = 0; slider14 = 30; slider15 = 120; slider16 = 6000; slider17 = -0.3;
+    slider_automate(393215);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+kr_update();
+
+@block
+srate != kr_sr ? kr_srinit();
+kr_update();
+(slider4 != kr_l4 || slider5 != kr_l5 || slider7 != kr_l7 || slider9 != kr_l9) ? kr_filters();
+kr_tfc != kr_fc && kr_fst == 0 ? kr_fst = 1;
+kr_di = 0.12 * dm_s * samplesblock / srate;
+kr_db = dm_a * 0.05 * kr_dfB.drift_tick(kr_di);
+kra_vi = max(kra_vi, kr_viL); kra_vo = max(kra_vo, kr_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+kr_mix += (kr_tmix - kr_mix) * kr_sm; kr_og += (kr_tog - kr_og) * kr_sm; kr_ing += (kr_tin - kr_ing) * kr_sm;
+kr_fst == 1 ? ( kr_fade -= kr_fd; kr_fade <= 0 ? ( kr_fade = 0; kr_fc = kr_tfc; kr_filters(); kr_hold = kr_LAT + 8; kr_fst = 2; ); ) :
+kr_fst == 2 ? ( kr_hold -= 1; kr_hold <= 0 ? kr_fst = 3; ) :
+kr_fst == 3 ? ( kr_fade += kr_fd; kr_fade >= 1 ? ( kr_fade = 1; kr_fst = 0; ); );
+
+in_process(spl0, spl1);
+kr_xl = in_l; kr_xr = in_r;
+kr_viL = max(kr_viL * 0.9995, abs(kr_xl) + abs(kr_xr));
+kr_DRY[kr_dp] = kr_xl; kr_DRY[128 + kr_dp] = kr_xr;
+kr_rp = (kr_dp - kr_LAT) & 127; kr_yld = kr_DRY[kr_rp]; kr_yrd = kr_DRY[128 + kr_rp]; kr_dp = (kr_dp + 1) & 127;
+
+kruL.s57_up(kr_xl); kruR.s57_up(kr_xr);
+kr_q0l = krL.kr_ch(kruL.o0); kr_q0r = krR.kr_ch(kruR.o0);
+kr_q1l = krL.kr_ch(kruL.o1); kr_q1r = krR.kr_ch(kruR.o1);
+kr_yl = krdL.s57_dn(kr_q0l, kr_q1l); kr_yr = krdR.s57_dn(kr_q0r, kr_q1r);
+// ALIGN (the delay equaliser) and BRILLIANCE
+kr_yl = krBL.s57_bq(krA2L.s57_bq(krA1L.s57_bq(kr_yl))); kr_yr = krBR.s57_bq(krA2R.s57_bq(krA1R.s57_bq(kr_yr)));
+// MIX, the face fade and the IN button: both go back to the untouched (delayed) input
+kr_w = kr_mix * kr_fade * kr_ing;
+kr_yl = kr_yld + (kr_yl - kr_yld) * kr_w; kr_yr = kr_yrd + (kr_yr - kr_yrd) * kr_w;
+kr_vL = max(kr_vL * 0.9995, abs(kr_yl) + abs(kr_yr));
+kr_yl = kro.ost_band(kr_yl) * kr_og; kr_yr = krp.ost_band(kr_yr) * kr_og;
+ost_out(kr_yl, kr_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider18);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "KRT57", "SERIES 57", "ENHANCER", #kr_pm, 18);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 5);
+s57_small(30, 378, "IN"); s57_small(240, 378, "VALVE"); s57_small(468, 378, "HARMONICS"); s57_small(694, 378, "DELAY EQ"); s57_small(892, 378, "OUT");
+
+// ---------- the levels and the input ----------
+s57_plate(20, 68, 214, 292);
+s57_title(32, 76, "LEVEL");
+s57_inkey(100, 77, 19);
+krI.s57_edge(32, 98, 190, 66, kra_vi * 2.83, "IN");
+krO.s57_edge(32, 172, 190, 66, kra_vo * 2.83, "OUT");
+kra_vi *= 0.6; kra_vo *= 0.6;
+s57_knob(76, 300, 20, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(170, 268, "GUARD");
+s57_key(144, 280, 52, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(206 * sc, 290 * sc, 3.5 * sc, 1, S57_ORNG); ); in_grd = 0;
+
+// ---------- the correction ----------
+s57_well(250, 68, 450, 292);
+ui_cola(S57_INK, 0.35); s57_r(396, 100, 1, 248); s57_r(548, 100, 1, 248);
+s57_title(262, 76, "VALVE · ALIGN"); s57_title(408, 76, "BASS"); s57_title(560, 76, "PRESENCE");
+s57_knob(322, 158, 26, 3, 0, 100, 20, 0, "DRIVE", "%.0f%%", 0);
+s57_knob(322, 276, 26, 4, 0, 100, 40, 0, "ALIGN", "%.0f%%", 0);
+s57_knob(472, 158, 24, 5, 50, 200, 90, 1, "FREQ", "%.0f Hz", 0);
+s57_knob(472, 276, 26, 6, 0, 100, 30, 0, "AMOUNT", "%.0f%%", 0);
+s57_knob(624, 158, 24, 7, 1500, 8000, 3500, 1, "FREQ", "%.0f Hz", 0);
+s57_knob(624, 276, 26, 8, 0, 100, 30, 0, "AMOUNT", "%.0f%%", 0);
+// the harmonics, drawn as little bars above each AMOUNT
+i_ = 0; loop(4, ui_cola(S57_ORNG, 0.25 + 0.75 * slider6 / 100 / (i_ + 1)); s57_r(446 + i_ * 14, 226 - 34 * slider6 / 100 / (i_ * 0.6 + 1), 8, 34 * slider6 / 100 / (i_ * 0.6 + 1)); i_ += 1; );
+i_ = 0; loop(4, ui_cola(S57_ORNG, 0.25 + 0.75 * slider8 / 100 / (i_ + 1)); s57_r(598 + i_ * 14, 226 - 34 * slider8 / 100 / (i_ * 0.6 + 1), 8, 34 * slider8 / 100 / (i_ * 0.6 + 1)); i_ += 1; );
+
+// ---------- the output ----------
+s57_plate(716, 68, 224, 292);
+s57_title(728, 76, "OUTPUT");
+s57_knob(772, 150, 20, 9, -6, 6, 0, 0, "BRILLIANCE", "%+.1f dB", 0);
+s57_knob(880, 150, 20, 10, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s57_knob(826, 246, 20, 11, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(772, 322, 13, 12, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(880, 322, 13, 13, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(908 * sc, 306 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

@@ -1,0 +1,484 @@
+desc:GFX Room74 [OB ambience]
+//tags: ambience room early reflections reverb bbd bucket-brigade compander chorus broadcast space series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// ROOM74 (Series 74: the OB remote and broadcast series): the ambience unit from an outside-broadcast truck, for
+// putting close-miked sources into a space. Two models on one switch.
+//   input -> TRIM / GUARD -> the dry signal, untouched, to the MIX
+//                         -> the send (L + R) ->
+//   OB:    the INPUT IRON (a transformer: the lows saturate first) -> the COMPANDER's compressor (2:1) -> a 9 kHz
+//          anti-alias filter -> a bucket-brigade line with twelve taps: the EARLY REFLECTIONS. Each tap's clock is
+//          swept by slow LFOs (SMEAR: a chorus-like smear on the reflections) -> the reconstruction filters -> the
+//          compander's expander -> a short diffuse TAIL in band-limited, slowly modulated lines -> the OUTPUT IRON.
+//          Warm, a little soft at the top, no clock noise.
+//   CLEAN: a crystal-clear algorithmic room: the twelve taps are a geometric early-reflection pattern (the image
+//          sources of a box room, from SHAPE, SIZE and DISTANCE: the walls, the floor and the ceiling, then the
+//          second bounces), then a short, dense, clean tail. Full bandwidth, no modulation. SMEAR is out of the path.
+//   -> WIDTH -> MIX (send law: the dry stays at full up to 50 %, the wet at full from 50 %) -> OUTPUT -> the house
+//   output stage (band SAT, CLIP always on).
+// Both models build their reflections from the same geometry: the image sources of a box room, a listener and the
+// source in front of it. The dry signal is the direct sound; each reflection arrives (path - direct path) / c later.
+//   SHAPE (BOOTH / STUDIO / HALL / STADIUM): the room: its proportions, how hard its walls are, the tail's size, the
+//         air (STADIUM is open above: long, dark slap-backs from the stands).
+//   SIZE: the room 0.6x .. 1.4x.  DISTANCE: source to listener: close (the direct sound leads, the reflections come
+//         late and low) to far (more room: the reflections close up on the direct sound, the tail rises).
+//   DECAY: the tail (0.1 - 3 s, RT60).  SMEAR (OB): the depth of the bucket-brigade clock modulation.
+//   TONE: dark .. bright: the bucket brigade's bandwidth (OB), the air and the tail's damping (CLEAN).
+//   WIDTH: the reflections' spread and the tail's side signal, mono .. wide.
+// OB and CLEAN are level matched, and the wet level follows DISTANCE (not SIZE, SHAPE or DECAY).
+// WANDER (0-100 %, 50 % = the standard amount): on OB the bucket brigade's clock and the smear's LFOs wander; on
+// CLEAN only a trace of clock wander remains (telemetry is stable).
+// Changing the model or the shape fades the room out (the dry stays), switches, and fades it back in.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:50<0,100,1>-Size (%)
+slider4:35<0,100,1>-Distance (%)
+slider5:0.6<0.1,3,0.01>-Decay (s)
+slider6:35<0,100,1>-Smear (%)
+slider7:0<-100,100,1>-Tone (dark to bright)
+slider8:80<0,100,1>-Width (%)
+slider9:1<0,3,1{Booth,Studio,Hall,Stadium}>-Shape
+slider10:50<0,100,1>-Mix (%)
+slider11:0<-24,12,0.1>-Output (dB)
+slider12:0<0,1,1{OB,Clean}>-Model
+slider13:50<0,100,1>-Wander (%)
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-room74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+r4_ostm = s74_alloc(4096);
+r4e.s74_dlinit(262144);                                 // the reflections' line (the bucket brigade on OB)
+r4q.s74_dlinit(262144);                                 // beside it: the expander's gain for each sample (OB)
+r4c0.s74_dlinit(32768); r4c1.s74_dlinit(32768); r4c2.s74_dlinit(32768); r4c3.s74_dlinit(32768);
+r4c4.s74_dlinit(32768); r4c5.s74_dlinit(32768); r4c6.s74_dlinit(32768); r4c7.s74_dlinit(32768);
+r4a0.s74_dlinit(8192); r4a1.s74_dlinit(8192); r4a2.s74_dlinit(8192); r4a3.s74_dlinit(8192);
+r4_TD = s74_alloc(12); r4_CD = s74_alloc(12);           // the taps' delays: target, current (samples)
+r4_TGL = s74_alloc(12); r4_TGR = s74_alloc(12); r4_CGL = s74_alloc(12); r4_CGR = s74_alloc(12);
+r4_MA = s74_alloc(12); r4_MB = s74_alloc(12); r4_MC = s74_alloc(12);   // each tap's share of the three smear LFOs
+r4_NX = s74_alloc(12); r4_NY = s74_alloc(12); r4_NZ = s74_alloc(12);   // the image sources (bounces on each axis)
+r4_LN = s74_alloc(8); r4_GN = s74_alloc(8); r4_GC = s74_alloc(8); r4_LP = s74_alloc(8); r4_YY = s74_alloc(8);
+r4_SHT = s74_alloc(40);                                 // the shapes (10 values each)
+r4_LA = s74_alloc(128);                                 // the compressor's look-ahead
+r4_IMG = s74_alloc(16);                                 // the four wall images, for the panel
+
+// ---------- the room ----------
+// the twelve image sources: the four walls, the ceiling and the floor, then six second bounces
+function r4_image(i, x, y, z) ( r4_NX[i] = x; r4_NY[i] = y; r4_NZ[i] = z; );
+r4_image(0, 1, 0, 0); r4_image(1, -1, 0, 0); r4_image(2, 0, 1, 0); r4_image(3, 0, -1, 0); r4_image(4, 0, 0, -1); r4_image(5, 0, 0, 1);
+r4_image(6, 1, 1, 0); r4_image(7, 1, -1, 0); r4_image(8, -1, 1, 0); r4_image(9, -1, -1, 0); r4_image(10, 0, 1, -1); r4_image(11, 0, -1, -1);
+i_ = 0; loop(12, r4_MA[i_] = 0.6 * sin(i_ * 1.7 + 0.4); r4_MB[i_] = 0.5 * cos(i_ * 2.3 + 1.1); r4_MC[i_] = 0.4 * sin(i_ * 3.1 + 2.0); i_ += 1; );
+// the shapes: length, width, height (m), the walls' and the ceiling's reflection, the tail's scale and share,
+// the tail's damping (CLEAN, Hz), the air on the reflections (CLEAN, Hz)
+function r4_shape(k, lx, ly, lz, rw, rc, ts, tsh, dmp, air) local(p) (
+  p = r4_SHT + k * 10; p[0] = lx; p[1] = ly; p[2] = lz; p[3] = rw; p[4] = rc; p[5] = ts; p[6] = tsh; p[7] = dmp; p[8] = air;
+);
+r4_shape(0,   2.6,  2.0,  2.3, 0.55, 0.50, 0.5, 0.40, 9000, 20000);   // BOOTH
+r4_shape(1,   7.5,  5.5,  3.4, 0.75, 0.70, 1.0, 0.60, 12000, 20000);  // STUDIO
+r4_shape(2,  26.0, 18.0, 11.0, 0.80, 0.75, 2.0, 0.85, 8000, 12000);   // HALL
+r4_shape(3, 110.0, 80.0, 40.0, 0.60, 0.12, 3.2, 0.75, 5000, 6000);    // STADIUM
+// the tail's lines (ms, at STUDIO, SIZE 1x)
+r4_LN[0] = 7.3; r4_LN[1] = 9.1; r4_LN[2] = 10.7; r4_LN[3] = 12.3; r4_LN[4] = 13.9; r4_LN[5] = 15.7; r4_LN[6] = 17.9; r4_LN[7] = 20.3;
+
+// the geometry: the image sources of a box room, the listener at a third of its length, the source in front
+function r4_geom() local(p, s, lx, ly, lz, sx, sy, sz, d, i, nx, ny, nz, ix, iy, iz, dx, dy, dz, r, g, e, pn, wd, rw, rc)
+(
+  r4_g3 = slider3; r4_g4 = slider4; r4_g8 = slider8; r4_gsh = r4_shp; r4_gsr = srate;
+  p = r4_SHT + r4_shp * 10; s = 0.6 + 0.8 * slider3 / 100;
+  r4_rmx = p[0] * s; r4_rmy = p[1] * s; r4_rmz = p[2] * s; rw = p[3]; rc = p[4];
+  lx = 0.3 * r4_rmx; ly = 0.55 * r4_rmy; lz = min(1.4, 0.45 * r4_rmz);
+  d = r4_rmx * (0.04 + 0.52 * slider4 / 100);
+  sx = lx + d; sy = ly - 0.12 * d; sz = min(1.2, 0.4 * r4_rmz);
+  r4_lx = lx; r4_ly = ly; r4_sx = sx; r4_sy = sy;
+  r4_dd = sqrt(sqr(sx - lx) + sqr(sy - ly) + sqr(sz - lz));
+  wd = slider8 / 100; e = 0; i = 0;
+  loop(12,
+    nx = r4_NX[i]; ny = r4_NY[i]; nz = r4_NZ[i];
+    ix = abs(nx) % 2 ? (nx + 1) * r4_rmx - sx : nx * r4_rmx + sx;
+    iy = abs(ny) % 2 ? (ny + 1) * r4_rmy - sy : ny * r4_rmy + sy;
+    iz = abs(nz) % 2 ? (nz + 1) * r4_rmz - sz : nz * r4_rmz + sz;
+    dx = ix - lx; dy = iy - ly; dz = iz - lz; r = sqrt(dx * dx + dy * dy + dz * dz);
+    g = rw ^ (abs(nx) + abs(ny)) * (nz > 0 ? rc : nz < 0 ? rw : 1) * min(r4_dd / r, 1);
+    r4_TD[i] = (r - r4_dd) / 343 * srate;
+    pn = dy / max(sqrt(dx * dx + dy * dy), 0.001) * wd;
+    r4_TGL[i] = g * sqrt(0.5 * (1 + pn)); r4_TGR[i] = g * sqrt(0.5 * (1 - pn));
+    i < 4 ? ( r4_IMG[i * 2] = ix; r4_IMG[i * 2 + 1] = iy; );
+    e += g * g; i += 1;
+  );
+  e = 1 / sqrt(max(e, 0.000001));
+  i = 0; loop(12, r4_TGL[i] *= e; r4_TGR[i] *= e; i += 1; );
+);
+function r4_snap() local(i) (
+  i = 0; loop(12, r4_CD[i] = r4_TD[i]; r4_CGL[i] = r4_TGL[i]; r4_CGR[i] = r4_TGR[i]; i += 1; );
+);
+// the shape's tail and diffusers (at the silent point of a switch)
+function r4_tailset() local(p, q) (
+  p = r4_SHT + r4_shp * 10; q = sqrt(p[5]);
+  r4_lsc = p[5] * srate / 1000;                         // the lines' scale (samples per ms of the table)
+  r4_ad0 = 3.1 * q * srate / 1000; r4_ad1 = 4.7 * q * srate / 1000; r4_ad2 = 3.7 * q * srate / 1000; r4_ad3 = 5.3 * q * srate / 1000;
+  r4_tsh = p[6];
+);
+// TONE (and the model's filters)
+function r4_tone(t) local(p, f, dmp) (
+  r4_tl = t; p = r4_SHT + r4_shp * 10;
+  r4_mod ? (
+    f = p[8] * 2 ^ t; r4_kair = f >= 19000 ? 1 : s74_k(f, srate);
+    dmp = p[7] * 2 ^ (1.2 * t);
+    r4hl.s74_bqset(1, 80, 0, 0.6, srate); r4hr.s74_bqset(1, 80, 0, 0.6, srate);
+  ) : (
+    f = 8500 * 2 ^ (0.5 * t);
+    r4aa.s74_bqset(0, f * 1.1, 0, 0.707, srate); r4rl.s74_bqset(0, f, 0, 0.8, srate); r4rr.s74_bqset(0, f, 0, 0.8, srate);
+    dmp = min(f * 0.75, p[7] * 0.6 * 2 ^ t);
+    r4hl.s74_bqset(1, 100, 0, 0.6, srate); r4hr.s74_bqset(1, 100, 0, 0.6, srate);
+  );
+  r4_kd = s74_k(dmp, srate);
+);
+
+// ---------- settings ----------
+function r4_update() local(dm) (
+  in_setup(slider1, slider2 >= 0.5);
+  r4_tsz = 0.6 + 0.8 * slider3 / 100;
+  r4_tdec = slider5;
+  r4_tmo = slider12 >= 0.5; r4_tshp = slider9;
+  r4_tsm = r4_mod ? 0 : slider6 / 100 * 0.0012 * srate;
+  r4_ttm = r4_mod ? 0 : (0.05 + 0.3 * slider6 / 100) * 0.001 * srate;
+  r4_twd = slider8 / 100;
+  // the wet level follows DISTANCE (-11 dB close .. +3 dB far); the tail's share rises with it
+  dm = slider4 / 100;
+  r4_twg = 10 ^ ((-11 + 14 * dm) / 20);
+  r4_ttg = r4_tsh * (0.5 + 1.0 * dm);
+  r4_tmix = slider10 / 100; r4_tog = 10 ^ (slider11 / 20);
+  drift_macro(slider13);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+// the tail's loop gains for DECAY at the present size (OB a touch longer: its darker lines lose the top sooner), and the level that keeps the tail's loudness steady
+function r4_gains() local(i, l, g, gm) (
+  gm = 0; i = 0;
+  loop(8, l = r4_LN[i] * r4_lsc * r4_szc; g = 10 ^ (-3 * l / (r4_dec * (r4_mod ? 1 : 1.15) * srate)); r4_GN[i] = g; gm += g; i += 1; );
+  gm /= 8;
+  r4_ttn = sqrt(1 - gm * gm) * (r4_dec / 0.6) ^ 0.2;
+);
+// the models' wet makeup (measured on pink noise: OB and CLEAN matched)
+r4_MKO = 1.42; r4_MKC = 1.30;
+function r4_srinit() (
+  r4_sr = srate;
+  r4_sm = 1 - exp(-1 / (0.02 * srate));
+  r4_smt = 1 - exp(-1 / (0.08 * srate));                // the taps' delays glide slower (less of a pitch sweep)
+  r4_fd = 1 / (0.006 * srate);
+  r4_kc = s74_kt(0.040, srate); r4_kca = s74_kt(0.00012, srate);   // the compander's detector: 0.12 ms attack, 40 ms release
+  r4_lah = floor(0.0005 * srate + 0.5);                  // the compressor's look-ahead (taken off the line's delay)
+  r4_kil = s74_k(110, srate); r4_kdc = s74_k(25, srate); r4_kio = s74_k(80, srate);
+  r4_off = r4_mod ? 0 : 0.0025 * srate - r4_lah;
+  ost_init(r4_ostm);
+  r4_tailset(); r4_tone(r4_ton);
+  r4_geom(); r4_snap();
+);
+in_init();
+r4_mod = r4_tmo = slider12 >= 0.5; r4_shp = r4_tshp = slider9;
+r4_ton = slider7 / 100;
+r4_update();
+r4_szc = r4_tsz; r4_dec = r4_tdec;
+r4_srinit();
+r4_update();
+r4_gains(); i_ = 0; loop(8, r4_GC[i_] = r4_GN[i_]; i_ += 1; );
+r4_tn = r4_ttn; r4_smd = r4_tsm; r4_tmd = r4_ttm; r4_wd = r4_twd; r4_wg = r4_twg; r4_tg = r4_ttg;
+r4_mix = r4_tmix; r4_og = r4_tog; r4_mk = r4_mod ? r4_MKC : r4_MKO; r4_off = r4_mod ? 0 : 0.0025 * srate - r4_lah;
+r4_fade = 1; r4_sf = 1; r4_fst = 0; r4_hold = 0;
+r4_c1 = r4_c2 = r4_c3 = 1; r4_s1 = r4_s2 = r4_s3 = 0; r4_clk = 1;
+r4_dfC.drift_init(0.8 + rand(0.4)); r4_dfL.drift_init(0.8 + rand(0.4)); r4_dfT.drift_init(0.8 + rand(0.4));
+r4L.ost_ch_init(); r4R.ost_ch_init();
+
+// ---------- presets ----------
+function r4_set(sh, sz, di, dc, sm, tn, wd, mx, ou, mo) (
+  slider9 = sh; slider3 = sz; slider4 = di; slider5 = dc; slider6 = sm; slider7 = tn; slider8 = wd; slider10 = mx; slider11 = ou; slider12 = mo;
+  slider_automate(4092);                                // sliders 3-12 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#r4_pm = "Init|Commentary Booth|Truck Vocal Room|Interview Room|Studio Drums|Concert Hall Feed|Stadium PA Slap|Pitch-side Crowd|Smeared Chamber|Clean Small Room|Clean Live Room|Far Mic Ambience";
+function load_preset(p) (
+  //                sh  size  dist  decay  smear tone  width mix  output model
+  p == 1  ? r4_set(1,   50,   35,   0.6,   35,    0,   80,  50,     0,    0) :     // Init
+  p == 2  ? r4_set(0,   40,   20,  0.25,   25,  -10,   50,  50,   0.2,    0) :     // Commentary Booth
+  p == 3  ? r4_set(1,   45,   30,   0.5,   40,   10,   70,  50,   0.2,    0) :     // Truck Vocal Room
+  p == 4  ? r4_set(1,   35,   25,   0.4,   35,    0,   60,  50,   0.2,    1) :     // Interview Room
+  p == 5  ? r4_set(1,   70,   55,   0.8,   30,   15,  100,  50,  -0.5,    0) :     // Studio Drums
+  p == 6  ? r4_set(2,   60,   50,   1.6,   35,  -10,   90,  50,  -0.7,    1) :     // Concert Hall Feed
+  p == 7  ? r4_set(3,   60,   45,   1.2,   30,  -30,  100,  50,  -0.3,    0) :     // Stadium PA Slap
+  p == 8  ? r4_set(3,   50,   70,   1.8,   35,  -20,  100,  50,  -1.9,    1) :     // Pitch-side Crowd
+  p == 9  ? r4_set(2,   50,   50,   1.4,   90,  -25,   90,  50,  -0.5,    0) :     // Smeared Chamber
+  p == 10 ? r4_set(0,   60,   40,   0.3,   35,   10,   70,  50,  -0.3,    1) :     // Clean Small Room
+  p == 11 ? r4_set(1,   80,   50,   0.9,   35,   20,   90,  50,  -0.3,    1) :     // Clean Live Room
+  p == 12 ? r4_set(2,   70,   85,   1.1,   50,  -15,  100,  60,  -2.2,    0) :     // Far Mic Ambience
+  p == 13 ? (                                               // Reset all to defaults
+    r4_set(1, 50, 35, 0.6, 35, 0, 80, 50, 0, 0);
+    slider1 = 0; slider2 = 1; slider13 = 50; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3; slider19 = 1;
+    slider_automate(524287);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+r4_update();
+
+@block
+srate != r4_sr ? r4_srinit();
+r4_update();                                            // knobs moved on the panel do not run @slider
+// the geometry follows SIZE, DISTANCE and WIDTH (the taps glide to it); TONE glides block by block
+(slider3 != r4_g3 || slider4 != r4_g4 || slider8 != r4_g8 || r4_shp != r4_gsh) ? r4_geom();
+r4_bk = 1 - exp(-samplesblock / (0.02 * srate));
+r4_ton += (slider7 / 100 - r4_ton) * r4_bk; abs(r4_ton - slider7 / 100) < 0.0005 ? r4_ton = slider7 / 100;
+r4_ton != r4_tl ? r4_tone(r4_ton);
+r4_dec += (r4_tdec - r4_dec) * r4_bk;
+r4_gains();
+// WANDER: on OB the bucket brigade's clock and the smear's LFOs wander; on CLEAN only a trace of the clock
+r4_di = 0.12 * dm_s * samplesblock / srate;
+r4_clk = 1 + dm_a * (r4_mod ? 0.0002 : 0.003) * r4_dfC.drift_tick(r4_di);
+r4_lr = 1 + dm_a * (r4_mod ? 0 : 0.08) * r4_dfL.drift_tick(r4_di);
+r4_tw = dm_a * (r4_mod ? 0 : 0.15) * r4_dfT.drift_tick(r4_di);
+r4_w1 = 2 * $pi * 0.37 * r4_lr / srate; r4_k1c = cos(r4_w1); r4_k1s = sin(r4_w1);
+r4_w2 = 2 * $pi * 0.61 * r4_lr / srate; r4_k2c = cos(r4_w2); r4_k2s = sin(r4_w2);
+r4_w3 = 2 * $pi * 0.93 * r4_lr / srate; r4_k3c = cos(r4_w3); r4_k3s = sin(r4_w3);
+r4_n_ = 1 / sqrt(r4_c1 * r4_c1 + r4_s1 * r4_s1); r4_c1 *= r4_n_; r4_s1 *= r4_n_;
+r4_n_ = 1 / sqrt(r4_c2 * r4_c2 + r4_s2 * r4_s2); r4_c2 *= r4_n_; r4_s2 *= r4_n_;
+r4_n_ = 1 / sqrt(r4_c3 * r4_c3 + r4_s3 * r4_s3); r4_c3 *= r4_n_; r4_s3 *= r4_n_;
+r4a_vi = max(r4a_vi, r4_viL); r4a_vo = max(r4a_vo, r4_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+r4_szc += (r4_tsz - r4_szc) * r4_sm; r4_smd += (r4_tsm - r4_smd) * r4_sm; r4_tmd += (r4_ttm - r4_tmd) * r4_sm;
+r4_wd += (r4_twd - r4_wd) * r4_sm; r4_wg += (r4_twg - r4_wg) * r4_sm; r4_tg += (r4_ttg - r4_tg) * r4_sm;
+r4_tn += (r4_ttn - r4_tn) * r4_sm; r4_mix += (r4_tmix - r4_mix) * r4_sm; r4_og += (r4_tog - r4_og) * r4_sm;
+// a change of model or shape: the room fades out, switches at the silent point, empties, and the send fades back
+// in (the dry stays)
+(r4_tmo != r4_mod || r4_tshp != r4_shp) && r4_fst == 0 ? r4_fst = 1;
+r4_fst == 1 ? ( r4_fade -= r4_fd; r4_fade <= 0 ? (
+  r4_fade = 0; r4_mod = r4_tmo; r4_shp = r4_tshp;
+  r4_update(); r4_smd = r4_tsm; r4_tmd = r4_ttm; r4_tg = r4_ttg;
+  r4_mk = r4_mod ? r4_MKC : r4_MKO; r4_off = r4_mod ? 0 : 0.0025 * srate - r4_lah;
+  r4_tailset(); r4_tone(r4_ton); r4_geom(); r4_snap(); r4_gains(); i_ = 0; loop(8, r4_GC[i_] = r4_GN[i_]; i_ += 1; ); r4_tn = r4_ttn;
+  memset(r4e.buf, 0, r4e.len); memset(r4q.buf, 0, r4q.len); memset(r4c0.buf, 0, 32768 * 8); memset(r4a0.buf, 0, 8192 * 4); memset(r4_LP, 0, 8); memset(r4_LA, 0, 128);
+  r4hl.s74_bqclr(); r4hr.s74_bqclr(); r4aa.s74_bqclr(); r4rl.s74_bqclr(); r4rr.s74_bqclr();
+  r4_e1 = r4_dc = r4_air1 = r4_air2 = r4_ilo = r4_ol1 = r4_ol2 = 0;
+  r4_sf = 0; r4_hold = 32; r4_fst = 2; ); ) :
+r4_fst == 2 ? ( r4_hold -= 1; r4_hold <= 0 ? ( r4_fade = 1; r4_fst = 3; ); ) :
+// (the room is empty now: it opens at full level and the send fades in, so every reflection starts softly)
+r4_fst == 3 ? ( r4_sf += r4_fd; r4_sf >= 1 ? ( r4_sf = 1; r4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+r4_xl = in_l; r4_xr = in_r;
+r4_viL = max(r4_viL * 0.9995, abs(r4_xl) + abs(r4_xr));
+
+// ---------- the smear's three LFOs (quadrature, rotated) ----------
+r4_t_ = r4_c1 * r4_k1c - r4_s1 * r4_k1s; r4_s1 = r4_s1 * r4_k1c + r4_c1 * r4_k1s; r4_c1 = r4_t_;
+r4_t_ = r4_c2 * r4_k2c - r4_s2 * r4_k2s; r4_s2 = r4_s2 * r4_k2c + r4_c2 * r4_k2s; r4_c2 = r4_t_;
+r4_t_ = r4_c3 * r4_k3c - r4_s3 * r4_k3s; r4_s3 = r4_s3 * r4_k3c + r4_c3 * r4_k3s; r4_c3 = r4_t_;
+
+// ---------- the send into the reflections' line ----------
+r4_s = (r4_xl + r4_xr) * 0.5 * r4_sf;
+r4_dc += (r4_s - r4_dc) * r4_kdc; r4_s -= r4_dc;               // the send's coupling capacitor (25 Hz)
+!r4_mod ? (
+  // OB: the input iron, the compressor (2:1), the anti-alias filter, the bucket brigade's soft limit
+  r4_ilo += (r4_s - r4_ilo) * r4_kil; r4_s = (r4_s - r4_ilo) + s74_th(r4_ilo * 1.8) / 1.8;
+  // (the compressor looks 0.5 ms ahead, so its gain is smooth and the peaks never overshoot)
+  r4_a_ = abs(r4_s); r4_e1 += (r4_a_ - r4_e1) * (r4_a_ > r4_e1 ? r4_kca : r4_kc);
+  r4_cg = sqrt(0.25 / max(r4_e1, 0.001));
+  r4_LA[r4_lw] = r4_s; r4_s = r4_LA[(r4_lw - r4_lah) & 127]; r4_lw = (r4_lw + 1) & 127;
+  r4_s = r4aa.s74_bq(r4_s * r4_cg); r4_s = s74_th(r4_s * 0.9) / 0.9;
+  r4q.s74_dlw(1 / r4_cg);
+) : r4q.s74_dlw(1);
+r4e.s74_dlw(r4_s);
+
+// ---------- the early reflections: twelve taps ----------
+r4_el = r4_er = 0; i_ = 0;
+loop(12,
+  r4_CD[i_] += (r4_TD[i_] - r4_CD[i_]) * r4_smt;
+  r4_CGL[i_] += (r4_TGL[i_] - r4_CGL[i_]) * r4_sm; r4_CGR[i_] += (r4_TGR[i_] - r4_CGR[i_]) * r4_sm;
+  r4_dt = r4_CD[i_] * r4_clk + r4_off + r4_smd * (r4_MA[i_] * r4_s1 + r4_MB[i_] * r4_c2 + r4_MC[i_] * r4_s3);
+  r4_v = r4e.s74_dlr3(r4_dt) * r4q.s74_dlr(r4_dt);
+  r4_el += r4_v * r4_CGL[i_]; r4_er += r4_v * r4_CGR[i_];
+  i_ += 1;
+);
+!r4_mod ? (
+  // OB: the reconstruction filters (each tap is expanded with the gain it was compressed with)
+  r4_el = r4rl.s74_bq(r4_el); r4_er = r4rr.s74_bq(r4_er);
+) : (
+  // CLEAN: the air
+  r4_air1 += (r4_el - r4_air1) * r4_kair; r4_air2 += (r4_er - r4_air2) * r4_kair; r4_el = r4_air1; r4_er = r4_air2;
+);
+
+// ---------- the tail: two diffusers, eight lines (band-limited and slowly modulated on OB) ----------
+r4_ti = (r4_el + r4_er) * 0.5;
+r4_d1 = r4a1.s74_ap(r4a0.s74_ap(r4_ti, r4_ad0, 0.62), r4_ad1, 0.6);
+r4_d2 = r4a3.s74_ap(r4a2.s74_ap(r4_ti, r4_ad2, 0.62), r4_ad3, 0.6);
+r4_q = r4_lsc * r4_szc;
+r4_YY[0] = r4c0.s74_dlr3(r4_LN[0] * r4_q);
+r4_YY[1] = r4c1.s74_dlr3(r4_LN[1] * r4_q + r4_tmd * (1 + r4_s1 + r4_tw));
+r4_YY[2] = r4c2.s74_dlr3(r4_LN[2] * r4_q);
+r4_YY[3] = r4c3.s74_dlr3(r4_LN[3] * r4_q + r4_tmd * (1 + r4_c2 - r4_tw));
+r4_YY[4] = r4c4.s74_dlr3(r4_LN[4] * r4_q);
+r4_YY[5] = r4c5.s74_dlr3(r4_LN[5] * r4_q + r4_tmd * (1 - r4_s1 + r4_tw));
+r4_YY[6] = r4c6.s74_dlr3(r4_LN[6] * r4_q);
+r4_YY[7] = r4c7.s74_dlr3(r4_LN[7] * r4_q + r4_tmd * (1 + r4_s3 - r4_tw));
+i_ = 0; loop(8,
+  r4_GC[i_] += (r4_GN[i_] - r4_GC[i_]) * r4_sm;
+  r4_LP[i_] += (r4_YY[i_] - r4_LP[i_]) * r4_kd; r4_YY[i_] = r4_LP[i_] * r4_GC[i_];
+  i_ += 1; );
+r4_tl_ = r4_YY[0] - r4_YY[2] + r4_YY[4] - r4_YY[6] * 0.7;
+r4_tr_ = r4_YY[1] - r4_YY[3] + r4_YY[5] - r4_YY[7] * 0.7;
+// Hadamard 8
+r4_a = r4_YY[0] + r4_YY[1]; r4_b = r4_YY[0] - r4_YY[1]; r4_c = r4_YY[2] + r4_YY[3]; r4_h = r4_YY[2] - r4_YY[3];
+r4_f = r4_YY[4] + r4_YY[5]; r4_g = r4_YY[4] - r4_YY[5]; r4_k = r4_YY[6] + r4_YY[7]; r4_j = r4_YY[6] - r4_YY[7];
+r4_YY[0] = r4_a + r4_c; r4_YY[2] = r4_a - r4_c; r4_YY[1] = r4_b + r4_h; r4_YY[3] = r4_b - r4_h;
+r4_YY[4] = r4_f + r4_k; r4_YY[6] = r4_f - r4_k; r4_YY[5] = r4_g + r4_j; r4_YY[7] = r4_g - r4_j;
+r4_a = r4_YY[0]; r4_YY[0] = (r4_a + r4_YY[4]) * 0.35355339; r4_YY[4] = (r4_a - r4_YY[4]) * 0.35355339;
+r4_a = r4_YY[1]; r4_YY[1] = (r4_a + r4_YY[5]) * 0.35355339; r4_YY[5] = (r4_a - r4_YY[5]) * 0.35355339;
+r4_a = r4_YY[2]; r4_YY[2] = (r4_a + r4_YY[6]) * 0.35355339; r4_YY[6] = (r4_a - r4_YY[6]) * 0.35355339;
+r4_a = r4_YY[3]; r4_YY[3] = (r4_a + r4_YY[7]) * 0.35355339; r4_YY[7] = (r4_a - r4_YY[7]) * 0.35355339;
+r4c0.s74_dlw(r4_YY[0] + r4_d1); r4c1.s74_dlw(r4_YY[1] + r4_d2); r4c2.s74_dlw(r4_YY[2] + r4_d1 * 0.6); r4c3.s74_dlw(r4_YY[3] - r4_d2 * 0.6);
+r4c4.s74_dlw(r4_YY[4] - r4_d1 * 0.4); r4c5.s74_dlw(r4_YY[5] + r4_d2 * 0.4); r4c6.s74_dlw(r4_YY[6]); r4c7.s74_dlw(r4_YY[7]);
+// WIDTH on the tail (the reflections are spread by the geometry)
+r4_m = (r4_tl_ + r4_tr_) * 0.5; r4_sd = (r4_tl_ - r4_tr_) * 0.5 * r4_wd;
+r4_tk = r4_tg * r4_tn;
+r4_wl = r4_el + (r4_m + r4_sd) * r4_tk; r4_wr = r4_er + (r4_m - r4_sd) * r4_tk;
+
+// ---------- the wet: the low cut, the output iron (OB), the level ----------
+r4_wl = r4hl.s74_bq(r4_wl); r4_wr = r4hr.s74_bq(r4_wr);
+!r4_mod ? (
+  r4_ol1 += (r4_wl - r4_ol1) * r4_kio; r4_wl = (r4_wl - r4_ol1) + s74_th(r4_ol1 * 1.3) / 1.3;
+  r4_ol2 += (r4_wr - r4_ol2) * r4_kio; r4_wr = (r4_wr - r4_ol2) + s74_th(r4_ol2 * 1.3) / 1.3;
+);
+r4_k_ = r4_wg * r4_mk * r4_fade;
+r4_wl *= r4_k_; r4_wr *= r4_k_;
+
+// ---------- MIX (send law), OUTPUT and the house output stage ----------
+r4_gd = min(1, 2 - 2 * r4_mix); r4_gw = min(1, 2 * r4_mix);
+r4_yl = r4_xl * r4_gd + r4_wl * r4_gw; r4_yr = r4_xr * r4_gd + r4_wr * r4_gw;
+r4_vL = max(r4_vL * 0.9995, abs(r4_yl) + abs(r4_yr));
+r4_yl = r4L.ost_band(r4_yl) * r4_og; r4_yr = r4R.ost_band(r4_yr) * r4_og;
+ost_out(r4_yl, r4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider12);
+s74_fonts();
+s74_face(960, 366);
+r4_cln = slider12 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "ROOM74", "SERIES 74", "OB AMBIENCE", #r4_pm, 12);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 200, 292, "INPUT");
+r4mI.s74_edge(28, 92, 172, 62, r4a_vi * 2.83, "IN");
+r4mO.s74_edge(28, 162, 172, 62, r4a_vo * 2.83, "OUT");
+r4a_vi *= 0.6; r4a_vo *= 0.6;
+s74_off = 0; s74_knob(66, 286, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(158, 254, "GUARD");
+s74_lens(132, 266, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(194 * sc, 278 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- ROOM: the shape, the plan view, SIZE / DISTANCE / DECAY ----------
+s74_mod(226, 62, 360, 292, "ROOM");
+i_ = 0; loop(4, pk_pitem("BOOTH|STUDIO|HALL|STADIUM", i_ + 1, #t_);
+  s74_lens(238 + i_ * 85, 92, 79, 24, slider9 == i_, #t_) ? s74_set(9, i_); i_ += 1; );
+// the plan view in a backlit window: the walls, the listener, the source, the first reflections off the walls
+x_ = 238; y_ = 128; w_ = 192; h_ = 212;
+ui_cola(0x000000, 0.4); s74_r(x_ + 1, y_ + 2, w_, h_);
+ui_col(0x101112); s74_r(x_, y_, w_, h_);
+ui_col(S74_LAMPD); s74_r(x_ + 5, y_ + 5, w_ - 10, h_ - 10);
+i_ = 0; loop(10, ui_cola(S74_LAMPW, 0.10); s74_r(x_ + 5 + i_ * 4, y_ + 5 + i_ * 3, w_ - 10 - i_ * 8, h_ - 10 - i_ * 6); i_ += 1; );
+// the room at the scale that fits it (the plan's length runs across)
+pw_ = w_ - 36; ph_ = h_ - 70;
+s_ = min(pw_ / r4_rmx, ph_ / r4_rmy);
+rx_ = x_ + w_ * 0.5 - r4_rmx * s_ * 0.5; ry_ = y_ + 18 + ph_ * 0.5 - r4_rmy * s_ * 0.5;
+// the four wall reflections: source -> wall -> listener
+i_ = 0; loop(4,
+  ix_ = r4_IMG[i_ * 2]; iy_ = r4_IMG[i_ * 2 + 1];
+  i_ < 2 ? ( wx_ = i_ == 0 ? r4_rmx : 0; t_ = (wx_ - r4_lx) / (ix_ - r4_lx); ) : ( wy_ = i_ == 2 ? r4_rmy : 0; t_ = (wy_ - r4_ly) / (iy_ - r4_ly); );
+  px_ = r4_lx + (ix_ - r4_lx) * t_; py_ = r4_ly + (iy_ - r4_ly) * t_;
+  ui_cola(S74_CHAR, 0.55);
+  s74_ln(rx_ + r4_sx * s_, ry_ + (r4_rmy - r4_sy) * s_, rx_ + px_ * s_, ry_ + (r4_rmy - py_) * s_, 1);
+  s74_ln(rx_ + px_ * s_, ry_ + (r4_rmy - py_) * s_, rx_ + r4_lx * s_, ry_ + (r4_rmy - r4_ly) * s_, 1);
+  i_ += 1; );
+// the walls
+ui_col(S74_CHAR);
+s74_ln(rx_, ry_, rx_ + r4_rmx * s_, ry_, 2); s74_ln(rx_, ry_ + r4_rmy * s_, rx_ + r4_rmx * s_, ry_ + r4_rmy * s_, 2);
+s74_ln(rx_, ry_, rx_, ry_ + r4_rmy * s_, 2); s74_ln(rx_ + r4_rmx * s_, ry_, rx_ + r4_rmx * s_, ry_ + r4_rmy * s_, 2);
+// the direct sound, the source (hazard orange) and the listener
+ui_col(S74_CHAR); s74_ln(rx_ + r4_sx * s_, ry_ + (r4_rmy - r4_sy) * s_, rx_ + r4_lx * s_, ry_ + (r4_rmy - r4_ly) * s_, 1.6);
+ui_col(S74_HAZ); gfx_circle((rx_ + r4_sx * s_) * sc, (ry_ + (r4_rmy - r4_sy) * s_) * sc, 4.5 * sc, 1, 1);
+ui_col(S74_CHAR); gfx_circle((rx_ + r4_lx * s_) * sc, (ry_ + (r4_rmy - r4_ly) * s_) * sc, 4.5 * sc, 1, 1);
+ui_col(S74_LAMP); gfx_circle((rx_ + r4_lx * s_) * sc, (ry_ + (r4_rmy - r4_ly) * s_) * sc, 2 * sc, 1, 1);
+gfx_setfont(13); ui_col(S74_CHAR);
+s74_t(x_ + 12, y_ + 10, slider9 == 0 ? "BOOTH" : slider9 == 1 ? "STUDIO" : slider9 == 2 ? "HALL" : "STADIUM");
+s74_t(x_ + w_ - 52, y_ + 10, "PLAN");
+sprintf(#t_, "%.1f X %.1f X %.1f M", r4_rmx, r4_rmy, r4_rmz); s74_tc(x_ + w_ * 0.5, y_ + h_ - 38, #t_);
+sprintf(#t_, "SOURCE %.1f M  ·  RT %.2f S", r4_dd, slider5); s74_tc(x_ + w_ * 0.5, y_ + h_ - 22, #t_);
+s74_knob(510, 152, 20, 3, 0, 100, 50, 0, "SIZE", "%.0f%%", 0);
+s74_knob(510, 226, 20, 4, 0, 100, 35, 0, "DISTANCE", "%.0f%%", 0);
+s74_knob(510, 300, 20, 5, 0.1, 3, 0.6, 1, "DECAY", "%.2f s", 0);
+
+// ---------- BBD · SMEAR: OB only ----------
+s74_mod(598, 62, 120, 292, "BBD · SMEAR");
+s74_off = r4_cln;
+s74_knob(658, 160, 28, 6, 0, 100, 35, 0, "SMEAR", "%.0f%%", 0);
+s74_off = 0;
+r4_cln ? (
+  s74_smallc(658, 262, "OUT OF PATH"); s74_smallc(658, 278, "ON CLEAN");
+) : (
+  s74_smallc(658, 246, "BUCKET BRIGADE"); s74_smallc(658, 262, "COMPANDED");
+  sprintf(#t_, "%.1f KHZ", 8.5 * 2 ^ (0.5 * slider7 / 100)); s74_smallc(658, 278, #t_);
+);
+// the smear's lamp: it breathes with the LFOs (OB)
+r4_cln ? ( ui_col(S74_CHAR); ) : ( ui_cola(S74_LAMP, 0.35 + 0.65 * (0.5 + 0.5 * r4_s1) * slider6 / 100); );
+gfx_circle(658 * sc, 316 * sc, 4 * sc, 1, 1);
+
+// ---------- OUTPUT: TONE (the top's damping: colour-coded as a low-pass), WIDTH, WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(730, 62, 216, 292, "OUTPUT");
+s74_kc = S74_C_LPF; s74_knob(762, 124, 16, 7, -100, 100, 0, 0, "TONE", "%+.0f", 0); s74_kc = 0;
+s74_knob(812, 124, 16, 8, 0, 100, 80, 0, "WIDTH", "%.0f%%", 0);
+s74_knob(762, 226, 13, 13, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(812, 226, 13, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(834 * sc, 210 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(866, 106, 130, 10, 0, 100, 50, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(912, 106, 130, 11, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(787, 300, "MIX: SEND LAW");
+s74_smallc(787, 316, "DRY FULL TO 50%");
+
+pk_end();
+ui_end();

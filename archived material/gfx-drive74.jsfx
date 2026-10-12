@@ -1,0 +1,325 @@
+desc:GFX Drive74 [OB preamp]
+//tags: preamp saturation transformer class-a broadcast line-driver drive series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// DRIVE74 (Series 74: the OB remote and broadcast series): the preamp from an outside-broadcast truck, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> POLARITY -> HIGH-PASS (off, 40, 80, 160 Hz) -> 2x or 4x oversampling ->
+//   OB:    the INPUT IRON (the transformer's core saturates the lows first, more with IRON) -> GAIN into a discrete
+//          CLASS-A stage (single-ended: one side of the wave clips before the other; BIAS moves the operating point,
+//          cold and lean to hot and thick, with more even harmonics) -> the coupling capacitor -> the OUTPUT IRON
+//          (driven by the stage: the lows thicken, the top softens with IRON)
+//   CLEAN: GAIN into an active balanced line driver with about 18 dB of headroom: perfectly linear until it is
+//          pushed very hard, then it rounds off symmetrically. IRON and BIAS are out of the path.
+//   -> back to 1x -> TONE (a tilt about 900 Hz) -> MIX (with the dry signal, delayed to match) -> OUTPUT -> the house
+//   output stage (band SAT, CLIP always on).
+// Each GAIN setting is level matched in both models, and the two models are matched to each other, so GAIN and the
+// switch change the colour, not the loudness.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the class-A bias and gain wander slowly, the channels never
+// quite matched; on CLEAN only a trace of gain wander remains.
+// Changing the model, the high-pass, the polarity or 2x / 4x fades the sound out and back in.
+// 2x / 4x: the oversampling (4x by default). The latency is the same in both (37 samples, reported).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:12<0,36,0.1>-Gain (dB)
+slider4:0<0,3,1{Off,40 Hz,80 Hz,160 Hz}>-High-pass
+slider5:45<0,100,1>-Iron (%)
+slider6:50<0,100,1>-Bias (cold to hot, %)
+slider7:0<-6,6,0.1>-Tone (dark to bright, dB)
+slider8:100<0,100,1>-Mix (%)
+slider9:0<-24,12,0.1>-Output (dB)
+slider10:0<0,1,1{OB,Clean}>-Model
+slider11:1<0,1,1{2x,4x}>-Oversampling
+slider12:50<0,100,1>-Wander (%)
+slider13:0<0,1,1{Normal,Invert}>-Polarity
+slider14:0<0,100,1>-Band sat (%)
+slider15:30<0,100,1>-Bias (output stage, %)
+slider16:120<40,400,1>-Sat low band (Hz)
+slider17:6000<2000,16000,10>-Sat high band (Hz)
+slider18:-0.3<-24,0,0.1>-Ceiling (dB)
+slider19:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-drive74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+d4_H1 = s74_alloc(64); d4_H2 = s74_alloc(32);
+d4_MK = s74_alloc(32);                                  // the makeup tables: OB, CLEAN (13 points each, dB)
+d4_ostm = s74_alloc(4096);
+d4_DRY = s74_alloc(256);                                // the dry signal's delay (L at 0, R at 128)
+d4_X2 = s74_alloc(16);                                  // the 2x chain's extra delay (L at 0, R at 8)
+
+// ---------- oversampling (the house half-bands; the 2x chain is delayed to the 4x chain's 37 samples) ----------
+s74_hbdesign(d4_H1, 63, 8); s74_hbdesign(d4_H2, 23, 7);
+d4u1L.s74_upinit(63, d4_H1, 64); d4u1R.s74_upinit(63, d4_H1, 64); d4d1L.s74_dninit(63, d4_H1, 64); d4d1R.s74_dninit(63, d4_H1, 64);
+d4u2L.s74_upinit(23, d4_H2, 16); d4u2R.s74_upinit(23, d4_H2, 16); d4d2L.s74_dninit(23, d4_H2, 32); d4d2R.s74_dninit(23, d4_H2, 32);
+function d4_flush() instance(buf, sz2) ( memset(buf, 0, 2 * sz2); );
+d4_LAT = 37; d4_L2X = 6;
+
+// ---------- the stages ----------
+// the class-A stage, single-ended: the negative side runs into cut-off sooner than the positive side saturates
+function d4_ca(u) ( u >= 0 ? s74_th(0.9 * u) / 0.9 : s74_th(1.5 * u) / 1.5; );
+// the makeup that keeps every GAIN level matched (dB, GAIN 0 .. 36 in 3 dB steps; measured on pink noise)
+function d4_row(k, a, b, c, d, e, f, g, h, i, j, l, m, n) local(p) (
+  p = d4_MK + k * 13; p[0] = a; p[1] = b; p[2] = c; p[3] = d; p[4] = e; p[5] = f; p[6] = g; p[7] = h; p[8] = i; p[9] = j; p[10] = l; p[11] = m; p[12] = n;
+);
+d4_row(0, 1.48, 1.14, 1.50, 1.70, 1.70, 2.48, 3.94, 5.01, 7.23, 9.30, 11.82, 14.18, 17.34);
+d4_row(1, 0.12, 0.17, 0.06, 0.08, 0.10, 0.20, 0.10, 0.13, 0.07, 0.05, 0.12, 0.53, 1.18);
+function d4_mk(cl, d) local(p, i, f, q) (
+  p = min(max(d, 0), 36) / 3; i = min(floor(p), 11); f = p - i; q = d4_MK + cl * 13;
+  10 ^ ((q[i] * (1 - f) + q[i + 1] * f) / 20);
+);
+
+// ---------- one channel at the oversampled rate ----------
+// OB: the input iron, GAIN into the class-A stage, the coupling cap, the output iron
+function d4_ob(x) instance(lo1, hp, lo2, hf) local(u, y, b) (
+  lo1 += (x - lo1) * d4_kl1;
+  u = ((x - lo1) + s74_th(lo1 * d4_ki) / d4_ki) * d4_g * d4_dg;
+  b = d4_b + d4_db;
+  y = d4_ca(u + b) - d4_ca(b);
+  hp += (y - hp) * d4_khp; y -= hp;
+  lo2 += (y - lo2) * d4_kl2;
+  y = (y - lo2) + s74_th(lo2 * d4_ko) / d4_ko;
+  hf += (y - hf) * d4_khf;
+  hf / d4_g * d4_m;
+);
+// CLEAN: GAIN into the line driver: about 18 dB of headroom above full scale, perfectly linear below its knee,
+// then a symmetrical round-off
+function d4_cl(x) local(u, a) (
+  u = x * d4_g * d4_dg / 8; a = abs(u);
+  a > 0.7 ? u = sign(u) * (0.7 + 0.3 * s74_th((a - 0.7) / 0.3));
+  8 * u / d4_g * d4_m;
+);
+function d4_ch(x) ( d4_mod ? d4_cl(x) : this.d4_ob(x); );
+
+// ---------- settings ----------
+function d4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  d4_tg = 10 ^ (slider3 / 20);
+  d4_tmo = slider10 >= 0.5;
+  d4_tm = d4_mk(d4_mod, slider3);
+  d4_tki = 0.5 + 5.5 * slider5 / 100; d4_tko = 0.25 + 1.6 * slider5 / 100;
+  d4_tb = 0.02 + 0.36 * slider6 / 100;
+  d4_tilt = slider7; d4_tmix = slider8 / 100; d4_tog = 10 ^ (slider9 / 20);
+  d4_tos = slider11 >= 0.5; d4_thp = slider4; d4_tpol = slider13 >= 0.5;
+  drift_macro(slider12);
+  ost_setup(slider14 / 100, slider15 / 100, slider16, slider17, slider18, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = d4_LAT;
+);
+function d4_tiltset() local(g, w) (
+  d4_tl = d4_tilt; g = 10 ^ (d4_tilt / 40); w = tan($pi * 900 / srate);
+  d4_ta = (w - 1) / (w + 1); d4_tlo = 1 / g; d4_thi = g;
+);
+// the high-pass (at 1x): OB a little bump at the corner (Q 0.85), CLEAN Butterworth
+function d4_hpset() local(f) (
+  f = d4_hp == 1 ? 40 : d4_hp == 2 ? 80 : 160;
+  d4_hl.s74_bqset(1, f, 0, d4_mod ? 0.707 : 0.85, srate); d4_hr.s74_bqset(1, f, 0, d4_mod ? 0.707 : 0.85, srate);
+  d4_hl.s74_bqclr(); d4_hr.s74_bqclr();
+);
+function d4_srinit() (
+  d4_sr = srate; d4_os = d4_tos; d4_fso = (d4_os ? 4 : 2) * srate;
+  d4_kl1 = s74_k(110, d4_fso); d4_kl2 = s74_k(70, d4_fso); d4_khp = s74_k(14, d4_fso);
+  d4_khf = s74_k(min(30000, 0.45 * d4_fso), d4_fso);
+  d4_sm = 1 - exp(-1 / (0.02 * srate));
+  d4_fd = 1 / (0.006 * srate);
+  ost_init(d4_ostm);
+  d4_tiltset(); d4_hpset();
+);
+d4_tilt = 0; d4_tos = 1; d4_hp = d4_thp = slider4; d4_mod = d4_tmo = slider10 >= 0.5;
+in_init();
+d4_srinit();
+d4_dfL.drift_init(0.8 + rand(0.4)); d4_dfR.drift_init(0.8 + rand(0.4)); d4_dgL.drift_init(0.8 + rand(0.4)); d4_dgR.drift_init(0.8 + rand(0.4));
+d4_sbL = rand(2) - 1; d4_sbR = rand(2) - 1; d4_sgL = rand(2) - 1; d4_sgR = rand(2) - 1;
+d4L.ost_ch_init(); d4R.ost_ch_init();
+d4_update();
+d4_g = d4_tg; d4_m = d4_tm; d4_b = d4_tb; d4_ki = d4_tki; d4_ko = d4_tko; d4_mix = d4_tmix; d4_og = d4_tog;
+d4_pol = d4_tpol; d4_fade = 1; d4_fst = 0; d4_hold = 0; d4_dw = 0; d4_pw = 0;
+
+// ---------- presets ----------
+function d4_set(tr, ga, hp, ir, bi, tn, mx, ou, mo) (
+  slider1 = tr; slider3 = ga; slider4 = hp; slider5 = ir; slider6 = bi; slider7 = tn; slider8 = mx; slider9 = ou; slider10 = mo;
+  slider_automate(1021);                                // sliders 1, 3-10 (GUARD, 2x / 4x, WANDER, POLARITY and the output stage stay)
+);
+#d4_pm = "Init|Truck Vocal|Field Kick|Stadium Crowd|Commentary Box|Iron Bass|Hot Class A|Cold Lean Edge|Parallel Grit|Clean Line|Clean Headroom|Pushed Line Driver";
+function load_preset(p) (
+  p == 1  ? d4_set(0, 12, 0, 45, 50,    0, 100, 0, 0) :     // Init
+  p == 2  ? d4_set(0, 18, 2, 40, 55, 1.0, 100, -0.7, 0) :     // Truck Vocal
+  p == 3  ? d4_set(0, 20, 0, 75, 60, -0.8, 100, -0.3, 0) :     // Field Kick
+  p == 4  ? d4_set(0, 15, 1, 55, 50,  0.6, 100, 0, 0) :     // Stadium Crowd
+  p == 5  ? d4_set(0, 22, 3, 35, 45, 1.5, 100, -0.6, 0) :     // Commentary Box
+  p == 6  ? d4_set(0, 16, 0, 95, 55, -1.5, 100, -0.6, 0) :     // Iron Bass
+  p == 7  ? d4_set(0, 24, 0, 50, 92, -0.5, 100, -0.3, 0) :     // Hot Class A
+  p == 8  ? d4_set(0, 24, 1, 30, 8, 0.8, 100, -0.9, 0) :     // Cold Lean Edge
+  p == 9  ? d4_set(0, 34, 1, 70, 70, 0.5, 35, 0.6, 0) :     // Parallel Grit
+  p == 10 ? d4_set(0, 12, 0, 45, 50, 0, 100, -0.4, 1) :     // Clean Line
+  p == 11 ? d4_set(0, 24, 1, 45, 50, 0.4, 100, 1, 1) :     // Clean Headroom
+  p == 12 ? d4_set(0, 36, 1, 45, 50, -0.4, 100, 0.3, 1) :     // Pushed Line Driver
+  p == 13 ? (                                               // Reset all to defaults
+    d4_set(0, 12, 0, 45, 50, 0, 100, 0, 0);
+    slider2 = 1; slider11 = 1; slider12 = 50; slider13 = 0; slider14 = 0; slider15 = 30; slider16 = 120; slider17 = 6000; slider18 = -0.3; slider19 = 1;
+    slider_automate(1048575);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+d4_update();
+
+@block
+srate != d4_sr ? d4_srinit();
+d4_update();                                            // knobs moved on the panel do not run @slider
+// WANDER: on OB the class-A bias and the gain wander; on CLEAN only a trace of gain wander
+d4_di = 0.12 * dm_s * samplesblock / srate;
+d4_wb = d4_mod ? 0 : 1; d4_wg = d4_mod ? 0.2 : 1;
+d4_dbL = d4_wb * dm_a * (0.03 * d4_dfL.drift_tick(d4_di) + 0.01 * d4_sbL); d4_dbR = d4_wb * dm_a * (0.03 * d4_dfR.drift_tick(d4_di) + 0.01 * d4_sbR);
+d4_dgLv = 1 + d4_wg * dm_a * (0.025 * d4_dgL.drift_tick(d4_di) + 0.008 * d4_sgL); d4_dgRv = 1 + d4_wg * dm_a * (0.025 * d4_dgR.drift_tick(d4_di) + 0.008 * d4_sgR);
+d4_tilt != d4_tl ? d4_tiltset();
+d4a_vi = max(d4a_vi, d4_viL); d4a_vo = max(d4a_vo, d4_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+d4_g += (d4_tg - d4_g) * d4_sm; d4_m += (d4_tm - d4_m) * d4_sm; d4_b += (d4_tb - d4_b) * d4_sm;
+d4_ki += (d4_tki - d4_ki) * d4_sm; d4_ko += (d4_tko - d4_ko) * d4_sm;
+d4_mix += (d4_tmix - d4_mix) * d4_sm; d4_og += (d4_tog - d4_og) * d4_sm;
+// a change of model, high-pass, polarity or oversampling: fade out, switch at the silent point, wait, fade in
+(d4_tmo != d4_mod || d4_thp != d4_hp || d4_tpol != d4_pol || d4_tos != d4_os) && d4_fst == 0 ? d4_fst = 1;
+d4_fst == 1 ? ( d4_fade -= d4_fd; d4_fade <= 0 ? (
+  d4_fade = 0; d4_pol = d4_tpol;
+  d4_tmo != d4_mod ? ( d4_mod = d4_tmo; d4_m = d4_tm = d4_mk(d4_mod, slider3); d4_hpset(); );
+  d4_thp != d4_hp ? ( d4_hp = d4_thp; d4_hpset(); );
+  d4_tos != d4_os ? ( d4_os = d4_tos; d4_srinit();
+                      d4u1L.d4_flush(); d4u1R.d4_flush(); d4d1L.d4_flush(); d4d1R.d4_flush();
+                      d4u2L.d4_flush(); d4u2R.d4_flush(); d4d2L.d4_flush(); d4d2R.d4_flush(); memset(d4_X2, 0, 16); );
+  d4_hold = d4_LAT + 8; d4_fst = 2; ); ) :
+d4_fst == 2 ? ( d4_hold -= 1; d4_hold <= 0 ? d4_fst = 3; ) :
+d4_fst == 3 ? ( d4_fade += d4_fd; d4_fade >= 1 ? ( d4_fade = 1; d4_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD, POLARITY, the high-pass ----------
+in_process(spl0, spl1);
+d4_xl = in_l; d4_xr = in_r;
+d4_pol ? ( d4_xl = -d4_xl; d4_xr = -d4_xr; );
+d4_hp > 0 ? ( d4_xl = d4_hl.s74_bq(d4_xl); d4_xr = d4_hr.s74_bq(d4_xr); );
+d4_viL = max(d4_viL * 0.9995, abs(d4_xl) + abs(d4_xr));
+d4_DRY[d4_dw] = d4_xl; d4_DRY[128 + d4_dw] = d4_xr;
+d4_dr = (d4_dw - d4_LAT) & 127; d4_yld = d4_DRY[d4_dr]; d4_yrd = d4_DRY[128 + d4_dr]; d4_dw = (d4_dw + 1) & 127;
+
+// ---------- the preamp, oversampled ----------
+d4_os ? (
+  d4u1L.s74_up(d4_xl); d4u1R.s74_up(d4_xr);
+  d4_a1l = d4u1L.o0; d4_a1r = d4u1R.o0;
+  d4u2L.s74_up(d4_p1l); d4u2R.s74_up(d4_p1r);
+  d4_p1l = d4u1L.o1; d4_p1r = d4u1R.o1;
+  d4_dg = d4_dgLv; d4_db = d4_dbL; d4_q0l = d4cL.d4_ch(d4u2L.o0); d4_q1l = d4cL.d4_ch(d4u2L.o1);
+  d4_dg = d4_dgRv; d4_db = d4_dbR; d4_q0r = d4cR.d4_ch(d4u2R.o0); d4_q1r = d4cR.d4_ch(d4u2R.o1);
+  d4_h0l = d4d2L.s74_dn(d4_q0l, d4_q1l); d4_h0r = d4d2R.s74_dn(d4_q0r, d4_q1r);
+  d4u2L.s74_up(d4_a1l); d4u2R.s74_up(d4_a1r);
+  d4_dg = d4_dgLv; d4_db = d4_dbL; d4_q0l = d4cL.d4_ch(d4u2L.o0); d4_q1l = d4cL.d4_ch(d4u2L.o1);
+  d4_dg = d4_dgRv; d4_db = d4_dbR; d4_q0r = d4cR.d4_ch(d4u2R.o0); d4_q1r = d4cR.d4_ch(d4u2R.o1);
+  d4_h1l = d4d2L.s74_dn(d4_q0l, d4_q1l); d4_h1r = d4d2R.s74_dn(d4_q0r, d4_q1r);
+  d4_yl = d4d1L.s74_dn(d4_h0l, d4_h1l); d4_yr = d4d1R.s74_dn(d4_h0r, d4_h1r);
+) : (
+  d4u1L.s74_up(d4_xl); d4u1R.s74_up(d4_xr);
+  d4_dg = d4_dgLv; d4_db = d4_dbL; d4_q0l = d4cL.d4_ch(d4u1L.o0); d4_q1l = d4cL.d4_ch(d4u1L.o1);
+  d4_dg = d4_dgRv; d4_db = d4_dbR; d4_q0r = d4cR.d4_ch(d4u1R.o0); d4_q1r = d4cR.d4_ch(d4u1R.o1);
+  d4_yl = d4d1L.s74_dn(d4_q0l, d4_q1l); d4_yr = d4d1R.s74_dn(d4_q0r, d4_q1r);
+  d4_X2[d4_pw] = d4_yl; d4_X2[8 + d4_pw] = d4_yr;
+  d4_pr = (d4_pw - d4_L2X) & 7; d4_yl = d4_X2[d4_pr]; d4_yr = d4_X2[8 + d4_pr]; d4_pw = (d4_pw + 1) & 7;
+);
+
+// ---------- TONE: the tilt ----------
+d4_tilt != 0 ? (
+  d4_tzl = d4_ta * d4_yl + d4_tsl; d4_tsl = d4_yl - d4_ta * d4_tzl;
+  d4_lpl = (d4_yl + d4_tzl) * 0.5; d4_yl = d4_lpl * d4_tlo + (d4_yl - d4_lpl) * d4_thi;
+  d4_tzr = d4_ta * d4_yr + d4_tsr; d4_tsr = d4_yr - d4_ta * d4_tzr;
+  d4_lpr = (d4_yr + d4_tzr) * 0.5; d4_yr = d4_lpr * d4_tlo + (d4_yr - d4_lpr) * d4_thi;
+);
+// ---------- MIX, the fade, OUTPUT and the house output stage ----------
+d4_yl = (d4_yld + (d4_yl - d4_yld) * d4_mix) * d4_fade; d4_yr = (d4_yrd + (d4_yr - d4_yrd) * d4_mix) * d4_fade;
+d4_vL = max(d4_vL * 0.9995, abs(d4_yl) + abs(d4_yr));
+d4_yl = d4L.ost_band(d4_yl) * d4_og; d4_yr = d4R.ost_band(d4_yr) * d4_og;
+ost_out(d4_yl, d4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider10);
+s74_fonts();
+s74_face(960, 366);
+d4_cln = slider10 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "DRIVE74", "SERIES 74", "OB PREAMP", #d4_pm, 10);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD, polarity ----------
+s74_mod(14, 62, 226, 292, "INPUT");
+d4mI.s74_edge(28, 92, 198, 62, d4a_vi * 2.83, "IN");
+d4mO.s74_edge(28, 162, 198, 62, d4a_vo * 2.83, "OUT");
+d4a_vi *= 0.6; d4a_vo *= 0.6;
+s74_off = 0; s74_knob(70, 288, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(176, 244, "GUARD");
+s74_lens(150, 254, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(212 * sc, 266 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+s74_smallc(176, 290, "POLARITY");
+s74_lens(150, 300, 52, 24, slider13 >= 0.5, "Ø") ? s74_set(13, slider13 >= 0.5 ? 0 : 1);
+
+// ---------- PREAMP: GAIN and the high-pass ----------
+s74_mod(252, 62, 300, 292, "PREAMP");
+s74_knob(402, 172, 52, 3, 0, 36, 12, 0, "GAIN", "%.1f dB", 0);
+s74_small(286, 214, "0"); s74_small(506, 214, "36");
+s74_smallc(402, 278, "HIGH-PASS");
+s74_lc = S74_C_HPF;
+i_ = 0; loop(4, pk_pitem("OFF|40|80|160", i_ + 1, #t_);
+  s74_lens(296 + i_ * 54, 290, 48, 26, slider4 == i_, #t_) ? s74_set(4, i_); i_ += 1; );
+s74_lc = 0;
+s74_smallc(402, 330, "HZ  ·  12 DB / OCT");
+
+// ---------- IRON · CLASS A: OB only ----------
+s74_mod(564, 62, 170, 292, "IRON · CLASS A");
+s74_off = d4_cln;
+s74_knob(649, 140, 26, 5, 0, 100, 45, 0, "IRON", "%.0f%%", 0);
+s74_knob(649, 254, 26, 6, 0, 100, 50, 0, "BIAS", "%.0f%%", 0);
+s74_small(578, 274, "COLD"); s74_small(694, 274, "HOT");
+s74_off = 0;
+d4_cln ? ( s74_smallc(649, 330, "OUT OF PATH ON CLEAN"); ) : ( s74_smallc(649, 330, "TRANSFORMERS · DISCRETE"); );
+
+// ---------- OUTPUT: TONE, WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(746, 62, 200, 292, "OUTPUT");
+s74_knob(790, 118, 18, 7, -6, 6, 0, 0, "TONE", "%+.1f dB", 0);
+s74_knob(790, 206, 18, 12, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(790, 290, 12, 14, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(812 * sc, 278 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(858, 106, 130, 8, 0, 100, 100, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(912, 106, 130, 9, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(885, 286, "OVERSAMPLING");
+s74_lens(850, 298, 32, 22, slider11 < 0.5, "2x") ? s74_set(11, 0);
+s74_lens(886, 298, 32, 22, slider11 >= 0.5, "4x") ? s74_set(11, 1);
+
+pk_end();
+ui_end();

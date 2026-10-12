@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX VC57 - manual</title><meta name="description" content="Series 57's vocoder: the valve channel vocoder of the late-50s electronic music studios - 10, 14 or 20 bands, a buzz generator played from MIDI, or your own carrier.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-vc57">
+<div class="cat">Modulation &amp; space</div><h1>VC57</h1>
+<p class="tagline">Series 57's vocoder: the valve channel vocoder of the late-50s electronic music studios - 10, 14 or 20 bands, a buzz generator played from MIDI, or your own carrier.</p>
+<div class="shot"><img src="img/gfx-vc57.webp" alt="The VC57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-vc57-cph.webp" alt="The VC57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>VC57 is the Series 57 counterpart of VC81: the valve channel vocoder of the electronic music studios of the late 50s. A bank of band-pass filters analyses the voice, a rectifier and a smoothing filter on each band follow its level, and the same bank, fed with a buzz or any other sound, is opened band by band to match.</p><p>The voice goes in on channels 1/2. The carrier is the BUZZ, the studio's relaxation generator played from MIDI (six voices), or EXT, anything you route to channels 3/4. The bank has 10, 14 or 20 fourth-order bands from 120 Hz to 7.5 kHz.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Classic robot and choir vocoding</li><li>Talking synths, organs and pads (EXT)</li><li>Whispered, breathy textures (HISS)</li><li>Larger or smaller throats with SHIFT</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert VC57 on the vocal track. It opens on Init: the BUZZ carrier, 14 bands.</li><li>Arm the track for MIDI as well (or add a MIDI item) and play a chord while the voice plays: the BUZZ sings with the voice.</li><li>Set RESPONSE for how quickly it follows, and EMPHASIS and SIBILANCE for clarity.</li><li>For EXT, route a synth or any sound into channels 3/4 of this track and press EXT.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>CARRIER</h3><dl class="ctl"><dt>EXT / BUZZ</dt><dd>The carrier: EXT (channels 3/4 of the track) or BUZZ (played from MIDI). Changing it fades out and back in.</dd><dt>MIDI</dt><dd>Lights while BUZZ voices are sounding.</dd><dt>HOLD</dt><dd>Keeps the chord sounding after the keys are up, until the next chord.</dd><dt>SHAPE</dt><dd>From a round sawtooth (SAW) to a narrow, very rich pulse train (BUZZ), 0 - 100% (40%). Kept about level.</dd><dt>TUNE</dt><dd>-12 to +12 semitones (0).</dd><dt>OCTAVE</dt><dd>-1, 0 or +1.</dd><dt>GLIDE</dt><dd>Each new note slides from the last, 0 - 100% (0).</dd><dt>HISS</dt><dd>A breath of noise in the carrier, for the unvoiced sounds, 0 - 100% (15%).</dd></dl>
+<h3>FILTER BANK</h3><dl class="ctl"><dt>10 / 14 / 20</dt><dd>The number of bands. Changing it fades out and back in.</dd><dt>The band lamps</dt><dd>One bar per band, lit by the voice.</dd><dt>RESPONSE</dt><dd>How quickly the bands follow the voice, 8 - 60 Hz smoothing (25 Hz): slow and smooth to quick and clear.</dd><dt>EMPHASIS</dt><dd>Lifts the voice's top before the analysis, 0 - 100% (40%): more articulate.</dd><dt>SIBILANCE</dt><dd>Passes the voice's own consonants (above 5 kHz) straight through, 0 - 100% (30%).</dd><dt>SHIFT</dt><dd>Moves the carrier's bands against the voice's, -6 to +6 bands (0): a larger (-) or smaller (+) throat.</dd></dl>
+<h3>IN &middot; OUT</h3><dl class="ctl"><dt>VOICE</dt><dd>The voice's trim, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard on the voice (on by default). Its LED lights while it works.</dd><dt>MIX</dt><dd>From the voice (0%) to the vocoder (100%; the default).</dd><dt>OUTPUT</dt><dd>The output level, -24 to +12 dB (0 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the buzz generator's pitch wanders and the valve filters' centres drift a little, each on its own.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). Its soft CLIP is always on; the red LED lights when it catches a peak.</dd></dl>
+<h3>MIDI</h3><p>Notes play the BUZZ (six voices; velocity sets each voice's level). Pitch bend +/- 2 semitones; CC120 / CC123 release all notes. MIDI is passed on.</p>
+<h3>The signal path</h3><p>The line along the foot: VOICE and CARRIER, ANALYSIS, SYNTHESIS, OUT.</p>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>Steeper, narrower bands and quicker followers: precise and articulate.</dd><dt>COPENHAGEN</dt><dd>Wider, overlapping bands and softer followers: warmer and more blended.</dd></dl>
+<h2>Presets</h2><p>A preset sets the carrier, the BUZZ controls, the bank and MIX; the face, HOLD, VOICE, GUARD, OUTPUT, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness with the BUZZ.</p><dl class="ctl"><dt>Init</dt><dd>The BUZZ, 14 bands, moderate response.</dd><dt>Studio Voice</dt><dd>20 bands, bright and articulate.</dd><dt>Buzz Choir</dt><dd>A round carrier, slow response, a little glide.</dd><dt>Ten-Channel Classic</dt><dd>Ten bands, as on the earliest vocoders.</dd><dt>Twenty-Channel Clarity</dt><dd>20 bands, quick and clear.</dd><dt>Robot Announcer</dt><dd>A narrow buzz an octave down.</dd><dt>Deep Throat</dt><dd>Shifted down four bands, an octave down.</dd><dt>Small Throat</dt><dd>Shifted up four bands.</dd><dt>Whisper</dt><dd>Mostly hiss: a whispered voice.</dd><dt>Soft Ensemble</dt><dd>A slow, round, gliding carrier, mixed a little with the voice.</dd><dt>External Carrier</dt><dd>EXT: your own carrier on channels 3/4.</dd><dt>Organ Talk</dt><dd>A round carrier an octave up, shifted up two bands.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>Hold sustained chords: the vocoder speaks only while the carrier sounds.</li><li>A rich carrier (SHAPE towards BUZZ, or a bright synth on EXT) makes the words clearer.</li><li>Ten bands sound like the 1950s; twenty bands are far more intelligible.</li><li>COPENHAGEN blends into a soft choir; ULM keeps every consonant.</li></ul>
+<p class="file">File: gfx-vc57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

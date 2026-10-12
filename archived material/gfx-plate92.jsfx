@@ -1,0 +1,380 @@
+desc:GFX Plate92 [plate reverb]
+//tags: reverb plate steel valve transformer digital dsp chorus modulation 20-bit home-studio series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// PLATE92 (Series 92: high-end home recording from the 90s): the plate reverb of a serious 90s home studio, with two
+// models on one switch.
+//   input -> TRIM / GUARD -> the send (L + R, mono, as a plate is fed) -> 2x oversampling ->
+//   ANALOG:  a real steel plate in the live room, fed by a VALVE DRIVE amplifier (soft, slightly lopsided saturation,
+//            more with DRIVE) -> back to 1x -> PRE-DELAY -> the plate (a figure-eight tank, tightly diffused: the
+//            dense, bright-but-smooth build of steel, no slap; only the faint movement of the sheet) -> the two contact
+//            pickups (a little presence), spaced by WIDTH -> LOW CUT / HIGH CUT -> the OUTPUT TRANSFORMER (the lows
+//            bloom and thicken with DRIVE, the very top softens). MOD and the PROGRAM keys are out of the path.
+//   DIGITAL: the "plate" programs of a 90s DSP reverb: a flat line in (DRIVE is out of the path) -> back to 1x ->
+//            PRE-DELAY -> the same kind of tank at full bandwidth, its delays chorused by two LFOs (MOD: depth and
+//            rate together - the lush, swirling tail) -> the program's voicing -> LOW CUT / HIGH CUT -> the 20-bit
+//            output word (TPDF dither).
+//            PROGRAM:  BRIGHT - a small, very bright plate (a lifted top, light diffusion, the least swirl)
+//                      VOCAL  - the lush vocal plate (a larger tank, the most chorus, a silky top)
+//                      DRUM   - a short, dense plate that builds at once (a little mid push, little movement)
+//   -> MIX (a send law: the dry stays at full up to 50 %) -> OUTPUT -> the house output stage (band SAT, CLIP always on).
+// The models and programs are level matched, and the wet level holds steady across DAMPER.
+//   DAMPER / DECAY  the decay time, 0.7 - 5 s (the damper's position on ANALOG, the program's decay on DIGITAL).
+//   PRE-DELAY  0 - 250 ms.  WIDTH  the pickups' spacing (0 = mono, 100 % = the full width of the plate).
+//   DRIVE  the valve drive amplifier (ANALOG only).  MOD  the chorus of the tank (DIGITAL only).
+//   LOW CUT 20 - 400 Hz, HIGH CUT 2 - 20 kHz (12 dB / oct each).
+// DRIFT (0-100 %, 50 % = the standard amount): ANALOG - the plate's tension and the pickups' gain wander as the room
+// warms and the mains wander, so the tail breathes; DIGITAL - only a trace (the box's clock is steady).
+// Changing the model, or the program on DIGITAL, fades the return out, clears the plate and fades it back in (the
+// dry is not touched). No latency (the send's oversampling delay is taken from the pre-delay).
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:2<0.7,5,0.01>-Damper / decay (s)
+slider4:20<0,250,0.1>-Pre-delay (ms)
+slider5:1<0,2,1{Bright,Vocal,Drum}>-Program (digital)
+slider6:30<0,100,1>-Drive (analog, %)
+slider7:40<0,100,1>-Mod (digital, %)
+slider8:100<20,400,1>-Low cut (Hz)
+slider9:14000<2000,20000,10>-High cut (Hz)
+slider10:80<0,100,1>-Width (%)
+slider11:25<0,100,1>-Mix (%)
+slider12:0<-24,12,0.1>-Output (dB)
+slider13:0<0,1,1{Analog,Digital}>-Model
+slider14:50<0,100,1>-Drift (%)
+slider15:0<0,100,1>-Band sat (%)
+slider16:30<0,100,1>-Bias (output stage, %)
+slider17:120<40,400,1>-Sat low band (Hz)
+slider18:6000<2000,16000,10>-Sat high band (Hz)
+slider19:-0.3<-24,0,0.1>-Ceiling (dB)
+slider20:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-plate92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+t9_HB = s92_alloc(64); s92_hbdesign(t9_HB, 63, 8);
+t9u.s92_upinit(63, t9_HB, 64); t9dn.s92_dninit(63, t9_HB, 64);
+t9_ostm = s92_alloc(4096);
+t9P.s92_dlinit(65536);                                  // the pre-delay
+// the tank (lengths at 29761 Hz, the classic figure-eight; room for the ANALOG plate at 192 kHz)
+t9i1.s92_dlinit(2048); t9i2.s92_dlinit(2048); t9i3.s92_dlinit(4096); t9i4.s92_dlinit(4096);
+t9m1.s92_dlinit(8192); t9d1.s92_dlinit(65536); t9a1.s92_dlinit(16384); t9d2.s92_dlinit(32768);
+t9m2.s92_dlinit(8192); t9d3.s92_dlinit(65536); t9a2.s92_dlinit(32768); t9d4.s92_dlinit(32768);
+function t9_clr() instance(buf, len) ( memset(buf, 0, len); );
+
+// ---------- the stages ----------
+// the valve drive amplifier: a triode-ish curve, a little lopsided (even harmonics), level held as DRIVE rises
+function t9_valve(x) local(k) (
+  k = 1 + 6 * t9_drv * t9_drv + 1.5 * t9_drv;
+  (s92_th(x * k + 0.12) - s92_th(0.12)) / k * t9_vg;
+);
+// the output transformer: the lows bloom (and thicken with DRIVE), the very top softens
+function t9_iron(x) instance(lo, hf) (
+  lo += (x - lo) * t9_kio;
+  x = (x - lo) + 1.3 * s92_th(lo * t9_ki) / t9_ki;
+  hf += (x - hf) * t9_khf;
+  hf;
+);
+function t9_ironclr() instance(lo, hf) ( lo = hf = 0; );
+
+// ---------- the plate: per model / program (t9_cfg: 0 ANALOG, 1 BRIGHT, 2 VOCAL, 3 DRUM) ----------
+// size, the tank's damping and the bandwidth in, the diffusion, the movement, the voicing, the wet level (dB, measured
+// on pink noise at DAMPER 2 s)
+function t9_plate() local(d) (
+  t9_cfg == 0 ? (
+    t9_sz = 1.1; t9_fdm = 10500; t9_fbw = 13500; t9_gi1 = 0.76; t9_gi2 = 0.66; t9_gdf = 0.55; t9_mx = 0; t9_mr = 0.6; d = -3.70;
+    t9pkL.s92_bqset(3, 3000, 1.5, 0.8, srate); t9pkR.s92_bqset(3, 3000, 1.5, 0.8, srate);
+  ) : t9_cfg == 1 ? (
+    t9_sz = 0.92; t9_fdm = 17500; t9_fbw = 20000; t9_gi1 = 0.72; t9_gi2 = 0.6; t9_gdf = 0.5; t9_mx = 0.8; t9_mr = 1; d = -2.62;
+    t9pkL.s92_bqset(5, 5000, 4, 0.7, srate); t9pkR.s92_bqset(5, 5000, 4, 0.7, srate);
+  ) : t9_cfg == 2 ? (
+    t9_sz = 1.05; t9_fdm = 12500; t9_fbw = 18000; t9_gi1 = 0.7; t9_gi2 = 0.6; t9_gdf = 0.5; t9_mx = 1.25; t9_mr = 0.8; d = -2.15;
+    t9pkL.s92_bqset(5, 7000, 2, 0.7, srate); t9pkR.s92_bqset(5, 7000, 2, 0.7, srate);
+  ) : (
+    t9_sz = 0.78; t9_fdm = 10000; t9_fbw = 17000; t9_gi1 = 0.78; t9_gi2 = 0.68; t9_gdf = 0.6; t9_mx = 0.45; t9_mr = 1.3; d = -2.86;
+    t9pkL.s92_bqset(3, 2500, 1.5, 0.9, srate); t9pkR.s92_bqset(3, 2500, 1.5, 0.9, srate);
+  );
+  t9_wn = 10 ^ (d / 20);
+  t9_sz *= srate / 29761;
+  t9_half = (672 + 4453 + 1800 + 3720 + 908 + 4217 + 2656 + 3163) * 0.5 * t9_sz / srate;   // one half of the eight (s)
+  t9_kd = s92_k(t9_fdm, srate); t9_kb = s92_k(t9_fbw, srate);
+);
+// LOW CUT / HIGH CUT: 12 dB / oct state-variable filters (Butterworth), their tuning glided every sample
+function t9_cuts() (
+  t9_tlg = tan($pi * min(slider8, 0.45 * srate) / srate); t9_thg = tan($pi * min(slider9, 0.45 * srate) / srate);
+);
+function t9_sv(x, a1, a2, a3, hp) instance(ic1, ic2) local(v1, v2, v3) (
+  v3 = x - ic2; v1 = a1 * ic1 + a2 * v3; v2 = ic2 + a2 * ic1 + a3 * v3; ic1 = 2 * v1 - ic1; ic2 = 2 * v2 - ic2;
+  hp ? x - 1.41421356 * v1 - v2 : v2;
+);
+// the decay: the damping is applied twice in each half of the eight, so -60 dB per RT needs 10^(-1.5 * half / RT)
+function t9_dset() local(l) (
+  t9_tdec = 10 ^ (-1.5 * t9_half / t9_rt);
+  l = log(t9_rt / 2); t9_twg = t9_wn * 10 ^ (-(t9_c1 * l + t9_c2 * l * l) / 20);   // a longer tail is not louder
+);
+function t9_tankclr() (
+  t9i1.t9_clr(); t9i2.t9_clr(); t9i3.t9_clr(); t9i4.t9_clr(); t9m1.t9_clr(); t9d1.t9_clr(); t9a1.t9_clr(); t9d2.t9_clr();
+  t9m2.t9_clr(); t9d3.t9_clr(); t9a2.t9_clr(); t9d4.t9_clr(); t9P.t9_clr();
+  t9_bw = t9_lA = t9_lB = t9_bL = t9_bR = 0;
+  t9pkL.s92_bqclr(); t9pkR.s92_bqclr(); t9irL.t9_ironclr(); t9irR.t9_ironclr();
+);
+
+// ---------- settings ----------
+function t9_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  t9_rt = min(max(slider3, 0.7), 5);
+  t9_tpd = slider4 / 1000 * srate;
+  t9_tdrv = slider6 / 100; t9_tvg = 10 ^ ((0.8 + 1.2 * t9_tdrv + 1.6 * t9_tdrv * t9_tdrv) / 20);   // the drive's makeup
+  t9_tmd = slider7 / 100;
+  t9_twid = slider10 / 100;
+  t9_tmix = slider11 / 100; t9_tog = 10 ^ (slider12 / 20);
+  t9_tmdl = slider13 >= 0.5;
+  t9_tcfg = t9_tmdl ? 1 + min(max(floor(slider5 + 0.5), 0), 2) : 0;
+  drift_macro(slider14);
+  ost_setup(slider15 / 100, slider16 / 100, slider17, slider18, slider19, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+function t9_srinit() (
+  t9_sr = srate; t9_sm = s92_kt(0.02, srate); t9_kpd = s92_kt(0.08, srate); t9_fd = 1 / (0.012 * srate);
+  t9_kio = s92_k(160, srate); t9_khf = s92_k(15000, srate);
+  t9_cuts(); t9_lg = t9_tlg; t9_hg = t9_thg;
+  t9_plate(); t9_dset();
+  ost_init(t9_ostm);
+);
+t9_c1 = 2.06; t9_c2 = 0.74;
+in_init();
+t9_update();
+t9_mdl = t9_tmdl; t9_cfg = t9_tcfg;
+t9_srinit();
+t9_dfT.drift_init(0.6 + rand(0.4)); t9_dfM.drift_init(0.8 + rand(0.4));
+t9_dgL.drift_init(0.8 + rand(0.4)); t9_dgR.drift_init(0.8 + rand(0.4));
+t9_sgL = rand(2) - 1; t9_sgR = rand(2) - 1;
+t9oL.ost_ch_init(); t9oR.ost_ch_init();
+t9_dec = t9_tdec; t9_wg = t9_twg; t9_mix = t9_tmix; t9_og = t9_tog; t9_pd = t9_tpd; t9_drv = t9_tdrv; t9_vg = t9_tvg;
+t9_wid = t9_twid; t9_md = t9_tmd;
+t9_ki = 1 + 3 * t9_drv; t9_fade = 1; t9_fst = 0; t9_hold = 0; t9_gwL = t9_gwR = 1;
+t9_ex = t9_tex = 3 * t9_sz; t9_ec = t9_tec = 0; t9_mi = t9_tmi = 0.6 / srate; t9_mi2 = t9_tmi2 = 0.4 / srate;
+
+// ---------- presets ----------
+function t9_set(dm, pd, pg, dr, md, lc, hc, wi, mx, ou, mo) (
+  slider3 = dm; slider4 = pd; slider5 = pg; slider6 = dr; slider7 = md; slider8 = lc; slider9 = hc; slider10 = wi;
+  slider11 = mx; slider12 = ou; slider13 = mo;
+  slider_automate(8188);                                // sliders 3 - 13 (TRIM, GUARD, DRIFT and the output stage stay)
+);
+#t9_pm = "Init|Steel Vocal|Valve Snare|Live Room Long|Driven Drum Steel|Damped Acoustic|Ballad Steel|Bright Vocal Plate|Lush Vocal Plate|Tight Drum Plate|Swirl Pad Plate|Crisp Snare Plate";
+function load_preset(p) (
+  //               dmp   pd  pg  drv  mod    lc     hc   wid  mix   out  mo
+  p == 1  ? t9_set(2.0,  20,  1,  30,  40,  100, 14000,   80,  25,    0,  0) :     // Init
+  p == 2  ? t9_set(2.3,  60,  1,  30,  40,  160, 11000,   85,  22,  0.3,  0) :     // Steel Vocal
+  p == 3  ? t9_set(1.4,   5,  1,  50,  40,  200, 12000,   90,  25,    0,  0) :     // Valve Snare
+  p == 4  ? t9_set(4.2,  35,  1,  25,  40,   80, 10000,  100,  25,    0,  0) :     // Live Room Long
+  p == 5  ? t9_set(1.8,  10,  1,  80,  40,  140, 10000,   85,  22,  0.3,  0) :     // Driven Drum Steel
+  p == 6  ? t9_set(1.0,  15,  1,  20,  40,  180, 13000,   70,  20,  0.5,  0) :     // Damped Acoustic
+  p == 7  ? t9_set(3.2,  45,  1,  25,  40,  110, 12000,  100,  28, -0.3,  0) :     // Ballad Steel
+  p == 8  ? t9_set(1.9,  40,  0,  30,  30,  150, 18000,   90,  22,    0,  1) :     // Bright Vocal Plate
+  p == 9  ? t9_set(2.6,  70,  1,  30,  65,  140, 15000,  100,  25,    0,  1) :     // Lush Vocal Plate
+  p == 10 ? t9_set(0.9,   0,  2,  30,  20,  180, 14000,   75,  25,    0,  1) :     // Tight Drum Plate
+  p == 11 ? t9_set(4.8,  30,  1,  30, 100,  100, 12000,  100,  30, -0.6,  1) :     // Swirl Pad Plate
+  p == 12 ? t9_set(1.3,   8,  2,  30,  35,  220, 20000,   85,  25,    0,  1) :     // Crisp Snare Plate
+  p == 13 ? (                                                  // Reset all to defaults
+    t9_set(2.0, 20, 1, 30, 40, 100, 14000, 80, 25, 0, 0);
+    slider1 = 0; slider2 = 1; slider14 = 50; slider15 = 0; slider16 = 30; slider17 = 120; slider18 = 6000; slider19 = -0.3; slider20 = 1;
+    slider_automate(1048575);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+t9_update();
+
+@block
+srate != t9_sr ? t9_srinit();
+t9_update();                                            // knobs moved on the panel do not run @slider
+t9_dset();
+t9_cuts();
+// the movement: ANALOG - the sheet's faint movement, its tension wandering with DRIFT; DIGITAL - MOD sets the chorus
+// of the tank (depth and rate together), DRIFT leaves only a trace
+t9_di = 0.12 * dm_s * samplesblock / srate;
+t9_wa = dm_a * (t9_mdl ? 0.2 : 1);
+t9_wt = t9_dfT.drift_tick(t9_di); t9_wm = t9_dfM.drift_tick(t9_di);
+t9_mdl ? (
+  t9_tex = (2 + 26 * t9_md) * t9_mx * (1 + 0.1 * t9_wa * t9_wt) * t9_sz;
+  t9_tec = 12 * t9_md * t9_mx * t9_sz;
+  t9_tmi = t9_mr * (0.45 + 1.0 * t9_md) * (1 + 0.1 * t9_wa * t9_wm) / srate;
+  t9_tmi2 = t9_mr * (0.3 + 0.6 * t9_md) / srate;
+) : (
+  t9_tex = 3 * (1 + 0.4 * t9_wa * t9_wt) * t9_sz;
+  t9_tec = 0.6 * t9_wa * t9_sz;
+  t9_tmi = 0.6 * (1 + 0.15 * t9_wa * t9_wm) / srate;
+  t9_tmi2 = 0.37 / srate;
+);
+t9_gwL = 1 + t9_wa * (0.012 * t9_dgL.drift_tick(t9_di) + 0.005 * t9_sgL);
+t9_gwR = 1 + t9_wa * (0.012 * t9_dgR.drift_tick(t9_di) + 0.005 * t9_sgR);
+t9a_vi = max(t9a_vi, t9_viL); t9a_vo = max(t9a_vo, t9_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+t9_mix += (t9_tmix - t9_mix) * t9_sm; t9_og += (t9_tog - t9_og) * t9_sm; t9_pd += (t9_tpd - t9_pd) * t9_kpd;
+t9_drv += (t9_tdrv - t9_drv) * t9_sm; t9_vg += (t9_tvg - t9_vg) * t9_sm; t9_wid += (t9_twid - t9_wid) * t9_sm;
+t9_dec += (t9_tdec - t9_dec) * t9_sm; t9_wg += (t9_twg - t9_wg) * t9_sm; t9_md += (t9_tmd - t9_md) * t9_sm;
+t9_ex += (t9_tex - t9_ex) * t9_sm; t9_ec += (t9_tec - t9_ec) * t9_sm;
+t9_mi += (t9_tmi - t9_mi) * t9_sm; t9_mi2 += (t9_tmi2 - t9_mi2) * t9_sm;
+t9_ki = 1 + 3 * t9_drv;
+t9_lg += (t9_tlg - t9_lg) * t9_sm; t9_hg += (t9_thg - t9_hg) * t9_sm;
+t9_l1 = 1 / (1 + t9_lg * (t9_lg + 1.41421356)); t9_l2 = t9_lg * t9_l1; t9_l3 = t9_lg * t9_l2;
+t9_h1 = 1 / (1 + t9_hg * (t9_hg + 1.41421356)); t9_h2 = t9_hg * t9_h1; t9_h3 = t9_hg * t9_h2;
+// a change of model, or of program on DIGITAL: fade the return out, switch and clear the plate at the silent point,
+// wait, fade in
+t9_tcfg != t9_cfg && t9_fst == 0 ? t9_fst = 1;
+t9_fst == 1 ? ( t9_fade -= t9_fd; t9_fade <= 0 ? (
+  t9_fade = 0; t9_mdl = t9_tmdl; t9_cfg = t9_tcfg;
+  t9_plate(); t9_dset(); t9_dec = t9_tdec; t9_wg = t9_twg;
+  t9_tankclr();
+  t9_hold = 64; t9_fst = 2; ); ) :
+t9_fst == 2 ? ( t9_hold -= 1; t9_hold <= 0 ? t9_fst = 3; ) :
+t9_fst == 3 ? ( t9_fade += t9_fd; t9_fade >= 1 ? ( t9_fade = 1; t9_fst = 0; ); );
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+t9_xl = in_l; t9_xr = in_r;
+t9_viL = max(t9_viL * 0.9995, abs(t9_xl) + abs(t9_xr));
+
+// ---------- the send: the valve drive amplifier (ANALOG) or a flat line in (DIGITAL), 2x ----------
+t9_s = (t9_xl + t9_xr) * 0.5;
+t9u.s92_up(t9_s);
+t9_mdl ? ( t9_q0 = t9u.o0; t9_q1 = t9u.o1; ) : ( t9_q0 = t9_valve(t9u.o0); t9_q1 = t9_valve(t9u.o1); );
+t9_s = t9dn.s92_dn(t9_q0, t9_q1);
+// the pre-delay (less the oversampling's 31 samples); a switch fades the plate's feed as well, so it restarts smoothly
+t9P.s92_dlw(t9_s * t9_fade);
+t9_in = t9P.s92_dlr(max(t9_pd - 31, 1));
+
+// ---------- the plate: the bandwidth in, the input diffusers, the figure eight (two LFOs move it) ----------
+t9_bw += (t9_in - t9_bw) * t9_kb;
+t9_u = t9i1.s92_ap(t9_bw, 142 * t9_sz, t9_gi1); t9_u = t9i2.s92_ap(t9_u, 107 * t9_sz, t9_gi1);
+t9_u = t9i3.s92_ap(t9_u, 379 * t9_sz, t9_gi2); t9_u = t9i4.s92_ap(t9_u, 277 * t9_sz, t9_gi2);
+t9_p1 += t9_mi; t9_p1 >= 1 ? t9_p1 -= 1;
+t9_p2 += t9_mi2; t9_p2 >= 1 ? t9_p2 -= 1;
+t9_o1 = 2 * $pi * t9_p1; t9_o2 = 2 * $pi * t9_p2;
+t9_a = t9_u + t9_bR * t9_dec;
+t9_a = t9m1.s92_ap(t9_a, 672 * t9_sz + t9_ex * sin(t9_o1), -0.7);
+t9d1.s92_dlw(t9_a); t9_a = t9d1.s92_dlr3(4453 * t9_sz + t9_ec * sin(t9_o2));
+t9_lA += (t9_a - t9_lA) * t9_kd; t9_a = t9_lA * t9_dec;
+t9_a = t9a1.s92_ap(t9_a, 1800 * t9_sz, t9_gdf);
+t9d2.s92_dlw(t9_a); t9_bL = t9d2.s92_dlr(3720 * t9_sz);
+t9_b = t9_u + t9_bL * t9_dec;
+t9_b = t9m2.s92_ap(t9_b, 908 * t9_sz + t9_ex * cos(t9_o1), -0.7);
+t9d3.s92_dlw(t9_b); t9_b = t9d3.s92_dlr3(4217 * t9_sz + t9_ec * cos(t9_o2));
+t9_lB += (t9_b - t9_lB) * t9_kd; t9_b = t9_lB * t9_dec;
+t9_b = t9a2.s92_ap(t9_b, 2656 * t9_sz, t9_gdf);
+t9d4.s92_dlw(t9_b); t9_bR = t9d4.s92_dlr(3163 * t9_sz);
+
+// ---------- the pickups: taps round the tank, spaced by WIDTH ----------
+t9_wl = t9d3.s92_dlr(266 * t9_sz) + t9d3.s92_dlr(2974 * t9_sz) - t9a2.s92_dlr(1913 * t9_sz) + t9d4.s92_dlr(1996 * t9_sz) - t9d1.s92_dlr(1990 * t9_sz) - t9a1.s92_dlr(187 * t9_sz) - t9d2.s92_dlr(1066 * t9_sz);
+t9_wr = t9d1.s92_dlr(353 * t9_sz) + t9d1.s92_dlr(3627 * t9_sz) - t9a1.s92_dlr(1228 * t9_sz) + t9d2.s92_dlr(2673 * t9_sz) - t9d3.s92_dlr(2111 * t9_sz) - t9a2.s92_dlr(335 * t9_sz) - t9d4.s92_dlr(121 * t9_sz);
+t9_m = (t9_wl + t9_wr) * 0.5; t9_sd = (t9_wl - t9_wr) * 0.5 * t9_wid; t9_wl = t9_m + t9_sd; t9_wr = t9_m - t9_sd;
+// the voicing (ANALOG: the pickups' presence; DIGITAL: the program's), the cuts, ANALOG: the output transformer
+t9_wl = t9pkL.s92_bq(t9_wl); t9_wr = t9pkR.s92_bq(t9_wr);
+t9_wl = t9hcL.t9_sv(t9lcL.t9_sv(t9_wl, t9_l1, t9_l2, t9_l3, 1), t9_h1, t9_h2, t9_h3, 0);
+t9_wr = t9hcR.t9_sv(t9lcR.t9_sv(t9_wr, t9_l1, t9_l2, t9_l3, 1), t9_h1, t9_h2, t9_h3, 0);
+!t9_mdl ? ( t9_wl = t9irL.t9_iron(t9_wl); t9_wr = t9irR.t9_iron(t9_wr); );
+t9_wl *= t9_wg * t9_gwL * t9_fade; t9_wr *= t9_wg * t9_gwR * t9_fade;
+// DIGITAL: the box's 20-bit output word (TPDF dither)
+t9_mdl ? (
+  t9_wl = floor(t9_wl * 524288 + rand(1) - rand(1) + 0.5) / 524288; t9_wr = floor(t9_wr * 524288 + rand(1) - rand(1) + 0.5) / 524288;
+);
+
+// ---------- MIX (a send law), OUTPUT and the house output stage ----------
+t9_gd = min(1, 2 - 2 * t9_mix); t9_gw = min(1, 2 * t9_mix);
+t9_yl = t9_xl * t9_gd + t9_wl * t9_gw; t9_yr = t9_xr * t9_gd + t9_wr * t9_gw;
+t9_vL = max(t9_vL * 0.9995, abs(t9_yl) + abs(t9_yr));
+t9_yl = t9oL.ost_band(t9_yl) * t9_og; t9_yr = t9oR.ost_band(t9_yr) * t9_og;
+ost_out(t9_yl, t9_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s92_pal(slider13);
+s92_fonts();
+s92_face(960, 366);
+gt_dg = slider13 >= 0.5;
+gt_pg = min(max(floor(slider5 + 0.5), 0), 2);
+
+// ---------- the header ----------
+k_ = s92_header(960, "PLATE92", "SERIES 92", "PLATE REVERB", #t9_pm, 13);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the LED ladders, the trim, GUARD ----------
+s92_mod(20, 62, 222, 292, "INPUT");
+t9mI.s92_edge(30, 94, 202, 46, t9a_vi * 2.83, "IN");
+t9mO.s92_edge(30, 148, 202, 46, t9a_vo * 2.83, "OUT");
+t9a_vi *= 0.6; t9a_vo *= 0.6;
+s92_off = 0; s92_knob(72, 282, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s92_smallc(180, 250, "GUARD");
+s92_key(152, 260, 56, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s92_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(220 * sc, 272 * sc, 3.5 * sc, 1, S92_RED); in_grd = 0;
+
+// ---------- THE PLATE: the LCDs, DAMPER / DECAY, PRE-DELAY, WIDTH, the program keys ----------
+s92_mod(254, 62, 296, 292, gt_dg ? "PLATE PROGRAM" : "STEEL PLATE");
+gt_dg ? sprintf(#gt_l1, "P%d  %s PLATE", gt_pg + 1, gt_pg == 0 ? "BRIGHT" : gt_pg == 1 ? "VOCAL" : "DRUM") : strcpy(#gt_l1, "STEEL  LIVE ROOM");
+s92_lcd(268, 94, 180, 26, #gt_l1);
+sprintf(#gt_l2, "%.1f S", slider3);
+s92_lcd(462, 94, 74, 26, #gt_l2);
+s92_knob(322, 188, 32, 3, 0.7, 5, 2, 1, gt_dg ? "DECAY" : "DAMPER", "%.2f s", 0);
+s92_small(272, 214, "0.7"); s92_small(362, 214, "5");
+s92_knob(428, 180, 18, 4, 0, 250, 20, 0, "PRE-DELAY", "%.0f ms", 0);
+s92_knob(500, 180, 18, 10, 0, 100, 80, 0, "WIDTH", "%.0f%%", 0);
+s92_smallc(402, 256, "PROGRAM");
+gi_ = 0; loop(3, pk_pitem("BRIGHT|VOCAL|DRUM", gi_ + 1, #gt_);
+  s92_key(272 + gi_ * 88, 268, 84, 26, gt_pg == gi_ && gt_dg, #gt_) ? s92_set(5, gi_); gi_ += 1; );
+s92_smallc(402, 316, gt_dg ? "20-BIT DSP PLATE PROGRAMS" : "PROGRAMS: DIGITAL ONLY");
+s92_smallc(402, 334, gt_dg ? "CHORUSED TANK" : "VALVE-DRIVEN STEEL");
+
+// ---------- VALVE / DSP, and the cuts ----------
+s92_mod(562, 62, 172, 292, gt_dg ? "DSP · TONE" : "VALVE · TONE");
+s92_off = gt_dg; s92_knob(608, 140, 22, 6, 0, 100, 30, 0, "DRIVE", "%.0f%%", 0);
+s92_off = !gt_dg; s92_knob(690, 140, 22, 7, 0, 100, 40, 0, "MOD", "%.0f%%", 0);
+s92_off = 0;
+s92_kc = S92_C_HPF; s92_knob(608, 236, 18, 8, 20, 400, 100, 1, "LOW CUT", "%.0f Hz", 0);
+s92_kc = S92_C_LPF; s92_knob(690, 236, 18, 9, 2000, 20000, 14000, 1, "HIGH CUT", "%.0f Hz", 0);
+s92_kc = 0;
+s92_smallc(648, 304, gt_dg ? "DRIVE OUT OF PATH" : "MOD: DIGITAL ONLY");
+s92_smallc(648, 324, "CUTS 12 DB / OCT");
+
+// ---------- OUTPUT: DRIFT, SAT; MIX and OUTPUT on faders ----------
+s92_mod(746, 62, 194, 292, "OUTPUT");
+s92_knob(788, 132, 18, 14, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s92_knob(788, 236, 12, 15, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(810 * sc, 224 * sc, 3.5 * sc, 1, S92_RED); ost_clipped = 0;
+s92_fc = S92_F_BLUE; s92_fader(852, 106, 130, 11, 0, 100, 25, 0, "MIX", "%.0f%%", 0);
+s92_fc = 0; s92_fader(906, 106, 130, 12, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s92_smallc(879, 304, "MIX: SEND LAW");
+s92_smallc(879, 324, "DRY FULL TO 50%");
+
+pk_end();
+ui_end();

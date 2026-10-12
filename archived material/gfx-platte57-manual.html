@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX Platte57 - manual</title><meta name="description" content="Series 57's plate: the first steel plate of 1957 - one driver, a valve drive amplifier, the damper on its screw, and one pickup or two.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-platte57">
+<div class="cat">Modulation &amp; space</div><h1>Platte57</h1>
+<p class="tagline">Series 57's plate: the first steel plate of 1957 - one driver, a valve drive amplifier, the damper on its screw, and one pickup or two.</p>
+<div class="shot"><img src="img/gfx-platte57.webp" alt="The Platte57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-platte57-cph.webp" alt="The Platte57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>1957 is the year the plate reverb arrived: a large sheet of steel hung in a frame, a moving-coil driver at one point, a contact pickup at another, and a porous damping plate on a screw that brings the decay down from about five seconds to under one. Platte57 is that first plate, with its valve drive amplifier and the choice of the original single pickup (MONO) or two pickups (STEREO), as the later plates had.</p><p>Where Platte81 models the plate's modes, Platte57 is built as a figure-eight tank of diffusers and delays: the dense, bright, instant build of a plate, with no slap.</p>
+<h3>Reach for it for</h3><ul class="when"><li>The classic plate on vocals and snare</li><li>Bright, dense tails that stay out of the way</li><li>A mono 1950s plate on period productions</li><li>Long, shimmering plates on pads</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert Platte57 on a track, or on a send with MIX at 100%. It opens on Init: a 2.2 s stereo plate.</li><li>Set the decay with DAMPER: open for long, closed for short. The panel shows the damper moving and the decay time.</li><li>Add PRE-DELAY to keep the source clear; thin the lows with LOW CUT.</li><li>TENSION makes the plate brighter and denser (tight) or darker (slack).</li><li>Try MONO for the original single-pickup plate.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>THE PLATE</h3><dl class="ctl"><dt>The plate</dt><dd>The steel in its frame, the driver, the pickup (or two) and the damper; the steel shimmers with the return.</dd><dt>MONO / STEREO</dt><dd>One pickup (the original 1957 plate) or two.</dd><dt>Decay</dt><dd>The read-out under the plate: the decay set by the damper.</dd></dl>
+<h3>DAMPER &middot; TONE</h3><dl class="ctl"><dt>DAMPER</dt><dd>The damping plate's position, OPEN (about 5.5 s) to CLOSED (0.7 s) (45%).</dd><dt>PRE-DELAY</dt><dd>0 - 250 ms (20 ms): a tape machine before the send, as the studios used.</dd><dt>TENSION</dt><dd>Slack (darker, a little slower to build) to tight (brighter, denser) (50%).</dd><dt>LOW CUT</dt><dd>The return's high-pass, 20 - 400 Hz (120 Hz): plates were usually thinned in the lows.</dd><dt>HIGH</dt><dd>A top shelf on the return, -6 to +6 dB (0).</dd></dl>
+<h3>IN &middot; OUT</h3><dl class="ctl"><dt>INPUT</dt><dd>Trim before everything, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard (on by default). Its LED lights while it works.</dd><dt>DRIVE</dt><dd>The valve drive amplifier, 0 - 100% (20%). Oversampled 2x.</dd><dt>WIDTH</dt><dd>With STEREO, mono to wide, 0 - 100% (80%).</dd><dt>MIX</dt><dd>Dry to plate, 0 - 100% (25%). The dry stays at full level up to 50%.</dd><dt>OUTPUT</dt><dd>The output level, -24 to +12 dB (0 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the plate's tension wanders, so the tail breathes a little.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). As a mix tool it passes straight through otherwise.</dd></dl>
+<h3>The signal path</h3><p>The line along the foot: IN, DRIVE AMP, PLATE, OUT.</p>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>A tight, bright steel plate.</dd><dt>COPENHAGEN</dt><dd>A softer, darker plate; the damper's felt is thicker, so the same position gives a slightly shorter decay.</dd></dl>
+<h2>Presets</h2><p>A preset sets DAMPER, PRE-DELAY, TENSION, LOW CUT, HIGH, DRIVE, PICKUPS, WIDTH and MIX; the face, INPUT, GUARD, OUTPUT, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness.</p><dl class="ctl"><dt>Init</dt><dd>A 2.2 s stereo plate.</dd><dt>Vocal Plate</dt><dd>A 60 ms pre-delay, the lows thinned.</dd><dt>Snare Plate</dt><dd>Short, tight and bright, a little driven.</dd><dt>Long Plate</dt><dd>The damper nearly open.</dd><dt>Short Bright</dt><dd>Mostly closed, tight, a lifted top.</dd><dt>Mono 1957</dt><dd>The original single pickup.</dd><dt>Dark Plate</dt><dd>Slack and dark.</dd><dt>Tight Steel</dt><dd>Maximum tension.</dd><dt>Slack Plate</dt><dd>Minimum tension, darker.</dd><dt>Driven Plate</dt><dd>The drive amplifier pushed.</dd><dt>Damper Closed</dt><dd>The shortest plate.</dd><dt>Damper Open</dt><dd>The longest plate, a 40 ms pre-delay.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>A plate builds instantly: it suits sources that need a tail without a room.</li><li>Thin the lows with LOW CUT so the plate does not cloud the mix.</li><li>MONO puts the plate behind the source, as on the records of 1957.</li><li>COPENHAGEN's darker plate sits well behind vocals.</li></ul>
+<p class="file">File: gfx-platte57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

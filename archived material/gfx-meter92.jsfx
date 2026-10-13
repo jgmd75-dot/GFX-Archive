@@ -1,0 +1,395 @@
+desc:GFX Meter92 [meter bridge]
+//tags: meter vu peak overs bit-meter goniometer correlation loudness lufs bs1770 rms home-studio meter-bridge series92
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-ui, gfx-panel and gfx-s92 (.jsfx-inc) in the same folder.
+//
+// METER92 (Series 92: high-end home recording from the 90s): the meter bridge of a serious 90s home studio, with two
+// faces on one switch. The audio passes through BIT-EXACT in both models (latency 0): the plug-in never writes the
+// output, it only reads it. There is no output stage and no DRIFT (a meter must not wander).
+//   input -> output (untouched); the meters read it.
+//   ANALOG:  a pair of backlit VU meters on a desk's meter bridge: amber-lit faces, black scale -20 .. +3 VU with the
+//            red zone from 0, black needles with true VU ballistics (a second-order movement: 99 % of a step in
+//            300 ms, about 1 % overshoot, an average-responding full-wave rectifier calibrated on a sine).
+//            VU REFERENCE  0 VU = a sine whose peak sits at -18, -14 or -12 dBFS.
+//            PEAK LED  a red LED on each meter, lit for 250 ms when a sample reaches -6, -3 or -1 dBFS.
+//   DIGITAL: a 90s stand-alone digital meter: two long plasma-style dBFS bars (sample peak, -60 .. 0, a fall of 20 dB
+//            in 1.7 s) with a peak-hold segment and the RMS (300 ms) in a thin row under each; the OVER lamp and the
+//            highest peak since RESET at the end of each bar.
+//            PEAK HOLD  OFF, 3 S (the hold segment falls after 3 s) or HOLD (held until RESET).
+//            OVERS  counts each run of N consecutive full-scale samples (at or above 32767 / 32768, the 16-bit
+//            full-scale code), N = 1, 2, 3 or 4 (3, the usual convention); one count per run, per channel.
+//            BITS IN USE  the active word length read from the signal over 0.4 s: a row of bit LEDs (sign, then the
+//            23 magnitude bits of a 24-bit word, then FLT for anything finer than 24 bits) and the word length on an
+//            LCD (16, 20, 24 ... or FLOAT).
+//            A goniometer (M up, L / R on the diagonals, auto-ranging) with a correlation bar (+1 mono, 0 wide, -1 out
+//            of phase), and the loudness per ITU-R BS.1770 (K-weighted) on an LCD: short-term (3 s), with the
+//            momentary (400 ms) beside it.
+//            RESET clears the overs, the peak hold and the peak maxima.
+// The meters always run in the background, whichever face is shown.
+
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s92.jsfx-inc
+
+slider1:0<0,1,1{Analog,Digital}>-Model
+slider2:0<0,2,1{-18 dBFS,-14 dBFS,-12 dBFS}>-VU reference (0 VU)
+slider3:1<0,2,1{-6 dBFS,-3 dBFS,-1 dBFS}>-Peak LED
+slider4:1<0,2,1{Off,3 s,Hold}>-Peak hold
+slider5:2<0,3,1{1,2,3,4}>-Over (consecutive full-scale samples)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-meter92";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s92_mem = 0;
+m9_EKB = s92_alloc(32);                                  // the K-weighted energy of each 100 ms sub-block (a ring)
+m9_GB = s92_alloc(4096);                                 // the goniometer's ring: M at 0, S at 2048
+
+// ---------- the K-weighting (ITU-R BS.1770): the head shelf, then the RLB high-pass, at any sample rate ----------
+function m9_kset() local(f, g, q, k, vh, vb, a0) (
+  f = 1681.974450955533; g = 3.999843853973347; q = 0.7071752369554196;
+  k = tan($pi * f / srate); vh = 10 ^ (g / 20); vb = vh ^ 0.4996667741545416; a0 = 1 + k / q + k * k;
+  m9_pb0 = (vh + vb * k / q + k * k) / a0; m9_pb1 = 2 * (k * k - vh) / a0; m9_pb2 = (vh - vb * k / q + k * k) / a0;
+  m9_pa1 = 2 * (k * k - 1) / a0; m9_pa2 = (1 - k / q + k * k) / a0;
+  f = 38.13547087602444; q = 0.5003270373238773;
+  k = tan($pi * f / srate); a0 = 1 + k / q + k * k;
+  m9_ra1 = 2 * (k * k - 1) / a0; m9_ra2 = (1 - k / q + k * k) / a0;
+);
+function m9_kw(x) instance(z1, z2, u1, u2) local(y) (
+  y = m9_pb0 * x + z1; z1 = m9_pb1 * x - m9_pa1 * y + z2; z2 = m9_pb2 * x - m9_pa2 * y;
+  x = y; y = x + u1; u1 = -2 * x - m9_ra1 * y + u2; u2 = x - m9_ra2 * y;
+  y;
+);
+
+// ---------- the VU movement: a full-wave average rectifier into a second-order needle (ANSI C16.5 ballistics) ----------
+// the needle's position is in sine-peak units (a steady sine reads its peak); 99 % of a step in 300 ms, ~1 % overshoot
+function m9_vu(x) instance(p, v) (
+  v += ((abs(x) * m9_VUC - p) * m9_w2 - m9_zw * v) * m9_dt;
+  p += v * m9_dt;
+  p;
+);
+// the overs: a run of m9_on consecutive full-scale samples counts once
+function m9_ov(a) instance(run, n, lamp) (
+  a >= m9_FS ? ( run += 1; run == m9_on ? ( n += 1; lamp = m9_olt; ); ) : run = 0;
+);
+// the digital peak bar: an instant rise, a fall of 20 dB in 1.7 s; the hold segment; the maximum since RESET
+function m9_pk(a) instance(pd, ph, ht, mx, led) (
+  pd = max(a, pd * m9_kk);
+  a >= ph ? ( ph = a; ht = m9_hlen; );
+  mx = max(mx, a);
+  a >= m9_plt ? led = m9_llen;
+);
+
+// ---------- settings ----------
+function m9_srinit() (
+  m9_sr = srate; m9_dt = 1 / srate;
+  m9_wn = 2 * $pi * 2.15; m9_w2 = m9_wn * m9_wn; m9_zw = 2 * 0.81 * m9_wn;
+  m9_kk = 10 ^ (-20 / 20 / (1.7 * srate));              // the plasma bars' fall: 20 dB in 1.7 s
+  m9_krm = s92_kt(0.3, srate);                          // RMS (300 ms)
+  m9_kcr = s92_kt(0.3, srate);                          // the correlation's averaging
+  m9_nsb = floor(0.1 * srate + 0.5);                    // samples per 100 ms sub-block
+  m9_hlen = 3 * srate; m9_llen = 0.25 * srate; m9_olt = 2 * srate; m9_bwin = 0.4 * srate;
+  m9_kset();
+  m9kL.z1 = m9kL.z2 = m9kL.u1 = m9kL.u2 = 0; m9kR.z1 = m9kR.z2 = m9kR.u1 = m9kR.u2 = 0;
+  m9_ek = 0; m9_n = 0; m9_sb = 0; memset(m9_EKB, 0, 32); m9_lm = m9_ls = -999;
+);
+function m9_update() (
+  m9_dig = slider1 >= 0.5;
+  m9_ref = slider2 < 0.5 ? -18 : slider2 < 1.5 ? -14 : -12;
+  m9_plt = 10 ^ ((slider3 < 0.5 ? -6 : slider3 < 1.5 ? -3 : -1) / 20);
+  m9_hm = slider4 < 0.5 ? 0 : slider4 < 1.5 ? 1 : 2;
+  m9_on = floor(slider5 + 1.5);
+);
+function m9_reset() (
+  m9pL.ph = m9pR.ph = 0; m9pL.mx = m9pR.mx = 0;
+  m9oL.n = m9oR.n = 0; m9oL.lamp = m9oR.lamp = 0;
+);
+m9_VUC = $pi / 2;                                       // the rectifier's calibration: a sine's mean x pi / 2 = its peak
+m9_FS = 32767 / 32768;                                  // full scale: the 16-bit top code
+m9_srinit();
+m9_update();
+m9_reset();
+m9_cLR = m9_cLL = m9_cRR = 0.000001; m9_gw = 0; m9_bor = 0; m9_bfl = 0; m9_bac = 0; m9_bfx = 0; m9_bn = 0;
+
+// ---------- the faces (this unit's own, drawn in @gfx; locals only) ----------
+// the VU scale: the needle's travel is linear in voltage, +3 VU = full travel
+function m9_vpos(d) ( 10 ^ ((d - 3) / 20); );
+function m9_vang(p) ( (-40 + 80 * p) * $pi / 180; );
+// a backlit VU meter: a black bezel, an amber-lit cream face, the black scale with the red zone, a black needle, the
+// peak LED and the channel on the plate below
+function m9_vum(x, y, w, h, p, led, ch, ref) local(fx, fy, fw, fh, px, py, R, i, d, a, s, c, k, l, x1, y1, x2, y2, r0, fb) (
+  ui_cola(0x000000, 0.5); s92_rr(x + 1, y + 3, w, h, 5);
+  ui_col(0x0B0C0D); s92_rr(x, y, w, h, 5);
+  ui_col(0x2E3134); s92_r(x + 4, y + 1, w - 8, 1);
+  fx = x + 9; fy = y + 9; fw = w - 18; fh = h - 52; fb = fy + fh;
+  // the face, lit from behind by warm lamps: deep amber at the rim, pale cream in the middle
+  ui_col(0xB8772E); s92_r(fx, fy, fw, fh);
+  i = 0; loop(14, ui_cola(0xFFE4AA, 0.16); s92_r(fx + 3 + i * 4, fy + 2 + i * 2.6, fw - 6 - i * 8, fh - 4 - i * 4.2); i += 1; );
+  px = fx + fw * 0.5; py = fb + 12; R = min(fh + 10, (fw * 0.5 - 10) / sin(40 * $pi / 180) + 26);
+  // the scale arc: black from -20 to 0, a thick red band from 0 to +3
+  i = 0; loop(40, a = m9_vang(m9_vpos(-20) + (m9_vpos(0) - m9_vpos(-20)) * i / 40); k = m9_vang(m9_vpos(-20) + (m9_vpos(0) - m9_vpos(-20)) * (i + 1) / 40);
+    ui_col(0x1A1410); s92_ln(px + sin(a) * (R - 52), py - cos(a) * (R - 52), px + sin(k) * (R - 52), py - cos(k) * (R - 52), 1.4); i += 1; );
+  i = 0; loop(16, a = m9_vang(m9_vpos(0) + (1 - m9_vpos(0)) * i / 16); k = m9_vang(m9_vpos(0) + (1 - m9_vpos(0)) * (i + 1) / 16);
+    ui_col(0xC4261C); s92_ln(px + sin(a) * (R - 49), py - cos(a) * (R - 49), px + sin(k) * (R - 49), py - cos(k) * (R - 49), 6); i += 1; );
+  // the marks and numerals
+  i = 0;
+  loop(11,
+    d = i == 0 ? -20 : i == 1 ? -10 : i == 2 ? -7 : i == 3 ? -5 : i == 4 ? -3 : i == 5 ? -2 : i == 6 ? -1 : i == 7 ? 0 : i == 8 ? 1 : i == 9 ? 2 : 3;
+    a = m9_vang(m9_vpos(d)); s = sin(a); c = cos(a); l = d == -20 || d == -10 || d == 0 || d == 3 ? 14 : 10;
+    ui_col(d > 0 ? 0xC4261C : 0x1A1410); s92_ln(px + s * (R - 53), py - c * (R - 53), px + s * (R - 53 + l), py - c * (R - 53 + l), 1.8);
+    gfx_setfont(15); ui_col(d > 0 ? 0xB8221A : 0x1A1410);
+    sprintf(#m9_e, "%d", abs(d)); s92_tc(px + s * (R - 26), py - c * (R - 26), #m9_e);
+    i += 1;
+  );
+  // the minor marks between -20 and -10
+  i = 0; loop(3, a = m9_vang(m9_vpos(-20 + 2.5 * (i + 1))); s = sin(a); c = cos(a);
+    ui_col(0x1A1410); s92_ln(px + s * (R - 53), py - c * (R - 53), px + s * (R - 47), py - c * (R - 47), 1.2); i += 1; );
+  gfx_setfont(15); ui_col(0x1A1410); a = m9_vang(m9_vpos(-20)) - 0.1; s92_tc(px + sin(a) * (R - 26), py - cos(a) * (R - 26), "-");
+  ui_col(0xB8221A); a = m9_vang(0.92); s92_tc(px + sin(a) * (R - 4), py - cos(a) * (R - 4), "+");
+  // the legend
+  gfx_setfont(14); ui_col(0x1A1410); s92_tc(px, fb - 46, "VU");
+  gfx_setfont(13); ui_col(0x4A3A28); sprintf(#m9_e, "0 VU = %d DBFS", ref); s92_tc(px, fb - 20, #m9_e);
+  // the needle, from the bottom of the face (its pivot is hidden below)
+  p = min(max(p, -0.04), 1.06); a = m9_vang(p); s = sin(a); c = cos(a);
+  r0 = (py - fb) / c; x1 = px + s * r0; y1 = fb; x2 = px + s * (R - 6); y2 = py - c * (R - 6);
+  ui_cola(0x000000, 0.25); s92_ln(x1 + 2, y1, x2 + 2, y2 + 2, 2);
+  ui_col(0x141210); s92_ln(x1, y1, x2, y2, 1.8);
+  // the glass, the pivot cover
+  ui_cola(0xFFFFFF, 0.07); s92_r(fx, fy, fw, fh * 0.33);
+  ui_col(0x16181A); s92_r(fx, fb - 4, fw, 4); ui_cola(0x000000, 0.35); s92_r(fx, fb - 6, fw, 2);
+  // the plate under the window: the channel, the peak LED
+  gfx_setfont(11); ui_col(S92_INK); s92_t(x + 14, y + h - 33, ch);
+  gfx_setfont(13); ui_col(S92_DIM); s92_t(x + w - 72, y + h - 31, "PEAK");
+  pk_led((x + w - 22) * sc, (y + h - 26) * sc, 4 * sc, led, S92_RED);
+);
+// the plasma bars' scale: -60 .. -30 compressed, -30 .. 0 open
+function m9_bpos(d) ( d < -30 ? 0.25 * (max(d, -60) + 60) / 30 : min(0.25 + 0.75 * (d + 30) / 30, 1); );
+function m9_db(v) ( 20 * log10(max(v, 0.0000001)); );
+// a plasma-style bar: 64 segments lit in the lamp colour (yellow from -6, red from -1), the hold segment, the RMS row
+// under it, the OVER lamp and the maximum since RESET at the end
+function m9_bar(x, y, w, h, ch, pk, rm, hd, mx, ovl) local(sx, sw, n, i, sg, q, c, on, pp, pr, ph) (
+  ui_col(0x050506); s92_rr(x, y, w, h, 3);
+  gfx_setfont(11); ui_col(S92_LDIM); s92_tc(x + 13, y + h * 0.5 + 1, ch);
+  sx = x + 26; sw = w - 154; n = 64; sg = sw / n;
+  pp = m9_bpos(m9_db(pk)); pr = m9_bpos(m9_db(rm)); ph = hd > 0.0000001 ? m9_bpos(m9_db(hd)) : -1;
+  i = 0;
+  loop(n,
+    q = (i + 1) / n;
+    c = q > m9_bpos(-1) ? S92_RED : q > m9_bpos(-6) ? S92_YEL : S92_LAMP;
+    on = pp >= q - 0.5 / n;
+    ui_col(on ? c : ui_mix(c, 0x000000, 0.84)); s92_r(sx + i * sg + 0.6, y + 5, sg - 1.2, h - 15);
+    (ph >= 0 && abs(ph - (q - 0.5 / n)) <= 0.5 / n) ? ( ui_col(c); s92_r(sx + i * sg + 0.6, y + 5, sg - 1.2, h - 15); );
+    on = pr >= q - 0.5 / n;
+    ui_col(on ? ui_mix(c, 0x000000, 0.25) : ui_mix(c, 0x000000, 0.88)); s92_r(sx + i * sg + 0.6, y + h - 8, sg - 1.2, 3);
+    i += 1;
+  );
+  ui_cola(S92_LAMP, 0.06); s92_r(sx, y + 3, sw, h - 6);
+  // the OVER lamp
+  ui_col(ovl ? S92_RED : 0x2A0B08); s92_r(x + w - 122, y + 5, 36, h - 10);
+  ovl ? ( ui_cola(S92_RED, 0.25); s92_r(x + w - 124, y + 3, 40, h - 6); );
+  gfx_setfont(13); ui_col(ovl ? 0xFFFFFF : 0x6A2A22); s92_tc(x + w - 104, y + h * 0.5 + 1, "OVER");
+  // the maximum since RESET
+  ui_col(S92_LCDB); s92_r(x + w - 80, y + 4, 74, h - 8);
+  gfx_setfont(15); ui_col(S92_LCDT);
+  mx > 0.0000001 ? sprintf(#m9_e, "%.1f", m9_db(mx)) : strcpy(#m9_e, "---");
+  s92_tc(x + w - 43, y + h * 0.5 + 1, #m9_e);
+);
+
+// ---------- presets ----------
+function m9_set(mo, rf, pl, hd, ov) ( slider1 = mo; slider2 = rf; slider3 = pl; slider4 = hd; slider5 = ov; slider_automate(31); );
+#m9_pm = "Init|Hot Tape -14|Desk Peaks -12|DAT Master|CD Overs|Digital Tracking";
+function load_preset(p) (
+  p == 1 ? m9_set(0, 0, 1, 1, 2) :                      // Init
+  p == 2 ? m9_set(0, 1, 1, 1, 2) :                      // Hot Tape -14
+  p == 3 ? m9_set(0, 2, 0, 1, 2) :                      // Desk Peaks -12
+  p == 4 ? m9_set(1, 0, 2, 2, 0) :                      // DAT Master
+  p == 5 ? m9_set(1, 0, 1, 2, 2) :                      // CD Overs
+  p == 6 ? m9_set(1, 0, 1, 1, 0) :                      // Digital Tracking
+  p == 7 ? m9_set(0, 0, 1, 1, 2);                       // Reset all to defaults
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+m9_update();
+
+@block
+srate != m9_sr ? m9_srinit();
+m9_update();                                            // keys pressed on the panel do not run @slider
+m9_rq ? ( m9_reset(); m9_rq = 0; );
+// the timers: the hold segment (3 S), the peak LEDs, the OVER lamps
+m9_hm == 0 ? ( m9pL.ph = m9pL.pd; m9pR.ph = m9pR.pd; ) :
+m9_hm == 1 ? (
+  m9pL.ht -= samplesblock; m9pL.ht <= 0 ? m9pL.ph = m9pL.pd;
+  m9pR.ht -= samplesblock; m9pR.ht <= 0 ? m9pR.ph = m9pR.pd;
+);
+m9pL.led = max(m9pL.led - samplesblock, 0); m9pR.led = max(m9pR.led - samplesblock, 0);
+m9_hm < 2 ? ( m9oL.lamp = max(m9oL.lamp - samplesblock, 0); m9oR.lamp = max(m9oR.lamp - samplesblock, 0); );
+// the bits in use: publish the window's word and start the next
+m9_bn += samplesblock;
+m9_bn >= m9_bwin ? ( m9_bor = m9_bac; m9_bfl = m9_bfx; m9_bac = 0; m9_bfx = 0; m9_bn = 0; );
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// The output is never written: spl0 / spl1 pass through bit-exact. Everything below only reads them.
+m9_l = spl0; m9_r = spl1;
+m9_al = abs(m9_l); m9_ar = abs(m9_r);
+// ---------- ANALOG: the VU movements ----------
+m9_vxL = m9vL.m9_vu(m9_l); m9_vxR = m9vR.m9_vu(m9_r);
+// ---------- DIGITAL: the peak bars, the hold, the peak LEDs, the overs ----------
+m9pL.m9_pk(m9_al); m9pR.m9_pk(m9_ar);
+m9oL.m9_ov(m9_al); m9oR.m9_ov(m9_ar);
+// ---------- the bits in use: the 24-bit words seen in this window (and whether anything was finer) ----------
+m9_q = floor(min(m9_al, 1.99) * 8388608); m9_q != min(m9_al, 1.99) * 8388608 ? m9_bfx = 1; m9_bac = m9_bac | m9_q;
+m9_q = floor(min(m9_ar, 1.99) * 8388608); m9_q != min(m9_ar, 1.99) * 8388608 ? m9_bfx = 1; m9_bac = m9_bac | m9_q;
+// ---------- RMS, correlation, the goniometer's ring ----------
+m9_mqL += (m9_l * m9_l - m9_mqL) * m9_krm; m9_mqR += (m9_r * m9_r - m9_mqR) * m9_krm;
+m9_cLR += (m9_l * m9_r - m9_cLR) * m9_kcr; m9_cLL += (m9_l * m9_l - m9_cLL) * m9_kcr; m9_cRR += (m9_r * m9_r - m9_cRR) * m9_kcr;
+m9_GB[m9_gw] = (m9_l + m9_r) * 0.70711; m9_GB[2048 + m9_gw] = (m9_r - m9_l) * 0.70711; m9_gw = (m9_gw + 1) & 2047;
+// ---------- loudness: K-weighted energy in 100 ms sub-blocks; momentary = 4 of them, short-term = 30 ----------
+m9_a = m9kL.m9_kw(m9_l); m9_b = m9kR.m9_kw(m9_r);
+m9_ek += m9_a * m9_a + m9_b * m9_b; m9_n += 1;
+m9_n >= m9_nsb ? (
+  m9_EKB[m9_sb & 31] = m9_ek / m9_nsb; m9_sb += 1; m9_ek = 0; m9_n = 0;
+  m9_sb >= 4 ? (
+    m9_z = (m9_EKB[(m9_sb - 1) & 31] + m9_EKB[(m9_sb - 2) & 31] + m9_EKB[(m9_sb - 3) & 31] + m9_EKB[(m9_sb - 4) & 31]) / 4;
+    m9_lm = -0.691 + 10 * log10(max(m9_z, 0.00000000000000000001));
+    m9_j = min(m9_sb, 30); m9_z = 0; m9_i = 1; loop(m9_j, m9_z += m9_EKB[(m9_sb - m9_i) & 31]; m9_i += 1; );
+    m9_ls = -0.691 + 10 * log10(max(m9_z / m9_j, 0.00000000000000000001));
+  );
+);
+
+@gfx 960 396
+ui_begin(960, 396);
+s92_pal(slider1);
+s92_fonts();
+s92_face(960, 396);
+gt_dg = slider1 >= 0.5;
+
+// ---------- the header ----------
+k_ = s92_header(960, "METER92", "SERIES 92", "METER BRIDGE", #m9_pm, 1);
+k_ > 0 ? load_preset(k_);
+gt_ref = slider2 < 0.5 ? -18 : slider2 < 1.5 ? -14 : -12;
+
+!gt_dg ? (
+  // ---------- ANALOG: the backlit VU meters ----------
+  s92_mod(20, 62, 620, 322, "VU METERS");
+  gt_rl = 10 ^ (gt_ref / 20);
+  m9_vum(34, 94, 292, 280, m9_vxL / gt_rl * m9_vpos(0), m9pL.led > 0, "L", gt_ref);
+  m9_vum(334, 94, 292, 280, m9_vxR / gt_rl * m9_vpos(0), m9pR.led > 0, "R", gt_ref);
+) : (
+  // ---------- DIGITAL: the plasma bars ----------
+  s92_mod(20, 62, 620, 136, "PEAK · RMS · DBFS");
+  m9_bar(32, 94, 596, 34, "L", m9pL.pd, sqrt(max(m9_mqL, 0)), m9_hm ? m9pL.ph : 0, m9pL.mx, m9oL.lamp > 0);
+  m9_bar(32, 154, 596, 34, "R", m9pR.pd, sqrt(max(m9_mqR, 0)), m9_hm ? m9pR.ph : 0, m9pR.mx, m9oR.lamp > 0);
+  gfx_setfont(13); ui_col(S92_DIM);
+  gi_ = 0;
+  loop(11,
+    gt_d = gi_ == 0 ? -60 : gi_ == 1 ? -50 : gi_ == 2 ? -40 : gi_ == 3 ? -30 : gi_ == 4 ? -24 : gi_ == 5 ? -18 : gi_ == 6 ? -12 : gi_ == 7 ? -9 : gi_ == 8 ? -6 : gi_ == 9 ? -3 : 0;
+    gt_x = 58 + 442 * m9_bpos(gt_d) - 442 / 128;
+    sprintf(#gt_e, "%d", gt_d); s92_tc(gt_x, 141, #gt_e);
+    gi_ += 1;
+  );
+  s92_tc(585, 141, "MAX");
+
+  // ---------- DIGITAL: overs and the bits in use ----------
+  s92_mod(20, 206, 300, 178, "OVERS · BITS");
+  s92_small(32, 236, "OVERS  L");
+  s92_small(128, 236, "R");
+  sprintf(#gt_a, "%03d", min(m9oL.n, 999)); s92_lcd(32, 252, 84, 28, #gt_a);
+  sprintf(#gt_b, "%03d", min(m9oR.n, 999)); s92_lcd(128, 252, 84, 28, #gt_b);
+  s92_key(228, 254, 80, 26, 0, "RESET") ? m9_rq = 1;
+  s92_small(32, 296, "BITS IN USE");
+  gt_w = m9_bor; gt_f = m9_bfl;
+  gt_t = 0; gi_ = 0; loop(23, gt_t == 0 && (gt_w & (2 ^ gi_)) ? gt_t = 23 - gi_; gi_ += 1; );   // the lowest bit in use
+  gt_f ? strcpy(#gt_c, "FLOAT") : gt_w == 0 ? strcpy(#gt_c, "--") : sprintf(#gt_c, "%d BIT", gt_t + 1);
+  s92_lcd(228, 288, 80, 26, #gt_c);
+  gi_ = 0;
+  loop(25,
+    gt_on = gi_ == 0 ? gt_w > 0 : gi_ == 24 ? gt_f : (gt_w & (2 ^ (23 - gi_))) > 0;
+    gt_c2 = gi_ == 24 ? S92_RED : gi_ == 15 || gi_ == 19 || gi_ == 23 ? S92_YEL : S92_LAMP;
+    ui_col(gt_on ? gt_c2 : ui_mix(gt_c2, 0x000000, 0.82)); s92_r(32 + gi_ * 11.12, 326, 8.6, 14);
+    gt_on ? ( ui_cola(gt_c2, 0.18); s92_r(31 + gi_ * 11.12, 324, 10.6, 18); );
+    gi_ += 1;
+  );
+  gfx_setfont(13); ui_col(S92_DIM);
+  s92_tc(36.3, 352, "S"); s92_tc(36.3 + 7 * 11.12, 352, "8"); s92_tc(36.3 + 15 * 11.12, 352, "16"); s92_tc(36.3 + 19 * 11.12, 352, "20");
+  s92_tc(36.3 + 23 * 11.12, 352, "24"); s92_tc(36.3 + 24 * 11.12, 352, "F");
+  s92_smallc(170, 372, "SIGN  ·  MSB TO LSB  ·  FLT = FINER");
+
+  // ---------- DIGITAL: the goniometer, correlation and loudness ----------
+  s92_mod(332, 206, 308, 178, "PHASE · LOUDNESS");
+  gt_gx = 344; gt_gy = 238; gt_gs = 136;
+  ui_col(0x050506); s92_rr(gt_gx - 3, gt_gy - 3, gt_gs + 6, gt_gs + 6, 3);
+  ui_col(S92_LCDB); s92_r(gt_gx, gt_gy, gt_gs, gt_gs);
+  ui_cola(S92_LCDT, 0.22);
+  s92_ln(gt_gx + gt_gs * 0.5, gt_gy + 4, gt_gx + gt_gs * 0.5, gt_gy + gt_gs - 4, 0.6);
+  s92_ln(gt_gx + 4, gt_gy + gt_gs * 0.5, gt_gx + gt_gs - 4, gt_gy + gt_gs * 0.5, 0.6);
+  s92_ln(gt_gx + 14, gt_gy + 14, gt_gx + gt_gs - 14, gt_gy + gt_gs - 14, 0.6);
+  s92_ln(gt_gx + gt_gs - 14, gt_gy + 14, gt_gx + 14, gt_gy + gt_gs - 14, 0.6);
+  gfx_setfont(13); ui_cola(S92_LCDT, 0.6);
+  s92_tc(gt_gx + 9, gt_gy + 9, "L"); s92_tc(gt_gx + gt_gs - 9, gt_gy + 9, "R"); s92_tc(gt_gx + gt_gs * 0.5 + 9, gt_gy + 9, "M");
+  // the trace: the last 1536 samples, auto-ranged
+  gt_p = m9_gw; gt_mx = 0.00001; gi_ = 0;
+  loop(1536, gt_p = (gt_p - 1) & 2047; gt_mx = max(gt_mx, max(abs(m9_GB[gt_p]), abs(m9_GB[2048 + gt_p]))); gi_ += 1; );
+  gt_tg = min(max(0.9 / gt_mx, 1), 24);
+  m9g_gn = gt_tg < m9g_gn ? gt_tg : m9g_gn + (gt_tg - m9g_gn) * 0.08;
+  gt_k = gt_gs * 0.5 * m9g_gn; gt_cx = gt_gx + gt_gs * 0.5; gt_cy = gt_gy + gt_gs * 0.5;
+  ui_cola(S92_LCDT, 0.55);
+  gt_p = m9_gw; gi_ = 0;
+  loop(1536, gt_p = (gt_p - 1) & 2047;
+    gt_x = min(max(gt_cx + m9_GB[2048 + gt_p] * gt_k, gt_gx + 1), gt_gx + gt_gs - 2);
+    gt_y = min(max(gt_cy - m9_GB[gt_p] * gt_k, gt_gy + 1), gt_gy + gt_gs - 2);
+    gfx_rect(gt_x * sc, gt_y * sc, max(1, 1.2 * sc), max(1, 1.2 * sc));
+    gi_ += 1; );
+  // the loudness LCD: short-term, the momentary beside it
+  s92_small(492, 236, "SHORT-TERM  ·  LUFS");
+  m9_ls > -70 ? sprintf(#gt_d, "%.1f", m9_ls) : strcpy(#gt_d, "---");
+  s92_lcd(492, 252, 136, 30, #gt_d);
+  m9_lm > -70 ? sprintf(#gt_m, "MOMENTARY  %.1f", m9_lm) : strcpy(#gt_m, "MOMENTARY  ---");
+  s92_small(492, 290, #gt_m);
+  // the correlation bar
+  gt_co = m9_cLR / sqrt(max(m9_cLL * m9_cRR, 0.000000000001)); gt_co = min(max(gt_co, -1), 1);
+  (m9_cLL + m9_cRR) < 0.0000001 ? gt_co = 1;
+  m9g_co += (gt_co - m9g_co) * 0.25;
+  sprintf(#gt_n, "CORRELATION  %+.2f", m9g_co); s92_small(492, 310, #gt_n);
+  ui_col(0x050506); s92_rr(492, 326, 136, 16, 2);
+  gi_ = 0; loop(17, ui_col(gi_ < 8 ? ui_mix(S92_RED, 0x000000, 0.8) : ui_mix(S92_LAMP, 0x000000, 0.82)); s92_r(495 + gi_ * 7.7, 329, 6, 10); gi_ += 1; );
+  gt_x = floor((m9g_co + 1) * 8 + 0.5); gt_x = min(max(gt_x, 0), 16);
+  gi_ = min(gt_x, 8); loop(abs(gt_x - 8) + 1, ui_col(gi_ < 8 ? S92_RED : S92_LAMP); s92_r(495 + gi_ * 7.7, 329, 6, 10); gi_ += 1; );
+  s92_smallc(497, 352, "-1"); s92_smallc(560, 352, "0"); s92_smallc(623, 352, "+1");
+  sprintf(#gt_r, "RMS  L %.1f  ·  R %.1f", max(10 * log10(max(m9_mqL, 0.00000000000001)), -99), max(10 * log10(max(m9_mqR, 0.00000000000001)), -99));
+  s92_small(492, 364, #gt_r);
+);
+
+// ---------- METER BRIDGE: the VU reference and peak LEDs (ANALOG), the hold and the overs (DIGITAL) ----------
+s92_mod(652, 62, 288, 322, "CALIBRATION");
+s92_smallc(796, 94, "VU REFERENCE  ·  0 VU =");
+gi_ = 0; loop(3, s92_key(668 + gi_ * 88, 104, 80, 26, slider2 == gi_, gi_ == 0 ? "-18" : gi_ == 1 ? "-14" : "-12") && !gt_dg ? s92_set(2, gi_); gi_ += 1; );
+s92_smallc(796, 142, "DBFS  ·  SINE PEAK");
+s92_smallc(796, 166, "PEAK LED");
+gi_ = 0; loop(3, s92_key(668 + gi_ * 88, 176, 80, 26, slider3 == gi_, gi_ == 0 ? "-6" : gi_ == 1 ? "-3" : "-1") && !gt_dg ? s92_set(3, gi_); gi_ += 1; );
+s92_smallc(796, 214, "DBFS  ·  SAMPLE PEAK");
+gt_dg ? ( ui_cola(S92_PANEL, 0.72); s92_r(660, 86, 272, 136); s92_smallc(796, 228, "VU SETTINGS  ·  ANALOG ONLY"); );
+s92_smallc(796, 250, "PEAK HOLD");
+gi_ = 0; loop(3, s92_key(668 + gi_ * 88, 260, 80, 26, slider4 == gi_, gi_ == 0 ? "OFF" : gi_ == 1 ? "3 S" : "HOLD") && gt_dg ? s92_set(4, gi_); gi_ += 1; );
+s92_smallc(796, 300, "OVER  =  RUN OF N FULL-SCALE");
+gi_ = 0; loop(4, s92_key(668 + gi_ * 66, 310, 58, 26, slider5 == gi_, gi_ == 0 ? "1" : gi_ == 1 ? "2" : gi_ == 2 ? "3" : "4") && gt_dg ? s92_set(5, gi_); gi_ += 1; );
+!gt_dg ? ( ui_cola(S92_PANEL, 0.72); s92_r(660, 240, 272, 102); s92_smallc(796, 346, "DIGITAL ONLY"); ) : s92_smallc(796, 346, "SAMPLES  ·  ONE COUNT PER RUN");
+s92_smallc(796, 368, "BIT-EXACT PASS-THROUGH  ·  LATENCY 0");
+
+pk_end();
+ui_end();

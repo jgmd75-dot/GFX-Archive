@@ -74,3 +74,7 @@ Plugins here may need the shared `.jsfx-inc` files from GFX-II beside them to ru
 
 ## ideas
 - `ideas/gfx-g-morpho-recipe.md` — GFX G Morpho, a vector / morphing additive synth: recipe and build plan, parked 9 Oct 2026 before any build.
+- `gfx-chorus.jsfx` — GFX Chorus (removed from GFX-II 13 Oct 2026; lives on as the CHORUS mode of GFX ModMax; manual beside it as gfx-chorus-manual.html). Needs gfx-drift, gfx-lfo, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
+- `gfx-flanger.jsfx` — GFX Flanger (removed from GFX-II 13 Oct 2026; lives on as the FLANGER mode of GFX ModMax; manual beside it as gfx-flanger-manual.html). Needs gfx-drift, gfx-lfo, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
+- `gfx-phaser.jsfx` — GFX Phaser (removed from GFX-II 13 Oct 2026; lives on as the PHASER mode of GFX ModMax; manual beside it as gfx-phaser-manual.html). Needs gfx-drift, gfx-lfo, gfx-input, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
+- `gfx-ivans-echo.jsfx` — GFX Ivans Echo (removed from GFX-II 13 Oct 2026; lives on as the MINI model of GFX Echo 34; manual beside it as gfx-ivans-echo-manual.html). Needs gfx-drift, gfx-input, gfx-lfo, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.

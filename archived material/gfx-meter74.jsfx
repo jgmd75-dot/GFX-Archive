@@ -1,0 +1,372 @@
+desc:GFX Meter74 [OB PPM]
+//tags: meter ppm peak programme meter true-peak loudness lufs ebu r128 bs1770 correlation transformer broadcast series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// METER74 (Series 74: the OB remote and broadcast series): the metering bay of an outside-broadcast truck, with two
+// faceplates on one switch. The audio passes through bit-exact (latency 0) unless the LINE TRANSFORMER is switched in.
+//   input -> LINE TRANSFORMER (OB only, off by default) -> output; the meters read the output.
+//   OB:    twin peak programme meters in the British broadcast style: black faces, white marks 1 to 7, 4 dB between
+//          the marks (6 dB between 1 and 2), PPM 4 = the alignment level. The ballistics of the IEC Type IIa meter: a
+//          10 ms integration (a 10 ms burst reads 2 dB under the steady tone), a slow, steady fall of 24 dB in 2.8 s.
+//          ALIGN  PPM 4 = -18, -14 or -12 dBFS (a sine whose peak sits at that level reads 4).
+//          NEEDLES  L / R (left and right) or M / S (M = (L + R) - 3 dB, S = (L - R) - 3 dB, so a centred mono source
+//          reads about 3 dB higher on M than on L and R, and nothing on S).
+//          LINE TRANSFORMER  OFF: bit-exact. ON: the audio passes through a line transformer with gentle iron (the
+//          lows round off a little when driven, a trace of high-frequency loss, a coupling capacitor at 4 Hz) - the
+//          output is then no longer bit-exact. Switching it crossfades over 20 ms (no click, no gap).
+//   CLEAN: an uncoloured laboratory reference meter: true-peak bars (4x oversampled, dBTP) with the RMS beside them
+//          (dBFS, 300 ms; a full-scale sine reads -3 dB), the true-peak maximum of each channel held (click to reset),
+//          the loudness per ITU-R BS.1770 / EBU R128 (K-weighted: momentary 400 ms, short-term 3 s, integrated with the
+//          -70 LUFS absolute and -10 LU relative gates; RESET clears the integrated reading) and a correlation meter.
+//          The line transformer is forced out (bit-exact).
+// The meters always run in the background, so the integrated loudness keeps counting while the OB face is shown.
+// No WANDER: a meter must not wander.
+
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<0,1,1{OB,Clean}>-Model
+slider2:0<0,2,1{-18 dBFS,-14 dBFS,-12 dBFS}>-Align (PPM 4)
+slider3:0<0,1,1{Off,On}>-Line transformer
+slider4:0<0,1,1{L/R,M/S}>-Needles
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-meter74";
+ext_noinit = 1;
+
+// ---------- memory ----------
+s74_mem = 0;
+m4_TPH = s74_alloc(48);                                 // the true-peak interpolator: 4 phases x 12 taps
+m4tL.buf = s74_alloc(32); m4tR.buf = s74_alloc(32);
+m4_EKB = s74_alloc(32);                                  // the K-weighted energy of each 100 ms sub-block (a ring)
+m4_HS = s74_alloc(750); m4_HC = s74_alloc(750);         // the integrated loudness: energy and count per 0.1 dB bin
+
+// ---------- the true-peak interpolator: a 48-tap Kaiser-windowed sinc for 4x, split into its 4 phases ----------
+function m4_tpdesign() local(n, t, x, w, i0, ph, j, s) (
+  i0 = s74_bi0(7); n = 0;
+  loop(48, t = (n - 23.5) / 4; x = 2 * n / 47 - 1; w = s74_bi0(7 * sqrt(max(0, 1 - x * x))) / i0;
+    m4_TPH[(n % 4) * 12 + floor(n / 4)] = sin($pi * t) / ($pi * t) * w; n += 1; );
+  ph = 0; loop(4, s = 0; j = 0; loop(12, s += m4_TPH[ph * 12 + j]; j += 1; );
+    j = 0; loop(12, m4_TPH[ph * 12 + j] /= s; j += 1; ); ph += 1; );
+);
+m4_tpdesign();
+// one channel: the largest of the four interpolated points (and the sample itself)
+function m4_tp(x) instance(buf, w) local(p, j, a, b, c, d, v) (
+  w = (w + 1) & 15; buf[w] = x; buf[w + 16] = x; p = buf + w + 16;
+  a = b = c = d = 0; j = 0;
+  loop(12, v = p[-j]; a += m4_TPH[j] * v; b += m4_TPH[12 + j] * v; c += m4_TPH[24 + j] * v; d += m4_TPH[36 + j] * v; j += 1; );
+  max(max(abs(a), abs(b)), max(max(abs(c), abs(d)), abs(x)));
+);
+
+// ---------- the K-weighting (ITU-R BS.1770): the head shelf, then the RLB high-pass, at any sample rate ----------
+function m4_kset() local(f, g, q, k, vh, vb, a0) (
+  f = 1681.974450955533; g = 3.999843853973347; q = 0.7071752369554196;
+  k = tan($pi * f / srate); vh = 10 ^ (g / 20); vb = vh ^ 0.4996667741545416; a0 = 1 + k / q + k * k;
+  m4_pb0 = (vh + vb * k / q + k * k) / a0; m4_pb1 = 2 * (k * k - vh) / a0; m4_pb2 = (vh - vb * k / q + k * k) / a0;
+  m4_pa1 = 2 * (k * k - 1) / a0; m4_pa2 = (1 - k / q + k * k) / a0;
+  f = 38.13547087602444; q = 0.5003270373238773;
+  k = tan($pi * f / srate); a0 = 1 + k / q + k * k;
+  m4_ra1 = 2 * (k * k - 1) / a0; m4_ra2 = (1 - k / q + k * k) / a0;
+);
+function m4_kw(x) instance(z1, z2, u1, u2) local(y) (
+  y = m4_pb0 * x + z1; z1 = m4_pb1 * x - m4_pa1 * y + z2; z2 = m4_pb2 * x - m4_pa2 * y;
+  x = y; y = x + u1; u1 = -2 * x - m4_ra1 * y + u2; u2 = x - m4_ra2 * y;
+  y;
+);
+
+// ---------- the line transformer (OB): gentle iron ----------
+// the core saturates the lows first (softly), a trace of high-frequency loss, the coupling capacitor
+function m4_iron(x) instance(cp, lo, hf) local(y) (
+  cp += (x - cp) * m4_kc4; y = x - cp;
+  lo += (y - lo) * m4_klo;
+  y = (y - lo) + s74_th(lo);
+  hf += (y - hf) * m4_khf;
+  y - 0.12 * (y - hf);
+);
+
+// ---------- the integrated loudness ----------
+function m4_iclear() ( memset(m4_HS, 0, 750); memset(m4_HC, 0, 750); m4_nb = 0; m4_li = -999; );
+function m4_integ() local(i, s, c, thr) (
+  s = c = 0; i = 0; loop(750, s += m4_HS[i]; c += m4_HC[i]; i += 1; );
+  c > 0 ? (
+    thr = -0.691 + 10 * log10(s / c) - 10;
+    s = c = 0; i = 0; loop(750, -70 + (i + 0.5) / 10 > thr ? ( s += m4_HS[i]; c += m4_HC[i]; ); i += 1; );
+    m4_li = c > 0 ? -0.691 + 10 * log10(s / c) : -999;
+  ) : m4_li = -999;
+);
+
+// ---------- settings ----------
+function m4_srinit() (
+  m4_sr = srate;
+  m4_ka = s74_kt(0.0028, srate);                        // the PPM's integration (10 ms: a 10 ms burst reads -2 dB)
+  m4_kr = 10 ^ (-24 / 20 / (2.8 * srate));              // the PPM's fall: 24 dB in 2.8 s
+  m4_kk = 10 ^ (-20 / 20 / (1.7 * srate));              // the true-peak bars' fall: 20 dB in 1.7 s
+  m4_krm = s74_kt(0.3, srate);                          // RMS (300 ms)
+  m4_kcr = s74_kt(0.3, srate);                          // the correlation's averaging
+  m4_kc4 = s74_k(4, srate); m4_klo = s74_k(100, srate); m4_khf = s74_k(14000, srate);
+  m4_xd = 1 / (0.02 * srate);                           // the transformer's crossfade (20 ms)
+  m4_nsb = floor(0.1 * srate + 0.5);                      // samples per 100 ms sub-block
+  m4_kset();
+  m4kL.z1 = m4kL.z2 = m4kL.u1 = m4kL.u2 = 0; m4kR.z1 = m4kR.z2 = m4kR.u1 = m4kR.u2 = 0;
+  m4_ek = 0; m4_n = 0; m4_sb = 0; memset(m4_EKB, 0, 32); m4_lm = m4_ls = -999; m4_iclear();
+);
+function m4_update() (
+  m4_cln = slider1 >= 0.5;
+  m4_tx = slider3 >= 0.5 && !m4_cln;                    // the line transformer: OB only
+  m4_msn = slider4 >= 0.5;
+  m4_al = slider2 < 0.5 ? -18 : slider2 < 1.5 ? -14 : -12;
+);
+m4_PPC = 10 ^ (0.216 / 20);                             // the PPM's calibration: a steady sine reads its peak
+m4_srinit();
+m4_update();
+m4_xf = m4_tx; m4_hL = m4_hR = -200;
+m4_ppA = m4_ppB = 0; m4_tdL = m4_tdR = 0; m4_mqL = m4_mqR = 0; m4_cLR = m4_cLL = m4_cRR = 0.000001;
+
+// ---------- the faces (this unit's own, drawn in @gfx) ----------
+// the PPM's scale: marks 1 .. 7 evenly spaced; 1-2 is 6 dB, then 4 dB per mark; d = dB relative to PPM 4
+function m4_ppos(d) (
+  d < -14 ? 0.05 * (max(d, -26) + 26) / 12 :
+  d < -8 ? 0.05 + 0.15 * (d + 14) / 6 :
+  min(0.2 + 0.15 * (d + 8) / 4, 1.03);
+);
+// a black-faced peak programme meter: white marks and numerals, a white needle, a warm lamp behind on OB
+function m4_ppm(x, y, w, h, d, ch, chc) local(px, py, R, i, p, a, s, c, x1, y1, x2, y2) (
+  ui_cola(0x000000, 0.45); s74_r(x + 1, y + 3, w, h);
+  ui_col(0x101112); s74_r(x, y, w, h);
+  ui_col(0x34383B); s74_r(x + 1, y + 1, w - 2, 1);
+  ui_col(0x050506); s74_r(x + 6, y + 6, w - 12, h - 12);
+  i = 0; loop(16, ui_cola(S74_LAMP, 0.008); s74_r(x + 6 + i * 2, y + 6, w - 12 - i * 4, (h - 12) * (0.8 - i * 0.04)); i += 1; );
+  px = x + w * 0.5; py = y + h - 10; R = h - 70;
+  // the marks: bold white bars, the numerals beyond
+  i = 1;
+  loop(7,
+    p = 0.05 + 0.15 * (i - 1); a = (-46 + 92 * p) * $pi / 180; s = sin(a); c = cos(a);
+    ui_col(0xF2F1EA); s74_ln(px + s * (R - 15), py - c * (R - 15), px + s * R, py - c * R, 3.4);
+    gfx_setfont(15); sprintf(#m4_e, "%d", i); s74_tc(px + s * (R + 15), py - c * (R + 15), #m4_e);
+    i += 1;
+  );
+  gfx_setfont(13); ui_col(0xBDBCB4); s74_tc(px, py - R * 0.52, "PPM");
+  // the channel: its letter and a coloured dot
+  gfx_setfont(11); ui_col(0xF2F1EA); s74_tc(px, py - R * 0.52 + 18, ch);
+  ui_col(chc); gfx_circle(px * sc, (py - R * 0.52 + 33) * sc, 3 * sc, 1, 1);
+  // the needle
+  p = min(max(m4_ppos(d), -0.03), 1.03); a = (-46 + 92 * p) * $pi / 180;
+  x1 = px + sin(a) * (R * 0.2); y1 = py - cos(a) * (R * 0.2); x2 = px + sin(a) * (R + 4); y2 = py - cos(a) * (R + 4);
+  ui_cola(0x000000, 0.6); s74_ln(x1 + 1.5, y1 + 1.5, x2 + 1.5, y2 + 1.5, 2);
+  ui_col(0xF4F2E8); s74_ln(x1, y1, x2, y2, 1.8);
+  // the pivot cover and the glass
+  ui_col(0x16181A); s74_r(x + 6, y + h - 30, w - 12, 24);
+  ui_col(0x2A2D30); s74_r(x + 6, y + h - 30, w - 12, 1);
+  ui_cola(0xFFFFFF, 0.05); s74_r(x + 6, y + 6, w - 12, (h - 12) * 0.36);
+);
+// the true-peak bar's scale: -60 .. -30 compressed, -30 .. 0 open, 0 .. +3 the overs
+function m4_bpos(d) (
+  d < -30 ? 0.24 * (max(d, -60) + 60) / 30 : d < 0 ? 0.24 + 0.70 * (d + 30) / 30 : min(0.94 + 0.06 * d / 3, 1);
+);
+// a backlit window in the house edge-meter style (orange-red on CLEAN): a black bezel, the lamp, a warm glow
+function m4_lit(x, y, w, h) local(i, g) (
+  ui_cola(0x000000, 0.4); s74_r(x + 1, y + 2, w, h);
+  ui_col(0x101112); s74_r(x, y, w, h);
+  ui_col(S74_LAMPD); s74_r(x + 4, y + 4, w - 8, h - 8);
+  g = min(w, h) * 0.04; i = 0;
+  loop(10, ui_cola(S74_LAMPW, 0.12); s74_r(x + 4 + g * i, y + 4 + g * i, w - 8 - 2 * g * i, h - 8 - 2 * g * i); i += 1; );
+);
+function m4_glass(x, y, w, h) ( ui_cola(0xFFFFFF, 0.08); s74_r(x + 4, y + 4, w - 8, (h - 8) * 0.4); );
+// a laboratory bar in a lit window: true peak (wide, charcoal), RMS (narrow); the 2 s hold as a cream line
+function m4_bar(x, y, w, h, tp, rm, hd) local(p, q, yb, ht) (
+  m4_lit(x, y, w, h);
+  yb = y + h - 5; ht = h - 10;
+  ui_cola(0x000000, 0.10); s74_r(x + 6, y + 5, w - 22, ht); s74_r(x + w - 13, y + 5, 7, ht);
+  p = min(max(m4_bpos(tp), 0), 1); q = m4_bpos(0);
+  ui_col(S74_NDL); s74_r(x + 6, yb - ht * min(p, q), w - 22, ht * min(p, q));
+  p > q ? ( ui_col(S74_RED); s74_r(x + 6, yb - ht * p, w - 22, ht * (p - q)); );
+  p = min(max(m4_bpos(rm), 0), 1);
+  ui_cola(S74_NDL, 0.55); s74_r(x + w - 13, yb - ht * p, 7, ht * p);
+  hd > -100 ? ( p = min(max(m4_bpos(hd), 0), 1); ui_col(0xFFF4EA); s74_r(x + 6, yb - ht * p - 1, w - 22, 2); );
+  m4_glass(x, y, w, h);
+);
+// a lit read-out window with charcoal digits
+function m4_win(x, y, w, h, s, f) (
+  m4_lit(x, y, w, h);
+  gfx_setfont(f); ui_col(S74_NDL); s74_tc(x + w * 0.5, y + h * 0.5 + 1, s);
+  m4_glass(x, y, w, h);
+);
+function m4_fmt(d, n) ( d > -70 ? sprintf(n, "%.1f", d) : strcpy(n, "---"); n; );
+function m4_db(v) ( 20 * log10(max(v, 0.0000001)); );
+
+// ---------- presets ----------
+function m4_set(mo, al, tr, ne) ( slider1 = mo; slider2 = al; slider3 = tr; slider4 = ne; slider_automate(15); );
+#m4_pm = "Init|Stereo M/S|Align -14|Hot Desk -12|Line Transformer|Lab Reference";
+function load_preset(p) (
+  p == 1 ? m4_set(0, 0, 0, 0) :                         // Init
+  p == 2 ? m4_set(0, 0, 0, 1) :                         // Stereo M/S
+  p == 3 ? m4_set(0, 1, 0, 0) :                         // Align -14
+  p == 4 ? m4_set(0, 2, 0, 0) :                         // Hot Desk -12
+  p == 5 ? m4_set(0, 0, 1, 0) :                         // Line Transformer
+  p == 6 ? m4_set(1, 0, 0, 0) :                         // Lab Reference
+  p == 7 ? m4_set(0, 0, 0, 0);                          // Reset all to defaults
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+m4_update();
+
+@block
+srate != m4_sr ? m4_srinit();
+m4_update();                                            // lenses pressed on the panel do not run @slider
+m4_rq ? ( m4_iclear(); m4_rq = 0; );
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- the line transformer: always running (so it is warm), heard only when switched in ----------
+m4_x0 = spl0; m4_x1 = spl1;
+m4_yl = m4iL.m4_iron(m4_x0); m4_yr = m4iR.m4_iron(m4_x1);
+m4_tx ? m4_xf = min(1, m4_xf + m4_xd) : m4_xf > 0 ? m4_xf = max(0, m4_xf - m4_xd);
+m4_xf > 0 ? (                                           // otherwise spl0 / spl1 are never written: bit-exact
+  m4_yl = m4_x0 + (m4_yl - m4_x0) * m4_xf; m4_yr = m4_x1 + (m4_yr - m4_x1) * m4_xf;
+  spl0 = abs(m4_yl) < 0.00000000000000000001 ? 0 : m4_yl;
+  spl1 = abs(m4_yr) < 0.00000000000000000001 ? 0 : m4_yr;
+);
+
+// ---------- the meters read the output ----------
+m4_l = spl0; m4_r = spl1;
+m4_spk = max(m4_spk, max(abs(m4_l), abs(m4_r)));
+// PPM: L / R or M / S, full-wave, a quick integration up, a steady fall
+m4_msn ? ( m4_a = abs(m4_l + m4_r) * 0.70711; m4_b = abs(m4_l - m4_r) * 0.70711; ) : ( m4_a = abs(m4_l); m4_b = abs(m4_r); );
+m4_ppA = m4_a > m4_ppA ? m4_ppA + (m4_a - m4_ppA) * m4_ka : m4_ppA * m4_kr;
+m4_ppB = m4_b > m4_ppB ? m4_ppB + (m4_b - m4_ppB) * m4_ka : m4_ppB * m4_kr;
+// true peak (4x), the bars' fall, the maxima for the read-outs
+m4_a = m4tL.m4_tp(m4_l); m4_b = m4tR.m4_tp(m4_r);
+m4_tdL = max(m4_a, m4_tdL * m4_kk); m4_tdR = max(m4_b, m4_tdR * m4_kk);
+m4_tmL = max(m4_tmL, m4_a); m4_tmR = max(m4_tmR, m4_b);
+// RMS and correlation
+m4_mqL += (m4_l * m4_l - m4_mqL) * m4_krm; m4_mqR += (m4_r * m4_r - m4_mqR) * m4_krm;
+m4_cLR += (m4_l * m4_r - m4_cLR) * m4_kcr; m4_cLL += (m4_l * m4_l - m4_cLL) * m4_kcr; m4_cRR += (m4_r * m4_r - m4_cRR) * m4_kcr;
+// loudness: K-weighted energy in 100 ms sub-blocks; momentary = 4 of them, short-term = 30, integrated = gated 400 ms
+m4_a = m4kL.m4_kw(m4_l); m4_b = m4kR.m4_kw(m4_r);
+m4_ek += m4_a * m4_a + m4_b * m4_b; m4_n += 1;
+m4_n >= m4_nsb ? (
+  m4_EKB[m4_sb & 31] = m4_ek / m4_nsb; m4_sb += 1; m4_ek = 0; m4_n = 0;
+  m4_sb >= 4 ? (
+    m4_z = (m4_EKB[(m4_sb - 1) & 31] + m4_EKB[(m4_sb - 2) & 31] + m4_EKB[(m4_sb - 3) & 31] + m4_EKB[(m4_sb - 4) & 31]) / 4;
+    m4_lm = -0.691 + 10 * log10(max(m4_z, 0.00000000000000000001));
+    m4_lm > -70 ? ( m4_i = min(749, floor((m4_lm + 70) * 10)); m4_HS[m4_i] += m4_z; m4_HC[m4_i] += 1; m4_nb += 1; );
+    m4_j = min(m4_sb, 30); m4_z = 0; m4_i = 1; loop(m4_j, m4_z += m4_EKB[(m4_sb - m4_i) & 31]; m4_i += 1; );
+    m4_ls = -0.691 + 10 * log10(max(m4_z / m4_j, 0.00000000000000000001));
+    m4_integ();
+  );
+);
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider1);
+s74_fonts();
+s74_face(960, 366);
+m4_cl = slider1 >= 0.5;
+
+// ---------- the header ----------
+k_ = s74_header(960, "METER74", "SERIES 74", "OB PPM", #m4_pm, 1);
+k_ > 0 ? load_preset(k_);
+
+// ---------- the over lamp (held for a second) ----------
+t_ = time_precise();
+m4_spk >= 1 ? m4_ovt = t_; m4_spk = 0;
+m4_ov = t_ - m4_ovt < 1 && m4_ovt > 0;
+
+!m4_cl ? (
+  // ---------- OB: the twin peak programme meters ----------
+  s74_mod(14, 62, 620, 292, "PEAK PROGRAMME METERS");
+  m4_ms_ = slider4 >= 0.5;
+  m4mA.m4_ppm(28, 92, 292, 230, m4_db(m4_ppA * m4_PPC) - m4_al, m4_ms_ ? "M" : "L", m4_ms_ ? 0xF2F1EA : 0xE0402A);
+  m4mB.m4_ppm(328, 92, 292, 230, m4_db(m4_ppB * m4_PPC) - m4_al, m4_ms_ ? "S" : "R", m4_ms_ ? 0xF2C63A : 0x3CC060);
+  sprintf(#m4_s, "4 DB PER MARK  ·  1-2 = 6 DB  ·  PPM 4 = %d DBFS", m4_al);
+  s74_small(32, 330, #m4_s);
+  s74_small(540, 330, "OVER"); pk_led(588 * sc, 336 * sc, 3.5 * sc, m4_ov, 0xFF3A22);
+) : (
+  // ---------- CLEAN: true peak and RMS ----------
+  s74_mod(14, 62, 240, 292, "TRUE PEAK · RMS");
+  rL_ = 10 * log10(max(m4_mqL, 0.00000000000001)); rR_ = 10 * log10(max(m4_mqR, 0.00000000000001));
+  pL_ = m4_db(m4_tdL); pR_ = m4_db(m4_tdR);
+  (pL_ > m4_hL || t_ - m4_htL > 2) ? ( m4_hL = pL_; m4_htL = t_; );
+  (pR_ > m4_hR || t_ - m4_htR > 2) ? ( m4_hR = pR_; m4_htR = t_; );
+  m4bL.m4_bar(46, 96, 40, 172, pL_, rL_, m4_hL);
+  m4bR.m4_bar(182, 96, 40, 172, pR_, rR_, m4_hR);
+  i_ = 0;
+  loop(10,
+    d_ = i_ == 0 ? 3 : i_ == 1 ? 0 : i_ == 2 ? -3 : i_ == 3 ? -6 : i_ == 4 ? -12 : i_ == 5 ? -18 : i_ == 6 ? -24 : i_ == 7 ? -30 : i_ == 8 ? -40 : -60;
+    y_ = 96 + 4 + 164 * (1 - m4_bpos(d_));
+    ui_col(d_ > 0 ? S74_RED : S74_DIM); s74_r(90, y_, 6, 1); s74_r(172, y_, 6, 1);
+    sprintf(#m4_e, d_ > 0 ? "+%d" : "%d", d_); gfx_setfont(13); s74_tc(134, y_, #m4_e);
+    i_ += 1;
+  );
+  sprintf(#m4_s, "L   RMS %.1f", max(rL_, -99)); s74_smallc(66, 282, #m4_s);
+  sprintf(#m4_s, "R   RMS %.1f", max(rR_, -99)); s74_smallc(202, 282, #m4_s);
+  m4_nL = max(m4_nL, m4_tmL); m4_nR = max(m4_nR, m4_tmR); m4_tmL = m4_tmR = 0;
+  s74_small(26, 296, "TP MAX  ·  DBTP  ·  CLICK TO RESET");
+  m4_win(26, 308, 92, 26, m4_nL > 0.0000001 ? m4_fmt(m4_db(m4_nL), #m4_a1) : "---", 15);
+  m4_win(150, 308, 92, 26, m4_nR > 0.0000001 ? m4_fmt(m4_db(m4_nR), #m4_a2) : "---", 15);
+  s74_hov(26, 308, 216, 26) && pressed && drag_id == 0 ? ( drag_id = -1; m4_nL = m4_nR = 0; );
+  pk_led(134 * sc, 321 * sc, 3.5 * sc, m4_ov, 0xFF3A22);
+
+  // ---------- CLEAN: loudness and correlation ----------
+  s74_mod(266, 62, 368, 292, "LOUDNESS · BS.1770");
+  i_ = 0;
+  loop(3,
+    x_ = 282 + i_ * 116;
+    s74_smallc(x_ + 52, 100, i_ == 0 ? "MOMENTARY" : i_ == 1 ? "SHORT-TERM" : "INTEGRATED");
+    m4_win(x_, 110, 104, 54, m4_fmt(i_ == 0 ? m4_lm : i_ == 1 ? m4_ls : m4_li, #m4_a3), 14);
+    s74_smallc(x_ + 52, 176, "LUFS");
+    i_ += 1;
+  );
+  s74_small(282, 196, "GATED  -70 LUFS / -10 LU");
+  s74_lens(526, 188, 80, 24, 0, "RESET") ? m4_rq = 1;
+  // correlation: a bar from the centre, telemetry white for positive, red for negative
+  co_ = m4_cLR / sqrt(max(m4_cLL * m4_cRR, 0.000000000001)); co_ = min(max(co_, -1), 1);
+  (m4_cLL + m4_cRR) < 0.0000001 ? co_ = 1;
+  m4_co += (co_ - m4_co) * 0.25;
+  s74_small(282, 228, "CORRELATION");
+  m4_lit(282, 242, 336, 34);
+  i_ = 0; loop(9, x_ = 296 + i_ * 38; ui_col(i_ < 4 ? S74_RED : S74_CHAR); s74_r(x_, 247, 1.2, i_ == 0 || i_ == 4 || i_ == 8 ? 8 : 4); i_ += 1; );
+  x_ = 448 + m4_co * 152;
+  ui_col(m4_co < 0 ? S74_RED : S74_NDL); s74_r(min(448, x_), 258, abs(x_ - 448), 10);
+  ui_col(S74_NDL); s74_r(x_ - 1, 252, 2, 18);
+  m4_glass(282, 242, 336, 34);
+  s74_smallc(296, 290, "-1"); s74_smallc(448, 290, "0"); s74_smallc(600, 290, "+1");
+  sprintf(#m4_a4, "%+.2f", m4_co);
+  s74_small(282, 314, "+1 MONO  ·  0 WIDE  ·  -1 OUT OF PHASE");
+  m4_win(546, 306, 72, 24, #m4_a4, 15);
+);
+
+// ---------- ALIGN · LINE: the PPM's alignment, the needles, the line transformer ----------
+s74_mod(646, 62, 300, 292, "ALIGN · LINE");
+s74_smallc(796, 96, "ALIGN  ·  PPM 4 =");
+i_ = 0; loop(3, s74_lens(668 + i_ * 88, 106, 80, 26, slider2 == i_, i_ == 0 ? "-18" : i_ == 1 ? "-14" : "-12") ? s74_set(2, i_); i_ += 1; );
+s74_smallc(796, 146, "DBFS  ·  SINE PEAK");
+s74_smallc(796, 178, "NEEDLES");
+s74_lens(700, 188, 80, 26, slider4 < 0.5, "L / R") ? s74_set(4, 0);
+s74_lens(812, 188, 80, 26, slider4 >= 0.5, "M / S") ? s74_set(4, 1);
+m4_cl ? ( ui_cola(S74_OLIVE, 0.6); s74_r(660, 86, 272, 136); s74_smallc(796, 228, "PPM SETTINGS  ·  OB FACE ONLY"); );
+s74_smallc(796, 252, "LINE TRANSFORMER");
+s74_lens(756, 262, 80, 26, slider3 >= 0.5, slider3 >= 0.5 ? "ON" : "OFF") ? s74_set(3, slider3 >= 0.5 ? 0 : 1);
+m4_cl ? ( ui_cola(S74_OLIVE, 0.6); s74_r(740, 244, 112, 50); );
+m4_cl ? ( s74_smallc(796, 308, "FORCED OUT ON CLEAN"); s74_smallc(796, 324, "BIT-EXACT PASS-THROUGH"); ) :
+slider3 >= 0.5 ? ( gfx_setfont(13); ui_col(S74_HAZ); s74_tc(796, 308, "IRON IN PATH"); s74_tc(796, 324, "OUTPUT NOT BIT-EXACT"); ) :
+( s74_smallc(796, 308, "BIT-EXACT PASS-THROUGH"); s74_smallc(796, 324, "AUDIO UNTOUCHED"); );
+
+pk_end();
+ui_end();

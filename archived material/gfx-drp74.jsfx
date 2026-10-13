@@ -1,0 +1,596 @@
+desc:GFX DRP74 [OB space]
+//tags: reverb room plate nonlin gated reverse digital 12-bit lo-fi broadcast remote space series74
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s74 (.jsfx-inc) in the same folder.
+//
+// DRP74 (Series 74: the OB remote and broadcast series): the early-80s remote digital reverb from an outside-broadcast
+// truck, with two models on one switch.
+//   input -> TRIM / GUARD -> the dry path (untouched) and the send:
+//   OB:    the INPUT IRON (the transformer's core saturates the lows first, a little lopsided) -> a 4-pole anti-alias
+//          filter at 13 kHz -> a 12-bit gain-ranging A/D (gentle grit) -> PRE-DELAY -> the algorithm (ALGORITHM lenses):
+//            ROOM     a dense, short mobile room: four input diffusers per side into an 8-line feedback delay network
+//                     with a coloured (harmonically tuned) all-pass in every line - the metallic ring of the hardware;
+//                     the tank is re-quantised to 12 bits every pass. SIZE scales the lines, DECAY is the RT60,
+//                     DAMP the HF loss in the loop.
+//            NONLIN   a densely diffused copy read by 96 taps per side: a non-linear envelope that holds up and then
+//                     falls away to nothing at the end of the window. SIZE sets the window (80 - 640 ms, the knob
+//                     reads LENGTH), DECAY tilts it (short = falling sooner).
+//            GATE     the same taps on a flat burst (DECAY's slope across it) and a hard close.
+//            REVERSE  the taps on a rising ramp (DECAY = how slow it rises), then the hard stop.
+//          -> the 12-bit D/A and a 14 kHz reconstruction filter -> the OUTPUT IRON (the lows thicken a little)
+//   CLEAN: PRE-DELAY -> a pristine, full-bandwidth plate: a modulated figure-of-eight all-pass tank (Dattorro
+//          style), no grit. The same lenses pick the plate: BRIGHT, MEDIUM, DARK (the input bandwidth and the
+//          damping) and LONG (a bigger plate: 1.25 x SIZE, 1.5 x DECAY, slower, wider modulation).
+//          SIZE scales the plate, DECAY is its RT60, DAMP its HF loss.
+//   -> LOW CUT on the return (2-pole, 20 - 600 Hz) -> MIX (a send law: the dry stays full up to 50 %, the wet is
+//   full from 50 %; 100 % on a send) -> OUTPUT -> the house output stage (band SAT, CLIP always on).
+// The return is level matched across the algorithms, the plates and DECAY, and the two models are matched to each
+// other at the default MIX.
+// WANDER (0-100 %, 50 % = the standard amount): on OB the converter clock wanders - every tank line drifts on its
+// own (up to about +/-0.25 ms) and the decay breathes (+/-2 %); on CLEAN (a crystal clock) only a trace of decay
+// wander remains.
+// Changing the model or the algorithm fades the return out, swaps and clears the tank, and fades back in.
+// No latency.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s74.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:20<0,250,0.1>-Pre-delay (ms)
+slider4:50<0,100,1>-Size (%)
+slider5:1.6<0.2,10,0.01>-Decay (s)
+slider6:40<0,100,1>-HF damp (%)
+slider7:80<20,600,1>-Low cut (Hz)
+slider8:0<0,3,1{Room - Bright,NonLin - Medium,Gate - Dark,Reverse - Long}>-Algorithm (OB) / plate (Clean)
+slider9:30<0,100,1>-Mix (%)
+slider10:0<-24,12,0.1>-Output (dB)
+slider11:0<0,1,1{OB,Clean}>-Model
+slider12:50<0,100,1>-Wander (%)
+slider13:0<0,100,1>-Band sat (%)
+slider14:30<0,100,1>-Bias (output stage, %)
+slider15:120<40,400,1>-Sat low band (Hz)
+slider16:6000<2000,16000,10>-Sat high band (Hz)
+slider17:-0.3<-24,0,0.1>-Ceiling (dB)
+slider18:1<0,1,1{Off,Clip}>-(unused, output stage)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-drp74";
+ext_noinit = 1;
+
+// ---------- memory (sized for 192 kHz; every read is clamped to its line) ----------
+s74_mem = 0;
+p4_ostm = s74_alloc(4096);
+p4_PSZ = 65536; p4_PMK = p4_PSZ - 1; p4_PB = s74_alloc(2 * p4_PSZ);   // pre-delay (L, R)
+p4_TK0 = s74_mem;                                       // everything that rings (cleared on a change of machine)
+p4_TSZ = 131072; p4_TM = p4_TSZ - 1; p4_TB = s74_alloc(2 * p4_TSZ);   // the tap line (NONLIN / GATE / REVERSE)
+p4_BSZ = 8192; p4_BM = p4_BSZ - 1; p4_LB = s74_alloc(8 * p4_BSZ);     // the 8 room lines
+p4_ASZ = 2048; p4_AM = p4_ASZ - 1; p4_AB = s74_alloc(8 * p4_ASZ);     // the coloured all-pass in each line
+p4_DB = s74_alloc(8 * p4_ASZ);                          // the input diffusers (4 per side)
+// the plate (Dattorro's lengths at 29761 Hz, scaled to the rate and SIZE)
+p4_FAC = 192000 / 29761 * 1.65;
+p4i1.s74_dlinit(ceil(142 * p4_FAC) + 64); p4i2.s74_dlinit(ceil(107 * p4_FAC) + 64);
+p4i3.s74_dlinit(ceil(379 * p4_FAC) + 64); p4i4.s74_dlinit(ceil(277 * p4_FAC) + 64);
+p4tA1.s74_dlinit(ceil(700 * p4_FAC) + 64); p4tD1.s74_dlinit(ceil(4453 * p4_FAC) + 64);
+p4tA2.s74_dlinit(ceil(1800 * p4_FAC) + 64); p4tD2.s74_dlinit(ceil(3720 * p4_FAC) + 64);
+p4tA3.s74_dlinit(ceil(936 * p4_FAC) + 64); p4tD3.s74_dlinit(ceil(4217 * p4_FAC) + 64);
+p4tA4.s74_dlinit(ceil(2656 * p4_FAC) + 64); p4tD4.s74_dlinit(ceil(3163 * p4_FAC) + 64);
+p4_ST0 = s74_mem;                                       // loop states (cleared with the tank)
+p4_LPS = s74_alloc(8); p4_O = s74_alloc(8);
+p4_TK1 = s74_mem;
+// tables
+p4_LN = s74_alloc(8); p4_APL = s74_alloc(8); p4_DLC = s74_alloc(8); p4_DLD = s74_alloc(8); p4_GN = s74_alloc(8);
+p4_DBL = s74_alloc(8); p4_DLN = s74_alloc(8); p4_DV = s74_alloc(8); p4_DR = s74_alloc(32); p4_ISG = s74_alloc(8);
+p4_GJL = s74_alloc(96); p4_GJR = s74_alloc(96); p4_GTL = s74_alloc(96); p4_GTR = s74_alloc(96);
+p4_GGL = s74_alloc(96); p4_GGR = s74_alloc(96);
+p4_WGT = s74_alloc(8);                                   // the return's level per machine (OB 0-3, CLEAN 4-7)
+
+// the return's level across DECAY (a longer tail is louder on steady sound): measured exponents below / above 1.6 s
+function p4_dcomp(T, lo, hi) ( (1.6 / T) ^ (T < 1.6 ? lo : hi); );
+function p4_hash(i) local(v) ( v = sin(i * 12.9898 + 78.233) * 43758.5453; v - floor(v); );
+function p4_tables() local(i) (
+  i = 0;
+  loop(8,
+    // the room lines (ms at SIZE 50 %): pairs an octave apart (6.1 / 12.2, 7.3 / 14.6) colour the room
+    p4_LN[i] = i == 0 ? 6.1 : i == 1 ? 7.3 : i == 2 ? 8.6 : i == 3 ? 9.7 : i == 4 ? 11.3 : i == 5 ? 12.2 : i == 6 ? 14.6 : 17.1;
+    // the in-line all-passes, tuned to multiples of 0.657 ms: the metallic ring
+    p4_APL[i] = (i == 0 || i == 1 ? 1.314 : i == 2 || i == 3 ? 1.971 : i == 4 || i == 5 ? 2.628 : 3.285);
+    p4_DBL[i] = i == 0 ? 1.13 : i == 1 ? 1.71 : i == 2 ? 2.93 : i == 3 ? 4.31 : i == 4 ? 1.29 : i == 5 ? 1.93 : i == 6 ? 3.17 : 4.67;
+    p4_ISG[i] = (i == 2 || i == 3 || i == 5 || i == 6) ? -1 : 1;
+    i += 1;
+  );
+  i = 0;
+  loop(96,
+    p4_GJL[i] = (i + 0.5 + 0.84 * (p4_hash(i + 101) - 0.5)) / 96;
+    p4_GJR[i] = (i + 0.5 + 0.84 * (p4_hash(i + 211) - 0.5)) / 96;
+    i += 1;
+  );
+  // the return's level per machine (measured on pink noise at the defaults: wet = dry)
+  p4_WGT[0] = 0.652; p4_WGT[1] = 0.900; p4_WGT[2] = 0.946; p4_WGT[3] = 0.925;
+  p4_WGT[4] = 2.325; p4_WGT[5] = 2.423; p4_WGT[6] = 2.558; p4_WGT[7] = 2.402;
+);
+p4_tables();
+
+// ---------- the stages ----------
+// OB input iron: the lows saturate the core first, then a slightly lopsided stage (unity small-signal gain)
+p4_xb = s74_th(0.7 * 0.12); p4_xn = 0.0002 / (s74_th(0.7 * 0.1201) - s74_th(0.7 * 0.1199)) / 0.7;
+function p4_xin(u) instance(lp) (
+  lp += (u - lp) * p4_kx;
+  u += 0.4 * (s74_th(lp * 1.6) / 1.6 - lp);
+  (s74_th(0.7 * (u + 0.12)) - p4_xb) * p4_xn;
+);
+// OB output iron: the lows thicken a little
+function p4_xout(u) instance(lp) (
+  lp += (u - lp) * p4_kx;
+  (u - lp) + s74_th(lp * 1.3) / 1.3;
+);
+// the 12-bit converters: rounding at a gain-ranged step (A/D, D/A); the tank: magnitude truncation (never adds energy)
+function p4_qr(v, q) ( floor(v / q + 0.5) * q; );
+function p4_qt(v) (
+  p4_tpk = max(p4_tpk, abs(v));
+  v >= 0 ? floor(v * p4_qi) * p4_q : -floor(-v * p4_qi) * p4_q;
+);
+function p4_step(pk) ( 2 ^ max(ceil(log(max(pk, 0.0000000001) * 1.25) * 1.442695), -26) * 0.00048828125; );
+// four input diffusers per side (all-passes on the shared write index)
+function p4_diff(x, k0, g) local(j, b, d, y) (
+  j = 0;
+  loop(4,
+    b = p4_DB + (k0 + j) * p4_ASZ;
+    d = b[(p4_aw - p4_DLN[k0 + j]) & p4_AM];
+    y = d - g * x; b[p4_aw] = x + g * y; x = y;
+    j += 1;
+  );
+  x;
+);
+// a modulated all-pass (cubic read) for the plate
+function p4_apm(x, d, g) instance(buf, len, w) local(v, y) ( v = this.s74_dlr3(d); y = v - g * x; this.s74_dlw(x + g * y); y; );
+// the gate envelopes (f = 0 .. 1 across the window)
+function p4_env(f, alg, L, T) local(e) (
+  alg == 1 ? e = min(1, f / 0.04) * 10 ^ (-1.5 * f * L / T) * (1 - f) ^ 0.8 :       // NONLIN
+  alg == 2 ? e = min(1, f / 0.02) * 10 ^ (-3 * f * L / T) :                         // GATE
+             e = min(1, f / 0.05) * 10 ^ (-3 * (1 - f) * L / T);                    // REVERSE
+  f > 0.975 ? e *= (1 - f) / 0.025;
+  e;
+);
+// the taps' gains (the envelope at the window's current length, glc) and their places (at the settled length)
+function p4_ggain() local(i, e, sl, sr) (
+  sl = 0; sr = 0;
+  i = 0;
+  loop(96,
+    e = p4_env(p4_GJL[i], p4_alg, p4_glc, p4_gd); p4_GGL[i] = e * (p4_hash(i + 300) < 0.5 ? -1 : 1); sl += e * e;
+    e = p4_env(p4_GJR[i], p4_alg, p4_glc, p4_gd); p4_GGR[i] = e * (p4_hash(i + 500) < 0.5 ? -1 : 1); sr += e * e;
+    i += 1;
+  );
+  sl = 1 / sqrt(max(sl, 0.0001)); sr = 1 / sqrt(max(sr, 0.0001));
+  i = 0; loop(96, p4_GGL[i] *= sl; p4_GGR[i] *= sr; i += 1; );
+);
+function p4_gpos() local(i, L) (
+  L = p4_glt;
+  i = 0;
+  loop(96,
+    p4_GTL[i] = min(max(floor(p4_GJL[i] * L + 0.5), 1), p4_TSZ - 2); p4_GTR[i] = min(max(floor(p4_GJR[i] * L + 0.5), 1), p4_TSZ - 2);
+    i += 1;
+  );
+  p4_gset = 1;
+);
+function p4_clear() (
+  memset(p4_TK0, 0, p4_TK1 - p4_TK0);
+  p4_eL = p4_eR = p4_dmA = p4_dmB = p4_bw = 0;
+  p4_rpk = 0; p4_tpk = 0; p4_glc = -1; p4_dsnap = 1; p4_gls = p4_glt; p4_gset = 0;
+  p4aL1.s74_bqclr(); p4aL2.s74_bqclr(); p4aR1.s74_bqclr(); p4aR2.s74_bqclr();
+  p4rL.s74_bqclr(); p4rR.s74_bqclr(); p4hL.s74_bqclr(); p4hR.s74_bqclr();
+  p4xiL.lp = p4xiR.lp = p4xoL.lp = p4xoR.lp = 0;
+  p4_dcxl = p4_dcyl = p4_dcxr = p4_dcyr = 0;
+);
+
+// ---------- control rate (every 32 samples): the glides, the lines, the loss, the taps, the level ----------
+function p4_ctl() local(i, d, sz, T, k, fc, L, g) (
+  p4_ts += (p4_tt - p4_ts) * p4_tk; p4_szs += (p4_szt - p4_szs) * p4_tk;
+  p4_dps += (p4_dpt - p4_dps) * p4_tk; p4_lcs += (p4_lct - p4_lcs) * p4_tk;
+  T = p4_ts * (1 + p4_ddv);
+  !p4_mod ? (
+    p4_alg == 0 ? (
+      sz = (0.45 + 1.1 * p4_szs) * 0.001 * srate;
+      i = 0;
+      loop(8,
+        d = min(max(p4_LN[i] * sz + p4_mdep * p4_DV[i], 8), p4_BSZ - 4);
+        p4_dsnap ? ( p4_DLC[i] = d; p4_DLD[i] = 0; ) : p4_DLD[i] = (d - p4_DLC[i]) / 32;   // (ramped per sample)
+        L = floor(p4_APL[i] * 0.001 * srate);
+        p4_GN[i] = 10 ^ (-3 * (d + L) / (T * srate));
+        i += 1;
+      );
+      p4_dsnap = 0;
+      i = 0; loop(8, p4_DLN[i] = min(max(floor(p4_DBL[i] * (0.6 + 0.6 * p4_szs) * 0.001 * srate), 1), p4_ASZ - 2); i += 1; );
+      p4_dfg = 0.55;
+      p4_wgs = p4_WGT[0] * p4_dcomp(p4_ts, 0.554, 0.36) * 10 ^ (3.54 * (p4_szs - 0.5) / 20);
+    ) : (
+      // the window: its length glides per sample (the taps slide, no steps); the gains follow it here
+      L = min(0.08 * 8 ^ p4_szt * srate, p4_TSZ - 4);
+      L != p4_glt ? ( p4_glt = L; p4_gset = 0; );
+      p4_gls <= 0 ? p4_gls = L;
+      p4_gd = T;
+      (abs(p4_gls / srate - p4_glc) > 0.00002 || abs(p4_gd - p4_gdc) > 0.0005) ? ( p4_glc = p4_gls / srate; p4_gdc = p4_gd; p4_ggain(); );
+      !p4_gset && abs(p4_gls - p4_glt) < 0.5 ? p4_gpos();
+      i = 0; loop(8, p4_DLN[i] = min(max(floor(p4_DBL[i] * 1.6 * 0.001 * srate), 1), p4_ASZ - 2); i += 1; );
+      p4_dfg = 0.65;
+      p4_wgs = p4_WGT[p4_alg];
+    );
+    fc = 13000 * 0.13 ^ p4_dps; p4_kd = s74_k(fc, srate);
+    // the gain ranging: the tank's word follows its level in 6 dB steps (fast up, slow down); the A/D, the D/A
+    p4_rpk = max(p4_rpk * 0.985, p4_tpk); p4_tpk = 0;
+    p4_q = p4_step(p4_rpk); p4_qi = 1 / p4_q;
+    p4_apk = max(p4_apk * 0.985, p4_ipk); p4_ipk = 0; p4_qa = p4_step(p4_apk);
+    p4_opk = max(p4_opk * 0.985, p4_wpk); p4_wpk = 0; p4_qo = p4_step(p4_opk);
+  ) : (
+    // the plate: BRIGHT, MEDIUM, DARK, LONG
+    k = srate / 29761 * (0.55 + 0.75 * p4_szs) * (p4_alg == 3 ? 1.25 : 1);
+    p4_pk = k; p4_pki = srate / 29761 * (0.7 + 0.6 * p4_szs);
+    T = T * (p4_alg == 3 ? 1.5 : 1);
+    g = 10 ^ (-3 * 5397 * k / (T * srate));               // four decay stages per trip round the figure of eight
+    p4_pg = min(g, 0.985); p4_dd2 = min(max(p4_pg + 0.15, 0.25), 0.5);
+    fc = (p4_alg == 0 ? 1.7 : p4_alg == 1 ? 1 : p4_alg == 2 ? 0.45 : 0.8) * 16000 * 0.1 ^ p4_dps;
+    p4_pkd = s74_k(fc, srate);
+    p4_kbw = s74_k(p4_alg == 0 ? 20000 : p4_alg == 1 ? 12000 : p4_alg == 2 ? 6500 : 10000, srate);
+    p4_exc = (p4_alg == 0 ? 10 : p4_alg == 1 ? 12 : p4_alg == 2 ? 14 : 18) * srate / 29761;
+    p4_lfi = (p4_alg == 3 ? 0.55 : 0.8) * (1 + p4_lfw) / srate;
+    p4_wgs = p4_WGT[4 + p4_alg] * p4_dcomp(p4_ts, 0.115, 0.327) * 10 ^ (2.05 * (p4_szs - 0.5) / 20);
+  );
+  // LOW CUT on the return
+  abs(p4_lcs - p4_lcc) > 0.05 ? ( p4_lcc = p4_lcs;
+    p4hL.s74_bqset(1, p4_lcs, 0, 0.7071, srate); p4hR.s74_bqset(1, p4_lcs, 0, 0.7071, srate); );
+);
+
+// ---------- settings ----------
+function p4_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  p4_pret = min(max(slider3, 0), 250) * 0.001 * srate;
+  p4_szt = min(max(slider4, 0), 100) / 100;
+  p4_tt = min(max(slider5, 0.2), 10);
+  p4_dpt = min(max(slider6, 0), 100) / 100;
+  p4_lct = min(max(slider7, 20), 600);
+  p4_talg = min(max(floor(slider8 + 0.5), 0), 3);
+  p4_tmo = slider11 >= 0.5;
+  p4_tmix = slider9 / 100; p4_tog = 10 ^ (slider10 / 20);
+  drift_macro(slider12);
+  p4_mdep = 0.00025 * srate * dm_a;
+  ost_setup(slider13 / 100, slider14 / 100, slider15, slider16, slider17, 1);   // output stage: CLIP, always on
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+function p4_srinit() (
+  p4_sr = srate;
+  p4_tk = 1 - exp(-32 / (0.12 * srate));                // the size / decay / damp glide
+  p4_gk = 1 - exp(-1 / (0.12 * srate));                 // the gate window's glide (per sample)
+  p4_sm = 1 - exp(-1 / (0.02 * srate));
+  p4_fd = 1 / (0.01 * srate);
+  p4_kx = s74_k(110, srate);
+  p4aL1.s74_bqset(0, 13000, 0, 0.5412, srate); p4aL2.s74_bqset(0, 13000, 0, 1.3066, srate);   // OB: 4-pole anti-alias
+  p4aR1.s74_bqset(0, 13000, 0, 0.5412, srate); p4aR2.s74_bqset(0, 13000, 0, 1.3066, srate);
+  p4rL.s74_bqset(0, 14000, 0, 0.7071, srate); p4rR.s74_bqset(0, 14000, 0, 0.7071, srate);     // OB: reconstruction
+  p4_dcc = 1 - 2 * $pi * 4 / srate;
+  p4_lcc = -1;
+  ost_init(p4_ostm);
+);
+
+in_init();
+p4_update();
+p4_mod = p4_tmo; p4_alg = p4_talg;
+p4_srinit();
+p4_dfD.drift_init(0.8 + rand(0.4)); p4_dfC.drift_init(0.8 + rand(0.4));
+i_ = 0; loop(8, p4_DR[i_ * 4] = rand(2) - 1; p4_DR[i_ * 4 + 1] = rand(2) - 1; p4_DR[i_ * 4 + 2] = rand(1); p4_DR[i_ * 4 + 3] = 0.7 + rand(0.6); i_ += 1; );
+p4L.ost_ch_init(); p4R.ost_ch_init();
+p4_clear();
+p4_ts = p4_tt; p4_szs = p4_szt; p4_dps = p4_dpt; p4_lcs = p4_lct; p4_ddv = 0; p4_lfw = 0;
+p4_ctl(); p4_cc = 0;
+p4_wg = p4_wgs; p4_mix = p4_tmix; p4_og = p4_tog; p4_pre = p4_pret;
+p4_fade = 1; p4_sf = 1; p4_fst = 0; p4_hold = 0; p4_pw = 0; p4_tw = 0; p4_aw = 0; p4_w = 0; p4_ph = 0; p4_dn = 0.000000000000000001;
+
+// ---------- presets ----------
+function p4_set(pd, sz, dc, dp, lc, al, mx, ou, mo) (
+  slider3 = pd; slider4 = sz; slider5 = dc; slider6 = dp; slider7 = lc; slider8 = al; slider9 = mx; slider10 = ou; slider11 = mo;
+  slider_automate(2044);                                // sliders 3-11 (TRIM, GUARD, WANDER and the output stage stay)
+);
+#p4_pm = "Init|Truck Room|Snare NonLin|Gated Toms|Reverse Swell|Commentary Booth|Stadium Tunnel|Metal Box|Clean Vocal Plate|Bright Snare Plate|Dark Ballad Plate|Long Telemetry Plate";
+function load_preset(p) (
+  //                  pd   sz   dc   dp   lc al  mx    ou mo
+  p == 1  ? p4_set(  20,  50, 1.6,  40,  80, 0, 30,    0, 0) :     // Init
+  p == 2  ? p4_set(   8,  35, 0.7,  45, 120, 0, 25,  0.3, 0) :     // Truck Room
+  p == 3  ? p4_set(   0,  50, 2.0,  35, 150, 1, 30,    0, 0) :     // Snare NonLin
+  p == 4  ? p4_set(   5,  62, 3.0,  40, 100, 2, 32, -0.2, 0) :     // Gated Toms
+  p == 5  ? p4_set(   0,  78, 1.2,  30, 160, 3, 35, -0.4, 0) :     // Reverse Swell
+  p == 6  ? p4_set(   4,  12, 0.35, 55, 220, 0, 22,  0.6, 0) :     // Commentary Booth
+  p == 7  ? p4_set(  45, 100, 3.5,  50,  90, 0, 30,    0, 0) :     // Stadium Tunnel
+  p == 8  ? p4_set(   2,  25, 1.2,  10, 140, 0, 28,    0, 0) :     // Metal Box
+  p == 9  ? p4_set(  40,  55, 1.8,  45, 120, 1, 26,  0.4, 1) :     // Clean Vocal Plate
+  p == 10 ? p4_set(  10,  40, 1.2,  20, 150, 0, 28,  0.3, 1) :     // Bright Snare Plate
+  p == 11 ? p4_set(  30,  70, 2.8,  60, 100, 2, 30,  0.1, 1) :     // Dark Ballad Plate
+  p == 12 ? p4_set(  60,  80, 5.0,  40,  90, 3, 30,    0, 1) :     // Long Telemetry Plate
+  p == 13 ? (                                                      // Reset all to defaults
+    p4_set(20, 50, 1.6, 40, 80, 0, 30, 0, 0);
+    slider1 = 0; slider2 = 1; slider12 = 50; slider13 = 0; slider14 = 30; slider15 = 120; slider16 = 6000; slider17 = -0.3; slider18 = 1;
+    slider_automate(262143);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+p4_update();
+
+@block
+srate != p4_sr ? ( p4_srinit(); p4_clear(); p4_ctl(); p4_cc = 0; p4_pre = p4_pret; );
+p4_update();                                            // knobs moved on the panel do not run @slider
+// WANDER: OB - every room line's clock and the decay wander; CLEAN - only a trace of decay wander
+p4_di = 0.15 * dm_s * samplesblock / srate;
+p4_ddv = (p4_mod ? 0.003 : 0.02) * dm_a * p4_dfD.drift_tick(p4_di);
+p4_lfw = (p4_mod ? 0.04 : 0) * dm_a * p4_dfC.drift_tick(p4_di);
+i_ = 0;
+loop(8,
+  p4_p_ = p4_DR + i_ * 4; p4_p_[2] += p4_di * p4_p_[3];
+  p4_p_[2] >= 1 ? ( p4_p_[2] -= 1; p4_p_[0] = p4_p_[1]; p4_p_[1] = rand(2) - 1; );
+  p4_DV[i_] = p4_p_[0] + (p4_p_[1] - p4_p_[0]) * (0.5 - 0.5 * cos($pi * p4_p_[2]));
+  i_ += 1;
+);
+p4a_vi = max(p4a_vi, p4_viL); p4a_vo = max(p4a_vo, p4_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+// ---------- glides ----------
+p4_mix += (p4_tmix - p4_mix) * p4_sm; p4_og += (p4_tog - p4_og) * p4_sm; p4_wg += (p4_wgs - p4_wg) * p4_sm;
+p4_pre += (p4_pret - p4_pre) * 0.0004;
+// a change of model or algorithm: fade the return out, swap and clear the tank at the silent point, wait, fade in
+(p4_tmo != p4_mod || p4_talg != p4_alg) && p4_fst == 0 ? p4_fst = 1;
+p4_fst == 1 ? ( p4_fade -= p4_fd; p4_fade <= 0 ? (
+  p4_fade = 0; p4_mod = p4_tmo; p4_alg = p4_talg; p4_clear(); p4_ctl(); p4_gls = p4_glt; p4_ctl(); p4_cc = 32; p4_wg = p4_wgs;
+  p4_hold = 64; p4_fst = 2; ); ) :
+p4_fst == 2 ? ( p4_hold -= 1; p4_hold <= 0 ? p4_fst = 3; ) :
+p4_fst == 3 ? ( p4_fade += p4_fd; p4_fade >= 1 ? ( p4_fade = 1; p4_fst = 0; ); );
+(p4_cc -= 1) <= 0 ? ( p4_cc = 32; p4_ctl(); );
+p4_dn = -p4_dn;
+
+// ---------- input: TRIM, GUARD ----------
+in_process(spl0, spl1);
+p4_xl = in_l; p4_xr = in_r;
+p4_viL = max(p4_viL * 0.9995, abs(p4_xl) + abs(p4_xr));
+
+// ---------- the send: OB - the input iron, the anti-alias filter, the 12-bit A/D ----------
+!p4_mod ? (
+  p4_sa = p4aL2.s74_bq(p4aL1.s74_bq(p4xiL.p4_xin(p4_xl)));
+  p4_sb = p4aR2.s74_bq(p4aR1.s74_bq(p4xiR.p4_xin(p4_xr)));
+  p4_ipk = max(p4_ipk, max(abs(p4_sa), abs(p4_sb)));
+  p4_sa = p4_qr(p4_sa, p4_qa); p4_sb = p4_qr(p4_sb, p4_qa);
+) : ( p4_sa = p4_xl; p4_sb = p4_xr; );
+
+// ---------- PRE-DELAY (gliding, linear interpolation) ----------
+p4_PB[p4_pw] = p4_sa; p4_PB[p4_PSZ + p4_pw] = p4_sb;
+p4_rp = p4_pw - p4_pre; p4_rp < 0 ? p4_rp += p4_PSZ;
+p4_ri = floor(p4_rp); p4_rf = p4_rp - p4_ri; p4_i0 = p4_ri & p4_PMK; p4_i1 = (p4_ri + 1) & p4_PMK;
+p4_sa = p4_PB[p4_i0] + (p4_PB[p4_i1] - p4_PB[p4_i0]) * p4_rf;
+p4_sb = p4_PB[p4_PSZ + p4_i0] + (p4_PB[p4_PSZ + p4_i1] - p4_PB[p4_PSZ + p4_i0]) * p4_rf;
+p4_pw = (p4_pw + 1) & p4_PMK;
+// the send into the tank fades with the return, and comes back in more slowly: a fresh tank fills from a ramp
+p4_fst == 1 || p4_fst == 2 ? p4_sf = min(p4_sf, p4_fade) : p4_sf = min(p4_sf + p4_fd * 0.35, 1);
+p4_sa *= p4_sf; p4_sb *= p4_sf;
+
+p4_wl = p4_wr = 0;
+!p4_mod ? (
+  p4_alg == 0 ? (
+    // ================= OB ROOM: diffusers into 8 coloured lines, 12-bit every pass =================
+    p4_dfa = p4_diff(p4_sa, 0, p4_dfg); p4_dfb = p4_diff(p4_sb, 4, p4_dfg);
+    i_ = 0;
+    loop(8,
+      p4_d = (p4_DLC[i_] += p4_DLD[i_]);
+      p4_bb = p4_LB + i_ * p4_BSZ; p4_n = p4_w - floor(p4_d);
+      p4_v = p4_bb[p4_n & p4_BM]; p4_v += (p4_bb[(p4_n - 1) & p4_BM] - p4_v) * (p4_d - floor(p4_d));
+      p4_LPS[i_] += (p4_v - p4_LPS[i_]) * p4_kd;
+      p4_O[i_] = p4_LPS[i_] * p4_GN[i_];
+      i_ += 1;
+    );
+    p4_wl = p4_O[0] - p4_O[2] + p4_O[4] - p4_O[6] + 0.6 * (p4_O[1] - p4_O[5]);
+    p4_wr = p4_O[1] - p4_O[3] + p4_O[5] - p4_O[7] + 0.6 * (p4_O[2] - p4_O[6]);
+    // 8 x 8 Hadamard (scaled: lossless)
+    p4_a = p4_O[0] + p4_O[1]; p4_b = p4_O[0] - p4_O[1]; p4_c = p4_O[2] + p4_O[3]; p4_e = p4_O[2] - p4_O[3];
+    p4_f = p4_O[4] + p4_O[5]; p4_g = p4_O[4] - p4_O[5]; p4_h = p4_O[6] + p4_O[7]; p4_j = p4_O[6] - p4_O[7];
+    p4_O[0] = p4_a + p4_c; p4_O[2] = p4_a - p4_c; p4_O[1] = p4_b + p4_e; p4_O[3] = p4_b - p4_e;
+    p4_O[4] = p4_f + p4_h; p4_O[6] = p4_f - p4_h; p4_O[5] = p4_g + p4_j; p4_O[7] = p4_g - p4_j;
+    p4_a = p4_O[0]; p4_O[0] = (p4_a + p4_O[4]) * 0.35355339; p4_O[4] = (p4_a - p4_O[4]) * 0.35355339;
+    p4_a = p4_O[1]; p4_O[1] = (p4_a + p4_O[5]) * 0.35355339; p4_O[5] = (p4_a - p4_O[5]) * 0.35355339;
+    p4_a = p4_O[2]; p4_O[2] = (p4_a + p4_O[6]) * 0.35355339; p4_O[6] = (p4_a - p4_O[6]) * 0.35355339;
+    p4_a = p4_O[3]; p4_O[3] = (p4_a + p4_O[7]) * 0.35355339; p4_O[7] = (p4_a - p4_O[7]) * 0.35355339;
+    // the coloured all-pass in each line (the ring), the word length, back into the line
+    i_ = 0;
+    loop(8,
+      p4_u = p4_O[i_] + p4_ISG[i_] * (i_ & 1 ? p4_dfb : p4_dfa);
+      p4_bb = p4_AB + i_ * p4_ASZ;
+      p4_v = p4_bb[(p4_aw - floor(p4_APL[i_] * 0.001 * srate)) & p4_AM];
+      p4_g = i_ & 1 ? -0.62 : 0.62;
+      p4_y = p4_v - p4_g * p4_u; p4_bb[p4_aw] = p4_u + p4_g * p4_y;
+      p4_bb = p4_LB + i_ * p4_BSZ; p4_bb[p4_w] = min(max(p4_qt(p4_y), -4), 4);
+      i_ += 1;
+    );
+    p4_w = (p4_w + 1) & p4_BM;
+    p4_wl *= 0.25; p4_wr *= 0.25;
+  ) : (
+    // ================= OB NONLIN / GATE / REVERSE: a dense diffused copy read by 96 shaped taps per side =========
+    p4_TB[p4_tw] = p4_qt(p4_diff(p4_sa, 0, p4_dfg)); p4_TB[p4_TSZ + p4_tw] = p4_qt(p4_diff(p4_sb, 4, p4_dfg));
+    i_ = 0;
+    p4_gset ? (
+      loop(96,
+        p4_wl += p4_GGL[i_] * p4_TB[(p4_tw - p4_GTL[i_]) & p4_TM];
+        p4_wr += p4_GGR[i_] * p4_TB[p4_TSZ + ((p4_tw - p4_GTR[i_]) & p4_TM)];
+        i_ += 1;
+      );
+    ) : (
+      // the window is moving: every tap slides (fractional reads)
+      p4_gls += (p4_glt - p4_gls) * p4_gk; abs(p4_gls - p4_glt) < 0.5 ? p4_gls = p4_glt;
+      loop(96,
+        p4_p = p4_tw - p4_GJL[i_] * p4_gls; p4_n = floor(p4_p); p4_fr = p4_p - p4_n;
+        p4_v = p4_TB[p4_n & p4_TM]; p4_wl += p4_GGL[i_] * (p4_v + (p4_TB[(p4_n + 1) & p4_TM] - p4_v) * p4_fr);
+        p4_p = p4_tw - p4_GJR[i_] * p4_gls; p4_n = floor(p4_p); p4_fr = p4_p - p4_n;
+        p4_v = p4_TB[p4_TSZ + (p4_n & p4_TM)];
+        p4_wr += p4_GGR[i_] * (p4_v + (p4_TB[p4_TSZ + ((p4_n + 1) & p4_TM)] - p4_v) * p4_fr);
+        i_ += 1;
+      );
+    );
+    p4_tw = (p4_tw + 1) & p4_TM;
+  );
+  // the 12-bit D/A, the reconstruction filter, the output iron
+  p4_wpk = max(p4_wpk, max(abs(p4_wl), abs(p4_wr)));
+  p4_wl = p4xoL.p4_xout(p4rL.s74_bq(p4_qr(p4_wl, p4_qo)));
+  p4_wr = p4xoR.p4_xout(p4rR.s74_bq(p4_qr(p4_wr, p4_qo)));
+) : (
+  // ================= CLEAN: the plate =================
+  p4_bw += ((p4_sa + p4_sb) * 0.5 + p4_dn - p4_bw) * p4_kbw;
+  p4_u = p4i1.s74_ap(p4_bw, 142 * p4_pki, 0.75); p4_u = p4i2.s74_ap(p4_u, 107 * p4_pki, 0.75);
+  p4_u = p4i3.s74_ap(p4_u, 379 * p4_pki, 0.625); p4_u = p4i4.s74_ap(p4_u, 277 * p4_pki, 0.625);
+  p4_ph += p4_lfi; p4_ph >= 1 ? p4_ph -= 1;
+  p4_mA = p4_exc * sin(2 * $pi * p4_ph); p4_mB = p4_exc * cos(2 * $pi * p4_ph);
+  // the left half
+  p4_a = p4tA1.p4_apm(p4_u + p4_pg * p4_eR, 672 * p4_pk + p4_mA, -0.7);
+  p4tD1.s74_dlw(p4_a); p4_a = p4tD1.s74_dlr(4453 * p4_pk);
+  p4_dmA += (p4_a - p4_dmA) * p4_pkd;
+  p4_a = p4tA2.s74_ap(p4_dmA * p4_pg, 1800 * p4_pk, p4_dd2);
+  p4tD2.s74_dlw(p4_a);
+  // the right half
+  p4_b = p4tA3.p4_apm(p4_u + p4_pg * p4_eL, 908 * p4_pk + p4_mB, -0.7);
+  p4tD3.s74_dlw(p4_b); p4_b = p4tD3.s74_dlr(4217 * p4_pk);
+  p4_dmB += (p4_b - p4_dmB) * p4_pkd;
+  p4_b = p4tA4.s74_ap(p4_dmB * p4_pg, 2656 * p4_pk, p4_dd2);
+  p4tD4.s74_dlw(p4_b);
+  p4_eL = p4tD2.s74_dlr(3720 * p4_pk); p4_eR = p4tD4.s74_dlr(3163 * p4_pk);
+  // the output taps
+  p4_wl = p4tD3.s74_dlr(266 * p4_pk) + p4tD3.s74_dlr(2974 * p4_pk) - p4tA4.s74_dlr(1913 * p4_pk) + p4tD4.s74_dlr(1996 * p4_pk)
+        - p4tD1.s74_dlr(1990 * p4_pk) - p4tA2.s74_dlr(187 * p4_pk) - p4tD2.s74_dlr(1066 * p4_pk);
+  p4_wr = p4tD1.s74_dlr(353 * p4_pk) + p4tD1.s74_dlr(3627 * p4_pk) - p4tA2.s74_dlr(1228 * p4_pk) + p4tD2.s74_dlr(2673 * p4_pk)
+        - p4tD3.s74_dlr(2111 * p4_pk) - p4tA4.s74_dlr(335 * p4_pk) - p4tD4.s74_dlr(121 * p4_pk);
+  p4_wl *= 0.3; p4_wr *= 0.3;
+);
+p4_aw = (p4_aw + 1) & p4_AM;
+
+// ---------- the return: LOW CUT, a DC blocker, the level, the fade ----------
+p4_wl = p4hL.s74_bq(p4_wl); p4_wr = p4hR.s74_bq(p4_wr);
+p4_dcyl = p4_wl - p4_dcxl + p4_dcc * p4_dcyl; p4_dcxl = p4_wl;
+p4_dcyr = p4_wr - p4_dcxr + p4_dcc * p4_dcyr; p4_dcxr = p4_wr;
+p4_wl = p4_dcyl * p4_wg * p4_fade; p4_wr = p4_dcyr * p4_wg * p4_fade;
+
+// ---------- MIX (a send law), OUTPUT and the house output stage ----------
+p4_mgd = min(1, 2 - 2 * p4_mix); p4_mgw = min(1, 2 * p4_mix);
+p4_yl = p4_xl * p4_mgd + p4_wl * p4_mgw; p4_yr = p4_xr * p4_mgd + p4_wr * p4_mgw;
+p4_vL = max(p4_vL * 0.9995, abs(p4_yl) + abs(p4_yr));
+p4_yl = p4L.ost_band(p4_yl) * p4_og; p4_yr = p4R.ost_band(p4_yr) * p4_og;
+ost_out(p4_yl, p4_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 366
+ui_begin(960, 366);
+s74_pal(slider11);
+s74_fonts();
+s74_face(960, 366);
+p4_cln = slider11 >= 0.5;
+p4_al = min(max(floor(slider8 + 0.5), 0), 3);
+p4_gate = !p4_cln && p4_al > 0;
+
+// ---------- the header ----------
+k_ = s74_header(960, "DRP74", "SERIES 74", "OB SPACE PROCESSOR", #p4_pm, 11);
+k_ > 0 ? load_preset(k_);
+
+// ---------- INPUT: the meters, the trim, GUARD ----------
+s74_mod(14, 62, 200, 292, "INPUT");
+p4mI.s74_edge(26, 92, 176, 62, p4a_vi * 2.83, "IN");
+p4mO.s74_edge(26, 162, 176, 62, p4a_vo * 2.83, "OUT");
+p4a_vi *= 0.6; p4a_vo *= 0.6;
+s74_off = 0; s74_knob(68, 286, 20, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s74_smallc(158, 262, "GUARD");
+s74_lens(132, 274, 52, 24, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s74_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? pk_led(194 * sc, 286 * sc, 3.5 * sc, 1, S74_HAZ); in_grd = 0;
+
+// ---------- ALGORITHM (OB) / PLATE (CLEAN): the response window and the lenses ----------
+s74_mod(226, 62, 260, 292, p4_cln ? "PLATE" : "ALGORITHM");
+// the response: the return's envelope after a click, drawn in the backlit window
+x_ = 240; y_ = 92; w_ = 232; h_ = 118;
+ui_cola(0x000000, 0.4); s74_r(x_ + 1, y_ + 2, w_, h_);
+ui_col(0x101112); s74_r(x_, y_, w_, h_);
+ui_col(S74_LAMPD); s74_r(x_ + 5, y_ + 5, w_ - 10, h_ - 10);
+gi_ = 0; loop(10, ui_cola(S74_LAMPW, 0.12); s74_r(x_ + 5 + (w_ - 10) * 0.03 * gi_, y_ + 5 + gi_ * 0.5, (w_ - 10) * (1 - 0.06 * gi_), h_ - 10 - gi_); gi_ += 1; );
+p4_vT = slider5 * (p4_cln && p4_al == 3 ? 1.5 : 1);
+p4_vLn = 0.08 * 8 ^ (slider4 / 100);
+p4_vP = slider3 * 0.001;
+p4_span = p4_vP + (p4_gate ? p4_vLn * 1.25 : min(p4_vT, 6) * 0.6 + 0.03);
+bx_ = x_ + 14; bw_ = w_ - 28; by_ = y_ + h_ - 14; bh_ = h_ - 42;
+ui_cola(S74_CHAR, 0.8); s74_r(bx_, by_, bw_, 1);
+gi_ = 0;
+loop(58,
+  t_ = (gi_ + 0.5) / 58 * p4_span - p4_vP;
+  t_ < 0 ? e_ = 0 : p4_gate ? (
+    f_ = t_ / p4_vLn; e_ = f_ >= 1 ? 0 : p4_env(f_, p4_al, p4_vLn, slider5);
+    p4_al == 3 ? e_ *= 0.8 + 0.2 * p4_hash(gi_ + 7) : e_ *= 0.85 + 0.15 * p4_hash(gi_ + 7);
+  ) : (
+    e_ = min(1, t_ / 0.012) * 10 ^ (-3 * t_ / p4_vT);
+    !p4_cln ? e_ *= 0.72 + 0.28 * abs(cos(t_ * 2 * $pi / 0.0115));   // the ring
+  );
+  e_ = e_ > 0 ? max(0, 1 + 20 * log10(max(e_, 0.000001)) / 42) : 0;
+  e_ > 0 ? ( ui_col(S74_CHAR); s74_r(bx_ + gi_ * bw_ / 58, by_ - e_ * bh_, bw_ / 58 * 0.62, e_ * bh_); );
+  gi_ += 1;
+);
+gfx_setfont(13); ui_col(S74_CHAR);
+p4_al == 0 ? s74_t(x_ + 12, y_ + 10, p4_cln ? "BRIGHT PLATE" : "ROOM") :
+p4_al == 1 ? s74_t(x_ + 12, y_ + 10, p4_cln ? "MEDIUM PLATE" : "NON-LINEAR") :
+p4_al == 2 ? s74_t(x_ + 12, y_ + 10, p4_cln ? "DARK PLATE" : "GATE") :
+             s74_t(x_ + 12, y_ + 10, p4_cln ? "LONG PLATE" : "REVERSE");
+p4_gate ? sprintf(#t_, "%.0f MS", p4_vLn * 1000) : sprintf(#t_, "RT60 %.2f S", p4_vT);
+gfx_measurestr(#t_, tw_, th_); gfx_x = (x_ + w_ - 12) * sc - tw_; gfx_y = (y_ + 10) * sc; gfx_drawstr(#t_);
+ui_cola(0xFFFFFF, 0.08); s74_r(x_ + 5, y_ + 5, w_ - 10, (h_ - 10) * 0.4);
+// the lenses
+gi_ = 0;
+loop(4,
+  p4_cln ? pk_pitem("BRIGHT|MEDIUM|DARK|LONG", gi_ + 1, #t_) : pk_pitem("ROOM|NONLIN|GATE|REVERSE", gi_ + 1, #t_);
+  s74_lens(240 + gi_ * 59, 228, 55, 26, p4_al == gi_, #t_) ? s74_set(8, gi_);
+  gi_ += 1;
+);
+p4_cln ? (
+  s74_smallc(356, 282, "FULL BAND  ·  MODULATED TANK");
+  s74_smallc(356, 300, "24-BIT  ·  NO GRIT");
+) : (
+  s74_smallc(356, 282, "12-BIT  ·  13 KHZ  ·  TRANSFORMERS");
+  s74_smallc(356, 300, p4_gate ? "SIZE SETS THE LENGTH  ·  DECAY THE SLOPE" : "COLOURED LINES  ·  METALLIC RING");
+);
+
+// ---------- SPACE: PRE-DELAY, SIZE, DECAY, DAMP, LOW CUT ----------
+s74_mod(498, 62, 260, 292, "SPACE");
+s74_knob(541, 138, 22, 3, 0, 250, 20, 0, "PRE-DELAY", "%.0f ms", 0);
+p4_gate ? ( sprintf(#s74_vs, "%.0f ms", p4_vLn * 1000); s74_knob(628, 138, 22, 4, 0, 100, 50, 0, "LENGTH", "", 0); ) :
+          s74_knob(628, 138, 22, 4, 0, 100, 50, 0, "SIZE", "%.0f%%", 0);
+s74_knob(715, 138, 22, 5, 0.2, 10, 1.6, 1, "DECAY", "%.2f s", 0);
+s74_kc = S74_C_LPF; s74_knob(574, 250, 22, 6, 0, 100, 40, 0, "DAMP", "%.0f%%", 0);
+s74_kc = S74_C_HPF; s74_knob(682, 250, 22, 7, 20, 600, 80, 1, "LOW CUT", "%.0f Hz", 0);
+s74_kc = 0;
+s74_smallc(628, 318, p4_cln ? "PLATE SIZE  ·  RT60  ·  HF LOSS" : "LOW CUT AND DAMP ON THE RETURN");
+
+// ---------- OUTPUT: WANDER, SAT; MIX and OUTPUT on faders ----------
+s74_mod(770, 62, 176, 292, "OUTPUT");
+s74_knob(806, 122, 18, 12, 0, 100, 50, 0, "WANDER", "%.0f%%", 0);
+s74_knob(806, 222, 14, 13, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(826 * sc, 208 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+s74_fc = S74_F_BLUE; s74_fader(862, 106, 130, 9, 0, 100, 30, 0, "MIX", "%.0f%%", 0);
+s74_fc = 0; s74_fader(910, 106, 130, 10, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s74_smallc(858, 296, "MIX: A SEND LAW");
+s74_smallc(858, 314, "DRY FULL TO 50 %");
+
+pk_end();
+ui_end();

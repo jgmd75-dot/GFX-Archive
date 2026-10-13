@@ -1,0 +1,1160 @@
+desc:GFX STR81 [vocal strip]
+//tags: vocal channel strip preamp opto fet de-esser eq saturation chorus digital delay ducking series81
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-clip, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate (.jsfx-inc) in
+// the same folder.
+//
+// STR81 (Series 81): the Series 81 vocal strip, a sibling of STR92 (the same core chain), with the series' own chorus
+// and digital delay. Two models in one unit: the series' MODE keys (VFD / MATRIX, in the header) set the voicing of
+// every stage, the look and the label language together; a change ducks the output (12 ms), swaps at the silent
+// point and fades back in. At Init the two models are level matched.
+//   VFD    - the Japanese 80s desk: transistor / IC, tight, bright and precise. A clean IC pre-amp (symmetric: odd
+//            colour), the lows kept out of the drive and a touch of presence in; a lighter, quicker opto; an EQ with
+//            proportional Q and a crisp top; an IC-rail saturation. Charcoal faces, VFD glow, English labels.
+//   MATRIX - the European 80s desk: transformer coupled, warmer and rounder. The iron saturates the lows first, a
+//            biased (even) valve-like knee; an opto that leans in; a broad, gentle console EQ with a sweet top; a
+//            transformer saturation with a little low bloom. Battleship grey, LED blocks, German labels.
+// The chain, in order:
+//   PREAMP     DRIVE (level matched: more DRIVE, more colour). The house drive standard (anti-aliased clipper,
+//              drive-tracking pre-filter and knee). TRIM and GUARD (the house input stage) sit here too.
+//   LOW END    the house trick: a high-pass (20 - 80 Hz, 20 = off), then a low shelf at 150 Hz pulling 0 to -3 dB.
+//   EQ         a four-band parametric: LF (shelf or bell, 30 - 450 Hz), LMF (bell, 120 Hz - 2 kHz, Q), HMF (bell,
+//              600 Hz - 8 kHz, Q), HF (shelf or bell, 1.5 - 16 kHz), +/-15 dB. The model voices the curves. The ORDER
+//              key puts the EQ before or after the dynamics; the panel modules swap places.
+//   OPTO       slow optical levelling (always first of the dynamics): PEAK REDUCTION and GAIN, program dependent,
+//              a two-stage release.
+//   DE-ESS     split band: only the sibilant band is turned down, by no more than RANGE: the cut starts at FREQ
+//              (4 - 10 kHz; an 8th-order split at 1.2 x FREQ, so the presence below about 0.8 x FREQ is left alone;
+//              the split's all-pass stays in the path when DE-ESS is out, so switching it never combs)
+//              and is full an octave above. It listens for sibilance, not brightness: THRESH sets how loud the band
+//              must be, and it only cuts while the band stands out from the rest of the signal (within 6 dB of the
+//              whole: full cut from 2 dB), so steady bright material - a full mix, cymbals, reverb - is left alone
+//              while "s" sounds get the full RANGE. Stereo linked. LISTEN plays the band; the lamp lights while it
+//              works.
+//   FET        a fast peak catcher (always last of the dynamics): AMOUNT, RATIO 4 / 8 / 12 / 20, ATTACK, RELEASE,
+//              with the FET's gentle colour.
+//   SATURATION VFD: an IC rail (a symmetric knee, odd). MATRIX: an output transformer (a biased knee, even, a little
+//              low bloom and a softer top). 0 = out.
+//   CHORUS     (its own IN key) the chorus of GFX Raum81 (Series 81): two bucket-brigade lines swept in opposite
+//              directions into its output matrix (the wet is nearly all side: it folds back to mono cleanly, the bass
+//              stays dry). Its four buttons (1 subtlest ... 4 strongest), WIDTH (the matrix cross-feed), MIX. VFD
+//              runs its VFD voicing (3.2 ms, rounded triangle), MATRIX its MATRIX voicing (4.6 ms, darker, a sine with
+//              the faint ensemble shimmer).
+//   DELAY      (its own IN key) the digital delay of GFX DLY81 (Series 81): VFD runs its Japanese VINTAGE DIGITAL
+//              model (the time glides, a dual-phase modulation, the 36 kHz vintage clock), MATRIX its European
+//              CRYSTAL model (ultra clean, a new time crossfades in). TIME (20 ms - 2 s) or SYNC, FEEDBACK, TONE (the
+//              loop's high cut; the loop's low cut is fixed at 150 Hz), CROSS (cross-feed: ping-pong), MIX, and DUCK:
+//              the repeats pull back while the voice sings (up to 15 dB) and bloom in the gaps. Chorus and delay can
+//              run together. No extra reverb: the delay is the space of this strip.
+//   OUTPUT     OUTPUT level, then the house output stage with CLIP always on (a character unit, as CH81 / STR92).
+// DRIFT (0 - 100 %, 50 % = standard, 0 = none), the series' own: the pre-amp's and the saturation's heat wander (an
+//   uneven supply, the two sides never quite match), the chorus's BBD clocks and LFO wander (Raum81's drift: lines
+//   +/-2.5 %, LFO +/-4 %, a trace of BBD hiss while the chorus is in), and the delay's clock wanders (DLY81's drift).
+// Mono or stereo tracks; the dynamics are stereo linked. Every IN key, the model, the order and the presets change
+// without clicks. No latency (0 samples).
+// PRESETS (12 + Reset all to defaults) cover both models; TRIM, GUARD and DRIFT stay when a preset loads.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-clip.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-dyn.jsfx-inc
+import gfx-faceplate.jsfx-inc
+
+slider1:0<0,1,1{VFD,Matrix}>-Model
+slider2:0<0,1,1{EQ after dynamics,EQ before dynamics}>-Order
+slider3:0<-24,12,0.1>-Input trim (dB)
+slider4:1<0,1,1{Off,On}>-Input guard
+slider5:1<0,1,1{Out,In}>-Preamp in
+slider6:30<0,100,1>-Drive (%)
+slider7:60<20,80,1>-High-pass (Hz, 20 = off)
+slider8:-2<-3,0,0.1>-Low shelf 150 Hz (dB)
+slider9:240<120,2000,1>-EQ LMF freq (Hz)
+slider10:1.5<-15,15,0.1>-EQ LMF gain (dB)
+slider11:0.8<0.4,4,0.01>-EQ LMF Q
+slider12:1<0,1,1{Out,In}>-Opto in
+slider13:35<0,100,1>-Opto peak reduction (%)
+slider14:0<-10,10,0.1>-Opto gain (dB)
+slider15:1<0,1,1{Out,In}>-De-ess in
+slider16:4500<4000,10000,10>-De-ess freq (Hz)
+slider17:-28<-50,0,0.1>-De-ess threshold (dB)
+slider18:6<0,12,0.1>-De-ess range (dB)
+slider19:0<0,1,1{Off,On}>-De-ess listen
+slider20:1<0,1,1{Out,In}>-FET in
+slider21:6<0,24,0.1>-FET amount (dB)
+slider22:0<0,3,1{4,8,12,20}>-FET ratio
+slider23:250<20,800,1>-FET attack (us)
+slider24:120<50,1100,1>-FET release (ms)
+slider25:1<0,1,1{Out,In}>-EQ in
+slider26:0<-15,15,0.1>-EQ LF gain (dB)
+slider27:100<30,450,1>-EQ LF freq (Hz)
+slider28:0<0,1,1{Shelf,Bell}>-EQ LF shape
+slider29:25<0,100,1>-Saturation (%)
+slider30:0<0,1,1{Out,In}>-Chorus in
+slider31:1<0,3,1{1,2,3,4}>-Chorus button
+slider32:100<0,100,1>-Chorus width (%)
+slider33:60<0,100,1>-Chorus mix (%)
+slider34:1<0,1,1{Out,In}>-Delay in
+slider35:320<20,2000,1>-Delay time (ms)
+slider36:0<0,8,1{Free,1/16,1/8 T,1/8,1/8 D,1/4 T,1/4,1/4 D,1/2}>-Delay sync
+slider37:25<0,90,1>-Delay feedback (%)
+slider38:6000<1500,16000,10>-Delay tone (Hz)
+slider39:0<0,100,1>-Delay cross-feed (%)
+slider40:15<0,100,1>-Delay mix (%)
+slider41:50<0,100,1>-Delay duck (%)
+slider42:50<0,100,1>-Drift (%)
+slider43:0<-12,12,0.1>-Output (dB)
+slider44:-1.5<-15,15,0.1>-EQ HMF gain (dB)
+slider45:2800<600,8000,1>-EQ HMF freq (Hz)
+slider46:0.8<0.4,4,0.01>-EQ HMF Q
+slider47:0<-15,15,0.1>-EQ HF gain (dB)
+slider48:9000<1500,16000,10>-EQ HF freq (Hz)
+slider49:0<0,1,1{Shelf,Bell}>-EQ HF shape
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-str81";
+ext_noinit = 1;
+clp_aa = 1; clp_pf_on = 1; clp_kt_on = 1;                   // house drive standard: ADAA, pre-filter, knee tracking (character)
+
+// ================= memory =================
+function vx_alloc(n) local(p) ( p = vx_mem; vx_mem += n; memset(p, 0, n); p; );
+function vx_p2(n) local(m) ( m = 16; while (m < n) ( m *= 2; ); m; );
+function vx_db(d) ( exp(0.11512925465 * d); );
+function vx_kt(t) ( 1 - exp(-1 / (max(t, 0.000001) * srate)); );           // a time constant (s) as a one-pole coefficient
+function vx_kf(f) ( 1 - exp(-2 * $pi * min(f, 0.45 * srate) / srate); );   // a one-pole low-pass coefficient for f Hz
+
+// a per-block glide that snaps when close (instance: v)
+function gl(t) instance(v) ( v += (t - v) * vx_gb; abs(t - v) < 0.0001 * max(abs(t), 0.01) ? v = t; v; );
+function gl_set(t) instance(v) ( v = t; );
+
+// ================= PREAMP (a gfx-clip KNEE clipper, the lows saturating first) =================
+// one side: x in, kk = the drive into the stage; the curve's rest value and slope are taken out (unity small-signal
+// gain); the anti-aliased reading's half-sample lag is made up, so it mixes with the dry signal without a comb
+function pre_run(x, kk) instance(lo, c1) local(u, y, c) (
+  lo += (x - lo) * pre_lc;
+  x += pre_xa * (lo / sqrt(1 + sqr(pre_xd * lo)) - lo);    // the iron / the input stage: the lows saturate first
+  u = this.pf.clp_pf_run(x) * kk + pre_b;
+  y = this.k.clp_run(u); c = this.k.clp_crv(u);
+  y += 0.5 * (c - c1); c1 = c;
+  (y - pre_cb) / (kk * pre_sl);
+);
+// SATURATION, one side: VFD an IC rail (symmetric knee), MATRIX a transformer (biased knee)
+function sat_run(x, kk) instance(c1) local(u, y, c) (
+  u = this.pf.clp_pf_run(x) * kk + sat_b;
+  y = this.k.clp_run(u); c = this.k.clp_crv(u);
+  y += 0.5 * (c - c1); c1 = c;
+  (y - sat_cb) / (kk * sat_sl);
+);
+
+// ================= DE-ESS: an 8th-order Linkwitz-Riley split (instance: one side) =================
+// the band above the split (two cascaded 4th-order Butterworth high-passes) and the split's own 4th-order all-pass
+// (its low + high sum): out = all-pass(x) + g x band, so the response is exactly 1 + g w^8 / (1 + w^8) - flat below
+// the split, the full cut above it, the same phase on both sides, no comb anywhere
+function dsx_ap(f, q) instance(b0, b1, b2, a1, a2) local(w0, cw, al, n) (
+  w0 = 2 * $pi * min(f, srate * 0.45) / srate; cw = cos(w0); al = sin(w0) / (2 * q); n = 1 + al;
+  b0 = (1 - al) / n; b1 = -2 * cw / n; b2 = 1; a1 = b1; a2 = b0;
+);
+function dsx_set(fc) (
+  this.h1.bq_set(1, fc, 0.5411961, 0); this.h2.bq_set(1, fc, 1.3065630, 0);
+  this.h3.bq_set(1, fc, 0.5411961, 0); this.h4.bq_set(1, fc, 1.3065630, 0);
+  this.p1.dsx_ap(fc, 0.5411961); this.p2.dsx_ap(fc, 1.3065630);
+);
+// one sample: returns the all-passed signal; the band is left in .hi
+function dsx_run(x) instance(hi) (
+  hi = this.h4.bq_run(this.h3.bq_run(this.h2.bq_run(this.h1.bq_run(x))));
+  this.p2.bq_run(this.p1.bq_run(x));
+);
+// the all-pass alone (DE-ESS out: the path keeps the same phase, so switching never combs)
+function dsx_apr(x) ( this.p2.bq_run(this.p1.bq_run(x)); );
+
+// =====================================================================================================================
+// SERIES 81 MOD + SPACE (prefix t8_): the parts that make this strip the Series 81 one. The core chain (vx_) is shared
+// by the vocal-strip family (ported from STR92); Series 81 brings its chorus and its digital delay here.
+// =====================================================================================================================
+// a rational tanh (exact to 0.2 % below |x| = 1, saturating at |x| = 3): the input stages' curve without exp()
+function t8_tanh(x) ( x = min(max(x, -3), 3); x * (27 + x * x) / (27 + 9 * x * x); );
+
+// ---------- CHORUS: ported from gfx-raum81.jsfx (GFX Raum81, Series 81) ----------
+// Its two bucket-brigade lines (a 2-pole anti-alias low-pass, the line, its very mild saturation, a 4-pole
+// reconstruction low-pass), its LFO (VFD: the smoothed triangle; MATRIX: a sine with the faint 5.7 Hz shimmer), line B
+// swept by the inverted copy, its output matrix L = dry + w (A - k B), R = dry + w (B - k A) with the 2-pole wet low
+// cut, its level law (half the wet's added power taken back), its four buttons (rate / depth / wet) and its DRIFT
+// (each line's clock +/-2.5 %, the LFO +/-4 %, the BBD hiss). The wet input is the mono sum (its MONO setting).
+// WIDTH = its WIDTH (k = 0.9 x WIDTH), MIX = its MIX. The voicing (its MODE) follows the strip's model.
+function t8c_lpset(f, q) instance(b0, b1, b2, a1, a2) local(w, cw, al, n) (
+  w = 2 * $pi * min(f, srate * 0.45) / srate; cw = cos(w); al = sin(w) / (2 * q); n = 1 + al;
+  b0 = (1 - cw) * 0.5 / n; b1 = (1 - cw) / n; b2 = b0; a1 = -2 * cw / n; a2 = (1 - al) / n;
+);
+function t8c_hpset(f, q) instance(b0, b1, b2, a1, a2) local(w, cw, al, n) (
+  w = 2 * $pi * f / srate; cw = cos(w); al = sin(w) / (2 * q); n = 1 + al;
+  b0 = (1 + cw) * 0.5 / n; b1 = -(1 + cw) / n; b2 = b0; a1 = -2 * cw / n; a2 = (1 - al) / n;
+);
+function t8c_hp(x) instance(z1, z2) local(y) (
+  y = t8cH.b0 * x + z1; z1 = t8cH.b1 * x - t8cH.a1 * y + z2; z2 = t8cH.b2 * x - t8cH.a2 * y; y;
+);
+function t8c_rd(buf, d) local(rp, i, f, xm1, x0, x1, x2) (
+  rp = t8c_wp - d; rp < 0 ? rp += T8C_N;
+  i = floor(rp); f = rp - i;
+  xm1 = buf[(i + T8C_N - 1) & T8C_M]; x0 = buf[i & T8C_M]; x1 = buf[(i + 1) & T8C_M]; x2 = buf[(i + 2) & T8C_M];
+  ((((0.5 * (x2 - xm1) + 1.5 * (x0 - x1)) * f + (xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2)) * f + 0.5 * (x1 - xm1)) * f + x0);
+);
+// one bucket-brigade line, in two halves: its anti-alias low-pass into the line (run always, so a line switched in
+// already holds the voice: no delayed onset), then the read, its mild saturation and the reconstruction low-pass
+function t8c_lin(x, buf) instance(p1, p2) local(y) (
+  x += vx_dn;
+  y = t8cP.b0 * x + p1; p1 = t8cP.b1 * x - t8cP.a1 * y + p2; p2 = t8cP.b2 * x - t8cP.a2 * y;
+  buf[t8c_wp] = y;
+);
+function t8c_lout(buf, d) instance(q1, q2, r1, r2) local(y, v) (
+  v = t8c_rd(buf, d);
+  v = ost_tanh(v * t8c_sk) * t8c_ski;
+  y = t8cQ.b0 * v + q1; q1 = t8cQ.b1 * v - t8cQ.a1 * y + q2; q2 = t8cQ.b2 * v - t8cQ.a2 * y;
+  v = t8cR.b0 * y + r1; r1 = t8cR.b1 * y - t8cR.a1 * v + r2; r2 = t8cR.b2 * y - t8cR.a2 * v;
+  v;
+);
+// its two voicings: 0 = VFD (the Japanese rack), 1 = MATRIX (the European ensemble line)
+function t8c_voice(v) (
+  v == 0 ? (
+    t8c_cen = 3.2; t8c_sk = 0.7; t8c_ski = 1.4285714; t8c_shp = 0; t8c_fdp = 0; t8c_vtr = 1;
+    t8cP.t8c_lpset(9500, 0.7071); t8cQ.t8c_lpset(9000, 0.5412); t8cR.t8c_lpset(9000, 1.3066);
+    t8cH.t8c_hpset(110, 0.7071);
+  ) : (
+    t8c_cen = 4.6; t8c_sk = 0.95; t8c_ski = 1 / 0.95; t8c_shp = 1; t8c_fdp = 0.045; t8c_vtr = 1.06;
+    t8cP.t8c_lpset(7800, 0.7071); t8cQ.t8c_lpset(7200, 0.5412); t8cR.t8c_lpset(7200, 1.3066);
+    t8cH.t8c_hpset(140, 0.7071);
+  );
+);
+function t8c_set() local(i) (
+  t8c_on = slider30 >= 0.5;
+  i = min(max(slider31 | 0, 0), 3);
+  t8c_rt = i == 3 ? 0.5 : 0.25;
+  t8c_dt = i == 0 ? 0.35 : i == 1 ? 0.65 : i == 2 ? 1.00 : 1.35;
+  t8c_wt = i == 0 ? 0.50 : i == 1 ? 0.58 : i == 2 ? 0.66 : 0.75;
+  t8c_mxt = slider33 / 100; t8c_kt = 0.9 * slider32 / 100;
+  t8c_hs = slider42 / 100 * 0.00007;                       // its BBD hiss (about -103 dBFS at 50 %)
+);
+function t8c_init() (
+  t8c_sms = vx_kt(0.35); t8c_smw = vx_kt(0.12); t8c_msr = srate / 1000;
+  t8c_set(); t8c_r = t8c_rt; t8c_d = t8c_dt; t8c_w = t8c_wt; t8c_mx = t8c_mxt; t8c_k = t8c_kt;
+);
+function t8c_run() local(t, lv, m, dA, dB, a, b, g0, cmp, g) (
+  t8c_fw += (t8c_on - t8c_fw) * xs_c;
+  m = 0.5 * (vx_l + vx_r);                                 // its MONO wet input (and its BBD hiss)
+  t8cA.t8c_lin(m + t8c_hs * (rand(2) - 1), T8C_A); t8cB.t8c_lin(m + t8c_hs * (rand(2) - 1), T8C_B);
+  t8c_fw > 0.000001 || t8c_on ? (
+    t8c_r += (t8c_rt - t8c_r) * t8c_sms; t8c_d += (t8c_dt - t8c_d) * t8c_sms; t8c_w += (t8c_wt - t8c_w) * t8c_smw;
+    t8c_mx += (t8c_mxt - t8c_mx) * sm_c; t8c_k += (t8c_kt - t8c_k) * sm_c;
+    t8c_cA += (t8c_dvA - t8c_cA) * t8c_smd; t8c_cB += (t8c_dvB - t8c_cB) * t8c_smd;
+    t8c_ph += t8c_r * (1 + t8c_rv) / srate; t8c_ph >= 1 ? t8c_ph -= 1;
+    t8c_shp == 0 ? (
+      t = t8c_ph < 0.5 ? 4 * t8c_ph - 1 : 3 - 4 * t8c_ph; lv = t * (1.5 - 0.5 * t * t); t8c_fv = 0;
+    ) : (
+      lv = -cos(2 * $pi * t8c_ph);
+      t8c_fph += 5.7 / srate; t8c_fph >= 1 ? t8c_fph -= 1;
+      t8c_fv = t8c_fdp * sin(2 * $pi * t8c_fph);
+    );
+    dA = max((t8c_cen * (1 + t8c_cA) + t8c_d * lv + t8c_fv) * t8c_msr, 2);
+    dB = max((t8c_cen * (1 + t8c_cB) - t8c_d * lv - t8c_fv) * t8c_msr, 2);
+    a = t8cA.t8c_lout(T8C_A, dA); b = t8cB.t8c_lout(T8C_B, dB);
+    g0 = t8c_w * t8c_mx * t8c_fw;
+    cmp = 1 / sqrt(sqrt(1 + 2 * g0 * g0));
+    g = g0 * t8c_vtr;
+    vx_l = (vx_l + g * t8cHL.t8c_hp(a - t8c_k * b)) * cmp;
+    vx_r = (vx_r + g * t8cHR.t8c_hp(b - t8c_k * a)) * cmp;
+  );
+  t8c_wp = (t8c_wp + 1) & T8C_M;
+);
+
+// ---------- DELAY: the digital delay engine of gfx-dly81.jsfx (GFX DLY81, Series 81) and gfx-bdelay ----------
+// VFD runs its Japanese VINTAGE DIGITAL model: the time glides (pitch bends as the old racks did, 90 ms), its dual-phase
+// modulation (L sine, R cosine: fixed here at 0.3 ms, 0.5 Hz), its vintage clock (36 kHz, 16-bit, nearest-sample
+// reads), its clean input stage and the loop's headroom curve (x - 0.06 x^3). MATRIX runs its European CRYSTAL model:
+// a new time crossfades in (30 ms, no pitch bend), 4-point Hermite reads, the 48 kHz clock (straight), the iron input
+// stage (the lows first) and its loop curve (x - 0.05 x^3). Both: its loop filters (a one-pole low cut, here fixed at
+// 150 Hz, and the TONE high cut), FEEDBACK, its cross-feed (CROSS), its input DRIVE fixed at its default 15 %, its
+// DRIFT (the clock offset wanders: E 0.3 ms, J 1.5 ms at full scale, 20 % amount at 50 % DRIFT). Added here: the IN key
+// fades the feed so the repeats ring out; the return is added to the voice (MIX 100 % = the first repeat as loud as
+// the voice) and DUCK (the strip's) pulls it back while the voice sings.
+function t8d_rd(b, d) local(p, i, f, y0, y1, y2, y3, c1, c2, c3) (
+  d = min(max(d, 1), T8D_N - 8);
+  p = t8d_w - 1 - d + T8D_N;
+  t8d_near ? b[floor(p + 0.5) & T8D_M] : (
+    i = floor(p); f = p - i;
+    y0 = b[(i - 1) & T8D_M]; y1 = b[i & T8D_M]; y2 = b[(i + 1) & T8D_M]; y3 = b[(i + 2) & T8D_M];
+    c1 = 0.5 * (y2 - y0); c2 = y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3; c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    ((c3 * f + c2) * f + c1) * f + y1;
+  );
+);
+// its crossfading head (CRYSTAL)
+function t8d_xh(b, target) instance(cur, nxt, xf) (
+  xf == 0 && abs(target - cur) > 0.5 ? ( nxt = target; xf = 0.000001; );
+  xf > 0 ? (
+    xf += t8d_xhr; xf >= 1 ? ( cur = nxt; xf = 0; t8d_rd(b, cur); ) : (
+      t8d_rd(b, cur) * cos(xf * 0.5 * $pi) + t8d_rd(b, nxt) * sin(xf * 0.5 * $pi); );
+  ) : t8d_rd(b, cur);
+);
+// its input transformer: E (MATRIX) iron, the lows first; J (VFD) a clean pre-amp, a soft clip only when pushed
+function t8d_xfm(x, amt, euro) instance(lp) local(lo, d) (
+  euro ? (
+    lp += (x - lp) * t8d_xlc;
+    lo = lp; d = 1 + 6 * amt;
+    x - lo + t8_tanh(lo * d) / d * (1 + 0.6 * amt) + 0.02 * amt * t8_tanh(x * d);
+  ) : (
+    d = 1 + 3 * amt * amt;
+    t8_tanh(x * d) / t8_tanh(d) * min(1, d);
+  );
+);
+// its vintage clock: band-limit, hold at the hardware rate, quantise, smooth
+function t8d_lfi(x) instance(a, b, ph, h) (
+  t8d_lfon ? (
+    a += (x - a) * t8d_lfc; b += (a - b) * t8d_lfc;
+    ph += t8d_lfinc; ph >= 1 ? ( ph -= 1; h = floor(b * t8d_lfq + 0.5) / t8d_lfq; );
+    h;
+  ) : x;
+);
+function t8d_lfo(x) instance(a, b) (
+  t8d_lfon ? ( x = floor(x * t8d_lfq + 0.5) / t8d_lfq; a += (x - a) * t8d_lfc; b += (a - b) * t8d_lfc; b; ) : x;
+);
+function t8d_beats(k) ( k == 1 ? 0.25 : k == 2 ? 1 / 3 : k == 3 ? 0.5 : k == 4 ? 0.75 : k == 5 ? 2 / 3 : k == 6 ? 1 : k == 7 ? 1.5 : 2; );
+function t8d_set() local(k, ms) (
+  t8d_on = slider34 >= 0.5;
+  k = slider36 | 0;
+  ms = k == 0 ? slider35 : 60000 / max(tempo, 20) * t8d_beats(k);
+  t8d_ms = min(max(ms, 20), 2000);
+  t8d_ts = t8d_ms * 0.001 * srate;
+  t8d_fb = slider37 / 100; t8d_xf = slider39 / 100;
+  t8d_hc = vx_kf(slider38); t8d_lc = vx_kf(150);
+  t8d_lvt = slider40 / 100;
+  t8d_dk = slider41 / 100 * 15;                            // DUCK: up to 15 dB (the strip's)
+  t8d_dof_t = 0.2 * dm_a * (eng ? 0.0003 : 0.0015) * srate;   // its DRIFT: the clock offset (E / J)
+);
+// the per-model fixed parts (its J VINTAGE DIGITAL / E CRYSTAL), set at the silent point of a model change
+function t8d_modset() (
+  t8d_jdl = !eng;
+  t8d_lfon = t8d_jdl; t8d_near = t8d_jdl;
+  t8d_lfinc = min(36000 / srate, 1); t8d_lfq = 2 ^ 15; t8d_lfc = 1 - exp(-2 * $pi * min(0.45 * 36000, 0.45 * srate) / srate);
+  t8d_mds = (t8d_jdl ? 0.3 : 0) * 0.001 * srate; t8d_mdi = 0.5 / srate;
+  t8d_cub = t8d_jdl ? 0.06 : 0.05;
+  t8d_wg = t8d_jdl ? t8_tanh(1.0675) / 1.0675 : 1;        // its J input stage's small-signal gain (DRIVE 15 %) taken back
+  t8dXL.cur = t8dXR.cur = t8d_pL = t8d_pR = t8d_ts; t8dXL.xf = t8dXR.xf = 0;
+);
+function t8d_init() (
+  t8d_xhr = 1 / (0.03 * srate); t8d_slc = vx_kt(0.09); t8d_xlc = 0.04 * 48000 / srate;
+  t8d_set(); t8d_modset(); t8d_lv = t8d_lvt;
+);
+function t8d_clear() (
+  memset(T8D_L, 0, T8D_N); memset(T8D_R, 0, T8D_N);
+  t8d_lcL = t8d_lcR = t8d_hcL = t8d_hcR = 0;
+);
+function t8d_run() local(xl, xr, yl, yr, fl, fr, wl, wr, mL, mR, g) (
+  t8d_fw += (t8d_on - t8d_fw) * xs_c;
+  !t8d_idle ? (
+    t8d_lv += (t8d_lvt - t8d_lv) * sm_c;
+    t8d_dofL += (t8d_dof_t * t8d_vA - t8d_dofL) * 0.0005; t8d_dofR += (t8d_dof_t * t8d_vB - t8d_dofR) * 0.0005;
+    xl = t8dTL.t8d_xfm(vx_l * t8d_fw, 0.15, eng); xr = t8dTR.t8d_xfm(vx_r * t8d_fw, 0.15, eng);
+    t8d_jdl ? (
+      // J: VINTAGE DIGITAL - the time glides, the dual-phase modulation rides on it
+      t8d_pL += (t8d_ts - t8d_pL) * t8d_slc; t8d_pR += (t8d_ts - t8d_pR) * t8d_slc;
+      t8d_lph += t8d_mdi * (1 + 0.05 * t8d_vA); t8d_lph >= 1 ? t8d_lph -= 1;
+      mL = t8d_mds * (0.5 + 0.5 * sin(2 * $pi * t8d_lph)); mR = t8d_mds * (0.5 + 0.5 * cos(2 * $pi * t8d_lph));
+      yl = t8d_rd(T8D_L, t8d_pL + mL + t8d_dofL); yr = t8d_rd(T8D_R, t8d_pR + mR + t8d_dofR);
+    ) : (
+      // E: CRYSTAL - a new time crossfades in
+      yl = t8dXL.t8d_xh(T8D_L, t8d_ts + t8d_dofL); yr = t8dXR.t8d_xh(T8D_R, t8d_ts + t8d_dofR);
+    );
+    t8d_lcL += (yl - t8d_lcL) * t8d_lc; t8d_hcL += (yl - t8d_lcL - t8d_hcL) * t8d_hc;
+    t8d_lcR += (yr - t8d_lcR) * t8d_lc; t8d_hcR += (yr - t8d_lcR - t8d_hcR) * t8d_hc;
+    fl = (1 - t8d_xf) * t8d_hcL + t8d_xf * t8d_hcR; fr = (1 - t8d_xf) * t8d_hcR + t8d_xf * t8d_hcL;
+    wl = xl + t8d_fb * fl; wr = xr + t8d_fb * fr;
+    wl = min(max(wl, -2.3), 2.3); wr = min(max(wr, -2.3), 2.3);   // (the strip's: the cubic's own turning point kept out of reach)
+    wl -= t8d_cub * wl * wl * wl; wr -= t8d_cub * wr * wr * wr;
+    T8D_L[t8d_w] = t8dIL.t8d_lfi(wl); T8D_R[t8d_w] = t8dIR.t8d_lfi(wr);
+    t8d_w = (t8d_w + 1) & T8D_M;
+    yl = t8dOL.t8d_lfo(t8d_hcL); yr = t8dOR.t8d_lfo(t8d_hcR);
+    du_g += (du_t - du_g) * du_gc;
+    g = t8d_lv * t8d_wg * du_g;
+    vx_l += yl * g; vx_r += yr * g;
+    t8d_pk = max(t8d_pk, abs(yl) + abs(yr));
+  );
+);
+
+// ================= sample-rate setup: memory, coefficients =================
+function vx_srinit() (
+  vx_sr = srate; vx_mem = 1024;
+  // the Series 81 mod + space (t8_)
+  T8C_N = vx_p2(0.016 * srate); T8C_M = T8C_N - 1; T8C_A = vx_alloc(T8C_N); T8C_B = vx_alloc(T8C_N); t8c_wp = 0;
+  T8D_N = vx_p2(2.1 * srate); T8D_M = T8D_N - 1; T8D_L = vx_alloc(T8D_N); T8D_R = vx_alloc(T8D_N); t8d_w = 0;
+  pre_lc = vx_kf(110);
+  xs_c = vx_kt(0.01);                                      // IN keys: 10 ms cross-fades
+  sm_c = vx_kt(0.02);                                      // knob glides (per sample)
+  dkr = 1 / (0.012 * srate);                               // MODEL / ORDER: 12 ms out, 12 ms in
+  ms_c = vx_kt(0.003);                                     // FET colour: the running mean square
+  op_dc = vx_kt(0.005);                                    // opto detector: RMS over 5 ms
+  ds_at = vx_kt(0.0003); ds_rl = vx_kt(0.06);              // de-ess detector: 0.3 ms / 60 ms
+  ds_rc = vx_kt(0.003);                                    // de-ess: the band against the whole, 3 ms
+  du_at = vx_kt(0.012); du_rl = vx_kt(0.35);               // DUCK: the voice's envelope, 12 ms / 350 ms
+  du_gc = vx_kt(0.006);
+  t8c_smd = vx_kt(0.5);                                    // the chorus's clock drift smoothing (Raum81)
+  vx_gb = 1;                                               // (the knob glides: set per block in @block - samplesblock is 0 in @init)
+  ost_init(0);
+  t8c_voice(eng); t8c_init(); t8d_init();
+);
+
+// ================= voicing (per block, from the current model eng: 0 VFD, 1 MATRIX) =================
+// the pre-amp's and the saturation's make-up (dB) across DRIVE / AMOUNT 0, 25, 50, 75, 100 %: measured on the vocal
+// test signal, so turning them up adds colour rather than loudness
+function vx_tab(d, a, b, c, e, f) local(p, i, t) (
+  p = min(max(d, 0), 1) * 4; i = min(floor(p), 3); t = p - i;
+  i == 0 ? a + (b - a) * t : i == 1 ? b + (c - b) * t : i == 2 ? c + (e - c) * t : e + (f - e) * t;
+);
+// the opto's and the FET's make-up (dB): fitted on the vocal test signal
+function op_mkup(pr) ( !eng ? pr * (-2.195 + pr * (14.751 - 3.589 * pr)) : pr * (-1.852 + pr * (21.688 - 5.584 * pr)); );
+function fet_mkup(a, rt) local(d) (
+  d = a / 24;
+  rt == 0 ? vx_tab(d, 0.11, 1.99, 4.24, 6.88, 10.87) : rt == 1 ? vx_tab(d, 0.13, 2.27, 4.58, 7.43, 12.03) :
+  rt == 2 ? vx_tab(d, 0.13, 2.36, 4.66, 7.6, 12.39) : vx_tab(d, 0.14, 2.43, 4.72, 7.72, 12.68);
+);
+
+// change detector (instance l)
+function chg(v) instance(l) ( v != l ? ( l = v; 1; ) : 0; );
+// a band's SHELF / BELL key: the band glides out (20 ms), changes shape at 0 dB (where both shapes are flat), glides back
+function eqk(want) instance(ty, k) ( want != ty ? ( k = max(k - eq_kr, 0); k <= 0 ? ty = want; ) : k = min(k + eq_kr, 1); k; );
+// the four bands (per block): VFD proportional Q (the bells narrow as they are pushed), firmer shelves (a crisp,
+// precise top); MATRIX broad and gentle (a console's curves, a softer HF shelf: its boost eased, its corner rounded)
+function vx_eq() local(lg, lf, lk, mg, mf, mq, hg, hf, hq, fg, ff, fk, q, g) (
+  eq_kr = samplesblock / (0.02 * srate);
+  lk = eLF.eqk(slider28 >= 0.5); fk = eHF.eqk(slider49 >= 0.5);
+  lg = gd_lg.gl(slider26) * lk; lf = gd_lf.gl(slider27);
+  mg = gd_mg.gl(slider10); mf = gd_mf.gl(slider9); mq = gd_mq.gl(slider11);
+  hg = gd_hg.gl(slider44); hf = gd_hf.gl(slider45); hq = gd_hq.gl(slider46);
+  fg = gd_fg.gl(slider47) * fk; ff = gd_ff.gl(slider48);
+  vc_e1.chg(lg * 1.3 + lf * 0.0173 + eLF.ty * 7 + eng * 101) ? (
+    q = eLF.ty ? ( eng ? 0.6 : 0.6 + abs(lg) / 15 * 0.9 ) : ( eng ? 0.55 : 0.9 );
+    LP_.e1.bq_set(eLF.ty ? 2 : 4, lf, q, lg); RP_.e1.bq_set(eLF.ty ? 2 : 4, lf, q, lg);
+  );
+  vc_e2.chg(mg * 1.3 + mf * 0.0173 + mq * 7.1 + eng * 101) ? (
+    q = eng ? mq * 0.7 : mq * (0.6 + abs(mg) / 15 * 1.2);
+    LP_.e2.bq_set(2, mf, q, mg); RP_.e2.bq_set(2, mf, q, mg);
+  );
+  vc_e3.chg(hg * 1.3 + hf * 0.0173 + hq * 7.1 + eng * 101) ? (
+    q = eng ? hq * 0.7 : hq * (0.6 + abs(hg) / 15 * 1.2);
+    LP_.e3.bq_set(2, hf, q, hg); RP_.e3.bq_set(2, hf, q, hg);
+  );
+  vc_e4.chg(fg * 1.3 + ff * 0.0173 + eHF.ty * 7 + eng * 101) ? (
+    eHF.ty ? ( q = eng ? 0.6 : 0.6 + abs(fg) / 15 * 0.9; LP_.e4.bq_set(2, ff, q, fg); RP_.e4.bq_set(2, ff, q, fg); )
+           : ( eng ? ( q = 0.5; g = fg > 0 ? 0.85 * fg : fg; ) : ( q = 1.0; g = fg; );
+               LP_.e4.bq_set(3, ff, q, g); RP_.e4.bq_set(3, ff, q, g); );
+  );
+);
+
+function vx_voice() local(d, w, s, f, g, k) (
+  // ---------- PREAMP ----------
+  d = gd_pre.gl(slider6 / 100);
+  pre_on_t = slider5 >= 0.5;
+  !eng ? (
+    // VFD: an IC / transistor input: symmetric (odd), the lows kept out of the iron
+    pre_k = vx_db(-8 + 17 * d); pre_b = 0; pre_xa = 0.25 * d; pre_xd = 1 + 2 * d;
+    PL.k.clp_set(2, 1, 1, 0); PR.k.clp_set(2, 1, 1, 0);
+  ) : (
+    // MATRIX: transformer coupled: the iron saturates the lows first, a biased knee (even)
+    pre_k = vx_db(-6 + 20 * d); pre_b = 0.13; pre_xa = 0.9 * d; pre_xd = 1.5 + 4 * d;
+    PL.k.clp_set(2, 1, 1.3, 0); PR.k.clp_set(2, 1, 1.3, 0);
+  );
+  PL.pf.clp_pf_block(d, srate, samplesblock); PR.pf.clp_pf_block(d, srate, samplesblock);
+  w = pkt.clp_kt_block(d, srate, samplesblock); PL.k.clp_knee(w); PR.k.clp_knee(w);
+  pre_mk_t = vx_db(!eng ? vx_tab(d, 0.02, 0.1, 0.27, 0.74, 1.62) : vx_tab(d, 0.02, 0.22, 0.84, 1.76, 2.57));
+  pre_cb = PL.k.clp_crv(pre_b);
+  pre_sl = pre_b <= PL.k.cp - w ? 1 : 1 - (pre_b - PL.k.cp + w) / (2 * w);
+  PL.k.clp_tidy(); PR.k.clp_tidy();
+  // the pre-amp's own colour, with DRIVE: VFD a touch of presence, MATRIX a little low-mid weight
+  g = gd_pre.v;
+  vc_pre.chg(g + 2 * eng) ? (
+    !eng ? ( LP_.pe.bq_set(2, 3200, 0.7, 0.6 * g); RP_.pe.bq_set(2, 3200, 0.7, 0.6 * g); )
+         : ( LP_.pe.bq_set(2, 200, 0.7, 1.2 * g); RP_.pe.bq_set(2, 200, 0.7, 1.2 * g); );
+  );
+  // ---------- LOW END ----------
+  f = gd_hp.gl(slider7);
+  vc_hp.chg(f) ? ( LP_.hp.bq_set(1, f, 0.70710678, 0); RP_.hp.bq_set(1, f, 0.70710678, 0); );
+  g = gd_ls.gl(slider8);
+  vc_ls.chg(g) ? ( LP_.ls.bq_set(4, 150, 0.70710678, g); RP_.ls.bq_set(4, 150, 0.70710678, g); );
+  // ---------- OPTO ----------
+  s = gd_op.gl(slider13 / 100);
+  !eng ? (
+    op_thr = -4 - 30 * s; op_sl = 1 - 1 / 2.5; op_kn = 8;
+    op_at = vx_kt(0.008); op_rf = vx_kt(0.06); op_as = vx_kt(0.5); op_rs = vx_kt(1.5); op_sw = 0.5;
+  ) : (
+    op_thr = -4 - 36 * s; op_sl = 1 - 1 / 3.5; op_kn = 12;
+    op_at = vx_kt(0.010); op_rf = vx_kt(0.08); op_as = vx_kt(0.4); op_rs = vx_kt(2.5); op_sw = 0.65;
+  );
+  op_mk_t = vx_db(op_mkup(s) + slider14);
+  op_lin = 10 ^ ((op_thr - 0.5 * op_kn - 3) / 10);              // the detector's mean square at the knee's foot
+  // ---------- DE-ESS ----------
+  f = gd_df.gl(slider16);
+  vc_df.chg(f) ? ( LP_.ds.dsx_set(1.2 * f); RP_.ds.dsx_set(1.2 * f); );
+  ds_thr = slider17; ds_rng = slider18; ds_lin = 10 ^ ((ds_thr - 3) / 20);
+  // ---------- FET (VFD a little cleaner, MATRIX a little more colour) ----------
+  k = gd_fa.gl(slider21);
+  fet_rt = slider22 | 0;
+  fet_sl = fet_rt == 0 ? 0.75 : fet_rt == 1 ? 0.875 : fet_rt == 2 ? 0.9167 : 0.95;
+  fet_thr = -6 - k; fet_lin = 10 ^ ((fet_thr - 1.5) / 20);
+  fet_ac = vx_kt(min(max(slider23, 20), 800) * 0.000001);
+  fet_rc = vx_kt(min(max(slider24, 50), 1100) * 0.001);
+  fet_mk_t = vx_db(fet_mkup(k, fet_rt));
+  fet_col = eng ? 0.45 : 0.25;
+  // ---------- EQ: four bands, voiced by the model ----------
+  vx_eq();
+  // ---------- SATURATION ----------
+  s = gd_sa.gl(slider29 / 100);
+  sat_on_t = slider29 > 0.05;
+  !eng ? (
+    sat_k = vx_db(-8 + 18 * s); sat_b = 0;                 // VFD: an IC rail, symmetric
+    SL.k.clp_set(2, 1, 1, 0); SR.k.clp_set(2, 1, 1, 0);
+  ) : (
+    sat_k = vx_db(-8 + 20 * s); sat_b = 0.1;               // MATRIX: the output transformer, biased
+    SL.k.clp_set(2, 1, 1.25, 0); SR.k.clp_set(2, 1, 1.25, 0);
+  );
+  SL.pf.clp_pf_block(s, srate, samplesblock); SR.pf.clp_pf_block(s, srate, samplesblock);
+  w = skt.clp_kt_block(s, srate, samplesblock); SL.k.clp_knee(w); SR.k.clp_knee(w);
+  sat_mk_t = vx_db(!eng ? vx_tab(s, 0, 0.13, 0.36, 0.91, 1.91) : vx_tab(s, 0, 0.26, 0.77, 1.64, 2.33));
+  sat_cb = SL.k.clp_crv(sat_b);
+  sat_sl = sat_b <= SL.k.cp - w ? 1 : 1 - (sat_b - SL.k.cp + w) / (2 * w);
+  SL.k.clp_tidy(); SR.k.clp_tidy();
+  vc_sat.chg(s + 2 * eng) ? (
+    !eng ? ( LP_.s1.bq_set(2, 2500, 0.7, 0.5 * s); RP_.s1.bq_set(2, 2500, 0.7, 0.5 * s);
+             LP_.s2.bq_set(3, 9000, 0.6, 0); RP_.s2.bq_set(3, 9000, 0.6, 0); )
+         : ( LP_.s1.bq_set(2, 100, 0.8, 1.5 * s); RP_.s1.bq_set(2, 100, 0.8, 1.5 * s);
+             LP_.s2.bq_set(3, 10000, 0.6, -1.5 * s); RP_.s2.bq_set(3, 10000, 0.6, -1.5 * s); );
+  );
+  // ---------- the Series 81 mod + space ----------
+  t8c_set(); t8d_set();
+  // ---------- OUTPUT ----------
+  out_t = vx_db(slider43) * (eng ? MATRIX_TRIM : 1);
+);
+// the model's fixed parts, set at the silent point of a swap
+function vx_model() (
+  !eng ? (
+    PL.pf.clp_pf_cfg(22000, 12000, -2.0, 120); PR.pf.clp_pf_cfg(22000, 12000, -2.0, 120); pkt.clp_kt_cfg(0.5, 0.9);
+    SL.pf.clp_pf_cfg(22000, 11000, -1.5, 100); SR.pf.clp_pf_cfg(22000, 11000, -1.5, 100); skt.clp_kt_cfg(0.5, 0.9);
+  ) : (
+    PL.pf.clp_pf_cfg(22000, 7500, -1.0, 80);  PR.pf.clp_pf_cfg(22000, 7500, -1.0, 80);  pkt.clp_kt_cfg(0.55, 1.0);
+    SL.pf.clp_pf_cfg(22000, 9000, -1.5, 90);  SR.pf.clp_pf_cfg(22000, 9000, -1.5, 90);  skt.clp_kt_cfg(0.6, 1.0);
+  );
+  pkt.kti = 0; skt.kti = 0;
+  t8c_voice(eng); t8d_set(); t8d_modset();
+  vc_pre.l = vc_sat.l = vc_e1.l = vc_e2.l = vc_e3.l = vc_e4.l = -12345;
+);
+
+// ================= the stages (one sample, both sides: in vx_l / vx_r) =================
+function st_lowcut() (
+  vx_l = LP_.hp.bq_run(vx_l); vx_r = RP_.hp.bq_run(vx_r);
+  vx_l = LP_.ls.bq_run(vx_l); vx_r = RP_.ls.bq_run(vx_r);
+);
+function st_eq() local(a, b) (
+  eq_w += (eq_on_t - eq_w) * xs_c;
+  eq_w > 0.000001 || eq_on_t ? (
+    a = LP_.e4.bq_run(LP_.e3.bq_run(LP_.e2.bq_run(LP_.e1.bq_run(vx_l)))); b = RP_.e4.bq_run(RP_.e3.bq_run(RP_.e2.bq_run(RP_.e1.bq_run(vx_r))));
+    vx_l += (a - vx_l) * eq_w; vx_r += (b - vx_r) * eq_w;
+  );
+);
+function st_dyn() local(sc, t, e, g, a, b, gl_, y1, y2) (
+  // ---- OPTO (stereo linked) ----
+  op_w += (op_on_t - op_w) * xs_c;
+  op_w > 0.000001 || op_on_t ? (
+    sc = max(abs(vx_l), abs(vx_r));
+    op_ms += (sc * sc - op_ms) * op_dc;
+    t = op_ms <= op_lin ? 0 : -op_sl * dy_curve(10 * log10(op_ms + 0.0000000001) + 3 - op_thr, op_kn);
+    op_ef += (t - op_ef) * (t < op_ef ? op_at : op_rf);
+    op_es += (t - op_es) * (t < op_es ? op_as : op_rs);
+    e = min(op_ef, op_es * op_sw);
+    op_mk += (op_mk_t - op_mk) * sm_c;
+    g = (e < -0.0000001 ? vx_db(e) : 1) * op_mk;
+    vx_l *= 1 + (g - 1) * op_w; vx_r *= 1 + (g - 1) * op_w;
+    op_grm = min(op_grm, e * op_w);
+  ) : ( op_ef = op_es = op_ms = 0; );
+  // ---- DE-ESS (split band, stereo linked) ----
+  ds_w += (ds_on_t - ds_w) * xs_c; ds_lw += (ds_lis_t - ds_lw) * xs_c;
+  ds_w > 0.000001 || ds_on_t ? (
+    ds_pa = LP_.ds.dsx_run(vx_l); ds_pb = RP_.ds.dsx_run(vx_r); a = LP_.ds.hi; b = RP_.ds.hi;
+    sc = max(abs(a), abs(b));
+    ds_env += (sc - ds_env) * (sc > ds_env ? ds_at : ds_rl);
+    // the band's power against the whole signal's (both sides): only sibilance stands out like this
+    ds_mh += (a * a + b * b - ds_mh) * ds_rc; ds_mf += (vx_l * vx_l + vx_r * vx_r - ds_mf) * ds_rc;
+    t = ds_env <= ds_lin || ds_mh <= 0.25118864 * ds_mf ? 0 :
+        min(ds_rng, dy_curve(20 * log10(ds_env + 0.000000001) - ds_thr, 6) * 0.75) * min((10 * log10(ds_mh / ds_mf) + 6) * 0.25, 1);
+    ds_gr += (t - ds_gr) * 0.5;
+    g = ds_gr > 0.0000001 ? vx_db(-ds_gr) - 1 : 0;
+    y1 = ds_pa + a * g; y2 = ds_pb + b * g;
+    y1 += (a - y1) * ds_lw; y2 += (b - y2) * ds_lw;           // LISTEN: the detector's band
+    vx_l = ds_pa + (y1 - ds_pa) * ds_w; vx_r = ds_pb + (y2 - ds_pb) * ds_w;
+    ds_grm = max(ds_grm, ds_gr * ds_w);
+  ) : ( vx_l = LP_.ds.dsx_apr(vx_l); vx_r = RP_.ds.dsx_apr(vx_r); ds_env = ds_gr = ds_mh = ds_mf = 0; );
+  // ---- FET (stereo linked), its colour grows with the gain it takes away ----
+  fet_w += (fet_on_t - fet_w) * xs_c;
+  fet_w > 0.000001 || fet_on_t ? (
+    sc = max(abs(vx_l), abs(vx_r));
+    t = sc <= fet_lin ? 0 : -fet_sl * dy_curve(20 * log10(sc + 0.000001) - fet_thr, 3);
+    fet_e += (t - fet_e) * (t < fet_e ? fet_ac : fet_rc);
+    fet_mk += (fet_mk_t - fet_mk) * sm_c;
+    g = fet_e < -0.0000001 ? vx_db(fet_e) : 1;
+    gl_ = 1 - g; gl_ *= gl_ * fet_col;
+    y1 = vx_l * g; y2 = vx_r * g;
+    a = min(y1 * y1, 4); b = min(y2 * y2, 4);
+    fet_m1 += (a - fet_m1) * ms_c; fet_m2 += (b - fet_m2) * ms_c;
+    y1 = (y1 + gl_ * (a - fet_m1)) * fet_mk; y2 = (y2 + gl_ * (b - fet_m2)) * fet_mk;
+    vx_l += (y1 - vx_l) * fet_w; vx_r += (y2 - vx_r) * fet_w;
+    fet_grm = min(fet_grm, fet_e * fet_w);
+  ) : ( fet_e = fet_m1 = fet_m2 = 0; );
+);
+
+// ================= presets =================
+// the whole unit apart from TRIM, GUARD and DRIFT
+function vx_dflt() (
+  slider1 = 0; slider2 = 0; slider5 = 1; slider6 = 30; slider7 = 60; slider8 = -2; slider9 = 240; slider10 = 1.5; slider11 = 0.8;
+  slider12 = 1; slider13 = 35; slider14 = 0; slider15 = 1; slider16 = 4500; slider17 = -28; slider18 = 6; slider19 = 0;
+  slider20 = 1; slider21 = 6; slider22 = 0; slider23 = 250; slider24 = 120; slider25 = 1; slider26 = 0; slider27 = 100; slider28 = 0;
+  slider29 = 25; slider30 = 0; slider31 = 1; slider32 = 100; slider33 = 60;
+  slider34 = 1; slider35 = 320; slider36 = 0; slider37 = 25; slider38 = 6000; slider39 = 0; slider40 = 15; slider41 = 50; slider43 = 0;
+  slider44 = -1.5; slider45 = 2800; slider46 = 0.8; slider47 = 0; slider48 = 9000; slider49 = 0;
+);
+// short setters: front end (model, drive, hpf, shelf), dynamics (opto pr, opto gain, de-ess freq, thr, range, fet amount,
+// ratio, attack, release), EQ (order; LF gain, freq, bell; LMF gain, freq, Q; HMF gain, freq, Q; HF gain, freq, bell),
+// saturation, chorus, delay (+ output)
+function p_fe(m, dr, hp, ls) ( slider1 = m; slider6 = dr; slider7 = hp; slider8 = ls; );
+function p_dy(pr, og, df, dt, dg, fa, fr, fat, frl) ( slider13 = pr; slider14 = og; slider16 = df; slider17 = dt; slider18 = dg; slider21 = fa; slider22 = fr; slider23 = fat; slider24 = frl; );
+function p_eq(od, lg, lf, lb, mg, mf, mq, hg, hf, hq, fg, ff, fb) (
+  slider2 = od; slider26 = lg; slider27 = lf; slider28 = lb; slider10 = mg; slider9 = mf; slider11 = mq;
+  slider44 = hg; slider45 = hf; slider46 = hq; slider47 = fg; slider48 = ff; slider49 = fb;
+);
+function p_sat(s) ( slider29 = s; );
+function p_ch(on, bt, wd, mx) ( slider30 = on; slider31 = bt; slider32 = wd; slider33 = mx; );
+function p_dl(on, t, sy, fb, tn, xf, mx, dk, ou) ( slider34 = on; slider35 = t; slider36 = sy; slider37 = fb; slider38 = tn; slider39 = xf; slider40 = mx; slider41 = dk; slider43 = ou; );
+#vx_pm = "Init|VFD Clean Pop Lead|VFD Chorus Verse|VFD Quarter Echo|VFD Bright Ballad|VFD Synth-Pop Double|Matrix Warm Lead|Matrix Dark Echo|Matrix Ensemble Backing|Matrix Spoken Word|Matrix Slap Rock|Neon Hybrid";
+function load_preset(p) local(k) (
+  vx_dflt();
+  p == 2  ? ( p_fe(0, 25, 70, -2); p_dy(30, 0, 4900, -27, 6, 8, 0, 200, 110); p_eq(0, 0, 100, 0, -1.5, 350, 1.2, 2.5, 3800, 1, 3, 11000, 0); p_sat(20);
+              p_dl(1, 0, 3, 18, 7000, 0, 10, 50, 0.60); ) :
+  p == 3  ? ( p_fe(0, 30, 60, -2); p_dy(35, 0, 4760, -28, 6, 6, 0, 250, 130); p_eq(0, 0, 100, 0, 1, 250, 0.9, 1.5, 3200, 1, 1.5, 10000, 0); p_sat(25);
+              p_ch(1, 1, 100, 60); p_dl(1, 380, 0, 22, 5500, 20, 12, 60, -0.06); ) :
+  p == 4  ? ( p_fe(0, 30, 70, -2); p_dy(35, 0, 4760, -28, 6, 7, 0, 250, 120); p_eq(0, 0, 100, 0, 0, 300, 1, 2, 3500, 1, 2, 10000, 0); p_sat(25);
+              p_dl(1, 0, 6, 35, 5000, 30, 22, 70, 0.12); ) :
+  p == 5  ? ( p_fe(0, 35, 70, -2.5); p_dy(40, 0, 5040, -26, 7, 9, 1, 150, 100); p_eq(0, 1.5, 170, 1, -2, 450, 1.4, 3.5, 3800, 1, 4, 11000, 0); p_sat(30);
+              p_ch(1, 0, 100, 40); p_dl(1, 0, 7, 30, 6500, 15, 16, 60, -0.34); ) :
+  p == 6  ? ( p_fe(0, 40, 80, -2); p_dy(30, 0, 4900, -26, 6, 10, 1, 150, 100); p_eq(0, 0, 100, 0, -2, 400, 1.2, 3, 3000, 1.2, 2.5, 9000, 0); p_sat(35);
+              p_ch(1, 3, 100, 70); p_dl(1, 0, 3, 15, 8000, 60, 14, 40, 0.02); ) :
+  p == 7  ? ( p_fe(1, 40, 70, -2); p_dy(45, 0, 4760, -30, 6, 6, 0, 300, 140); p_eq(0, 1.5, 110, 0, 2, 260, 0.8, -2, 2800, 0.7, -2, 8000, 0); p_sat(30);
+              p_dl(1, 300, 0, 20, 4500, 0, 12, 60, -1.24); ) :
+  p == 8  ? ( p_fe(1, 35, 60, -2); p_dy(50, 0, 4550, -28, 6, 7, 0, 300, 160); p_eq(0, 1, 120, 0, 1.5, 300, 1, -1.5, 3000, 0.8, -3, 7000, 0); p_sat(40);
+              p_dl(1, 0, 6, 40, 3000, 25, 22, 70, -1.40); ) :
+  p == 9  ? ( p_fe(1, 25, 80, -3); p_dy(55, 0, 4900, -32, 8, 8, 1, 300, 160); p_eq(0, -2, 150, 0, -3, 320, 1.2, -2, 2500, 0.8, -3, 7500, 0); p_sat(20);
+              p_ch(1, 2, 100, 70); p_dl(1, 0, 4, 20, 4000, 40, 12, 50, 1.39); ) :
+  p == 10 ? ( p_fe(1, 20, 80, -3); p_dy(40, 0, 5250, -32, 8, 5, 0, 250, 120); p_eq(0, -1, 150, 0, 2, 220, 0.8, 1, 3500, 0.8, -1, 9000, 0); p_sat(15);
+              p_dl(0, 320, 0, 25, 6000, 0, 15, 50, -0.15); ) :
+  p == 11 ? ( p_fe(1, 55, 70, -1.5); p_dy(45, 0, 4760, -26, 6, 12, 2, 120, 90); p_eq(0, 2, 180, 1, -2, 500, 1.2, 4, 3500, 0.9, 2, 10000, 0); p_sat(60);
+              p_dl(1, 110, 0, 10, 4000, 0, 22, 30, -2.64); ) :
+  p == 12 ? ( p_fe(0, 35, 70, -2); p_dy(40, 0, 4760, -28, 6, 7, 0, 250, 130); p_eq(1, 1, 120, 0, 1.5, 250, 0.9, 2.5, 3500, 1, 2, 10000, 0); p_sat(30);
+              p_ch(1, 2, 80, 50); p_dl(1, 0, 4, 30, 7000, 50, 16, 60, -0.78); );
+  p == 13 ? ( slider3 = 0; slider4 = 1; slider42 = 50; );
+  k = 1; loop(49, (p == 13 || (k != 3 && k != 4 && k != 42)) ? ui_auto(k); k += 1; );
+  pr_cur = p > 12 ? 1 : p;
+);
+
+// ================= start =================
+MATRIX_TRIM = 0.918;                                         // MATRIX level matched to VFD at Init (vocal test signal)
+eng = slider1 >= 0.5; ord = slider2 >= 0.5;
+vx_srinit();
+in_init();
+PL.k.clp_set(2, 1, 1, 0); PR.k.clp_set(2, 1, 1, 0); SL.k.clp_set(2, 1, 1, 0); SR.k.clp_set(2, 1, 1, 0);
+PL.pf.clp_pf_reset(); PR.pf.clp_pf_reset(); SL.pf.clp_pf_reset(); SR.pf.clp_pf_reset();
+ostL.ost_ch_init(); ostR.ost_ch_init();
+dr_hA.drift_init(0.8 + rand(0.4)); dr_hB.drift_init(0.8 + rand(0.4)); dr_sA.drift_init(0.8 + rand(0.4)); dr_sB.drift_init(0.8 + rand(0.4));
+t8c_dA.drift_init(0.8 + rand(0.5)); t8c_dB.drift_init(0.8 + rand(0.5)); t8c_dR.drift_init(0.8 + rand(0.5));
+t8d_dA.drift_init(0.8 + rand(0.5)); t8d_dB.drift_init(0.8 + rand(0.5));
+sup_a = rand(2) - 1; sup_b = rand(2) - 1;                    // the two sides never quite match
+t8c_ph = rand(1);
+gd_pre.gl_set(slider6 / 100); gd_hp.gl_set(slider7); gd_ls.gl_set(slider8);
+gd_lg.gl_set(slider26); gd_lf.gl_set(slider27); gd_mg.gl_set(slider10); gd_mf.gl_set(slider9); gd_mq.gl_set(slider11);
+gd_hg.gl_set(slider44); gd_hf.gl_set(slider45); gd_hq.gl_set(slider46); gd_fg.gl_set(slider47); gd_ff.gl_set(slider48);
+eLF.ty = slider28 >= 0.5; eLF.k = 1; eHF.ty = slider49 >= 0.5; eHF.k = 1;
+gd_op.gl_set(slider13 / 100); gd_df.gl_set(slider16); gd_fa.gl_set(slider21);
+gd_sa.gl_set(slider29 / 100);
+drift_macro(slider42);
+vx_model();
+vx_voice();
+op_mk = op_mk_t; fet_mk = fet_mk_t; out_g = out_t;
+pre_kl = pre_kr = pre_sl_ = pre_sr_ = pre_k; pre_mk = pre_mk_t; sat_mk = sat_mk_t; sat_kl = sat_kr = sat_sl_ = sat_sr_ = sat_k;
+t8c_init(); t8d_init();
+pre_w = pre_on_t; op_w = slider12 >= 0.5; ds_w = slider15 >= 0.5; fet_w = slider20 >= 0.5; eq_w = slider25 >= 0.5;
+sat_w = sat_on_t; t8c_fw = t8c_on; t8d_fw = t8d_on;
+dk = 1; dst = 0; du_g = 1; vx_dn = 0.000000000000000001;
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+0;
+
+@block
+srate != vx_sr ? ( vx_srinit(); in_init(); vx_model(); );
+in_setup(slider3, slider4 >= 0.5);
+drift_macro(slider42);
+// DRIFT: the heat (pre-amp, saturation), the chorus's clocks (Raum81's), the delay's clock (DLY81's)
+vx_di = dm_s * samplesblock / srate;
+dr_hA.drift_tick(0.15 * vx_di); dr_hB.drift_tick(0.11 * vx_di); dr_sA.drift_tick(0.13 * vx_di); dr_sB.drift_tick(0.09 * vx_di);
+t8c_dvA = 0.025 * dm_a * t8c_dA.drift_tick(0.2 * vx_di);
+t8c_dvB = 0.025 * dm_a * t8c_dB.drift_tick(0.2 * vx_di);
+t8c_rv  = 0.04  * dm_a * t8c_dR.drift_tick(0.2 * vx_di);
+t8d_vA = t8d_dA.drift_tick(0.2 * vx_di); t8d_vB = t8d_dB.drift_tick(0.2 * vx_di);
+// a MODEL or ORDER change: duck, swap at the silent point, fade back in (the voicing is rebuilt in the gap)
+dst == 0 && ((slider1 >= 0.5) != eng || (slider2 >= 0.5) != ord) ? dst = 1;
+dst == 2 ? ( vx_model(); dst = 3; );
+op_on_t = slider12 >= 0.5; ds_on_t = slider15 >= 0.5; ds_lis_t = slider19 >= 0.5; fet_on_t = slider20 >= 0.5; eq_on_t = slider25 >= 0.5;
+vx_gb = 1 - exp(-max(samplesblock, 1) / (0.03 * srate));   // the knob glides (30 ms), from this block's length
+vx_voice();
+// per side: the heat's wander (DRIFT) on the pre-amp and the saturation
+pre_kl = pre_k * (1 + dm_a * (0.05 * dr_hA.v + 0.015 * sup_a)); pre_kr = pre_k * (1 + dm_a * (0.05 * dr_hB.v + 0.015 * sup_b));
+sat_kl = sat_k * (1 + dm_a * (0.05 * dr_sA.v + 0.015 * sup_b)); sat_kr = sat_k * (1 + dm_a * (0.05 * dr_sB.v + 0.015 * sup_a));
+// the duck's target from the voice's envelope (per block)
+du_lv = 20 * log10(du_env + 0.0000001);
+du_t = vx_db(-t8d_dk * min(max((du_lv + 42) / 18, 0), 1));
+// meters (mailboxes: raised here, read and cleared on the panel)
+mb_op = min(mb_op, op_grm); mb_fet = min(mb_fet, fet_grm); mb_ds = max(mb_ds, ds_grm); mb_du = min(mb_du, 20 * log10(du_g + 0.000001) * t8d_fw);
+op_grm = 0; fet_grm = 0; ds_grm = 0;
+// housekeeping (denormals)
+abs(op_ms) < 0.000000000001 ? op_ms = 0; abs(ds_env) < 0.000000000001 ? ds_env = 0; abs(du_env) < 0.000000000001 ? du_env = 0;
+abs(fet_m1) < 0.000000000001 ? fet_m1 = 0; abs(fet_m2) < 0.000000000001 ? fet_m2 = 0;
+// the delay idle: once the feed is off and the tail has died away, stop running it
+t8d_idle = !t8d_on && t8d_fw < 0.000001 && t8d_pk < 0.000001; t8d_pk = 0;
+t8d_idle && !t8d_clr ? ( t8d_clear(); t8d_clr = 1; ); !t8d_idle ? t8d_clr = 0;
+ost_setup(0, 0, 120, 6000, -0.3, 1);                  // the house output stage: CLIP always on (a character unit), no band SAT
+pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;        // no latency
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+in_process(spl0, spl1);
+vx_dn = -vx_dn;
+vx_l = in_l + vx_dn; vx_r = in_r + vx_dn;
+pk_in = max(pk_in, max(abs(in_l), abs(in_r)));
+
+// ---------- PREAMP ----------
+pre_w += (pre_on_t - pre_w) * xs_c;
+pre_w > 0.000001 || pre_on_t ? (
+  pre_sl_ += (pre_kl - pre_sl_) * sm_c; pre_sr_ += (pre_kr - pre_sr_) * sm_c;     // the drive glides per sample
+  pre_mk += (pre_mk_t - pre_mk) * sm_c;
+  pr_a = PL.pre_run(LP_.pe.bq_run(vx_l), pre_sl_) * pre_mk; pr_b = PR.pre_run(RP_.pe.bq_run(vx_r), pre_sr_) * pre_mk;
+  vx_l += (pr_a - vx_l) * pre_w; vx_r += (pr_b - vx_r) * pre_w;
+);
+// ---------- LOW END ----------
+st_lowcut();
+// ---------- EQ / DYNAMICS in the chosen order ----------
+ord ? ( st_eq(); st_dyn(); ) : ( st_dyn(); st_eq(); );
+// ---------- SATURATION ----------
+sat_w += (sat_on_t - sat_w) * xs_c;
+sat_w > 0.000001 || sat_on_t ? (
+  sat_sl_ += (sat_kl - sat_sl_) * sm_c; sat_sr_ += (sat_kr - sat_sr_) * sm_c;
+  sat_mk += (sat_mk_t - sat_mk) * sm_c;
+  pr_a = SL.sat_run(LP_.s2.bq_run(LP_.s1.bq_run(vx_l)), sat_sl_) * sat_mk; pr_b = SR.sat_run(RP_.s2.bq_run(RP_.s1.bq_run(vx_r)), sat_sr_) * sat_mk;
+  vx_l += (pr_a - vx_l) * sat_w; vx_r += (pr_b - vx_r) * sat_w;
+);
+// the voice's envelope for DUCK (before the effects)
+du_x = max(abs(vx_l), abs(vx_r));
+du_env += (du_x - du_env) * (du_x > du_env ? du_at : du_rl);
+
+// ---------- the Series 81 mod + space: CHORUS, DELAY (added; rings out when switched out; DUCK on its return) ----------
+t8c_run();
+t8d_run();
+
+// ---------- MODEL / ORDER change: duck, swap at the silent point, fade back in ----------
+dst == 1 ? ( dk -= dkr; dk <= 0 ? ( dk = 0; eng = slider1 >= 0.5; ord = slider2 >= 0.5; dst = 2; ); ) :
+dst == 3 ? ( dk += dkr; dk >= 1 ? ( dk = 1; dst = 0; ); );
+dst ? ( dkg = dk * dk * (3 - 2 * dk); vx_l *= dkg; vx_r *= dkg; );
+
+// ---------- OUTPUT: level, the house output stage (CLIP always on) ----------
+out_g += (out_t - out_g) * sm_c;
+vx_l = ostL.ost_band(vx_l * out_g); vx_r = ostR.ost_band(vx_r * out_g);
+ost_out(vx_l, vx_r);
+spl0 = ost_l; spl1 = ost_r;
+pk_out = max(pk_out, max(abs(spl0), abs(spl1)));
+
+@gfx 1200 600
+ui_begin(1200, 600);
+// =====================================================================================================================
+// the faceplate: Series 81, drawn with the series' own parts (as SUM 81 / DRIVE81 / RAUM81 draw them): the header with
+// the GFX badge, the sections, the lit keys, the VFD rubber knobs or the MATRIX satin-silver knobs (the house colour code
+// on the EQ / filter caps), segment and LED-block meters, glass read-outs. The model sets the look and the language:
+// VFD charcoal with the cyan vacuum-fluorescent glow, English; MATRIX battleship grey, mustard lamps, LED blocks, German.
+// The modules run left to right in signal order: the top row, then the bottom row.
+// =====================================================================================================================
+k8_m = slider1 >= 0.5;
+k8_m ? (                                                // MATRIX: battleship grey, black linework, mustard lamps
+  K8P = 0x222528; K8F = ui_mix(K8P, 0x000000, 0.22); K8H = ui_mix(K8P, 0x000000, 0.32);
+  K8I = 0xC7BEB3; K8I2 = ui_mix(0xC7BEB3, K8P, 0.38); K8A = 0xD4A373; K8L = 0x0B0C0D; K8G = 0x0E0F10; K8O = 0x2C302E;
+) : (                                                   // VFD: charcoal slate, cyan vacuum-fluorescent glow
+  K8P = 0x181A1B; K8F = 0x131516; K8H = 0x0F1112;
+  K8I = 0xD5DCDE; K8I2 = 0x7D888C; K8A = 0x4EE1DC; K8L = 0x2E3235; K8G = 0x070808; K8O = 0x2A2D30;
+);
+K8_LF = 0x7A4A2A; K8_LMF = 0x2F5FA8; K8_HMF = 0x2F7D46; K8_HF = 0xC0302A; K8_HPF = 0xE0B52A; K8_LPF = 0x1C1C1E;
+gfx_setfont(11, "Trebuchet MS", 12 * sc, 'b');          // small print, section titles' second line
+gfx_setfont(12, "Trebuchet MS", 13 * sc, 'b');          // key captions, section titles
+gfx_setfont(13, "Courier New", 15 * sc, 'b');           // the read-outs
+gfx_setfont(14, "Trebuchet MS", 13.5 * sc, 'b');        // knob names and values
+gfx_setfont(15, "Trebuchet MS", 27 * sc, 'b');          // the name
+
+function k8_r(x, y, w, h) ( gfx_rect(x * sc, y * sc, w * sc, h * sc); );
+function k8_t(x, y, s) ( gfx_x = x * sc; gfx_y = y * sc; gfx_drawstr(s); );
+function k8_ct(cx, cy, s) local(tw, th) ( gfx_measurestr(s, tw, th); gfx_x = floor(cx * sc - tw * 0.5 + 0.5); gfx_y = floor(cy * sc - th * 0.5 + 0.5); gfx_drawstr(s); );
+function k8_lt(lx, cy, s) local(tw, th) ( gfx_measurestr(s, tw, th); gfx_x = lx * sc; gfx_y = floor(cy * sc - th * 0.5 + 0.5); gfx_drawstr(s); );
+function k8_hov(x, y, w, h) ( mouse_x >= x * sc && mouse_x < (x + w) * sc && mouse_y >= y * sc && mouse_y < (y + h) * sc; );
+function k8_set(idx, v) ( slider(idx) = v; ui_auto(idx); );
+// English (VFD) or German (MATRIX)
+function k8_s(en, de) ( k8_m ? de : en; );
+// German prints decimal commas
+function k8_dec(s) local(i) ( k8_m ? ( i = 0; loop(strlen(s), str_getchar(s, i) == '.' ? str_setchar(s, i, ','); i += 1; ); ); s; );
+function k8_hz(dst, f) ( f >= 1000 ? sprintf(dst, "%.2f kHz", f / 1000) : sprintf(dst, "%.0f Hz", f); k8_dec(dst); );
+
+// a section: MATRIX a sharp face with a black frame; VFD a shallow recess
+function k8_sect(x, y, w, h) (
+  k8_m ? ( ui_col(K8L); k8_r(x, y, w, h); ui_col(K8F); k8_r(x + 2, y + 2, w - 4, h - 4); )
+       : pk_inset((x + 3) * sc, (y + 3) * sc, (w - 6) * sc, (h - 6) * sc, K8F);
+);
+// a module: the section, its title with the accent rule under it (as the series' unit plates)
+function k8_mod(x, y, w, h, title) local(tw, th) (
+  k8_sect(x, y, w, h);
+  gfx_setfont(12); ui_col(K8I); k8_t(x + 12, y + 9, title);
+  gfx_measurestr(title, tw, th);
+  ui_col(K8A); k8_r(x + 12, y + 27, tw / sc, k8_m ? 2 : 1.5);
+  !k8_m ? ( ui_cola(K8A, 0.25); k8_r(x + 12, y + 26, tw / sc, 3.5); );
+);
+// a lit key: MATRIX a mustard block key, VFD a rubber key lit in the display colour; returns 1 on a click
+function k8_key(x, y, w, h, lbl, on) local(hov, hit) (
+  hov = k8_hov(x, y, w, h); hit = hov && pressed && drag_id == 0; hit ? drag_id = -1;
+  k8_m ? (
+    on ? ( ui_cola(K8A, 0.22); k8_r(x - 3, y - 3, w + 6, h + 6); );
+    ui_col(0x0B0C0D); k8_r(x, y, w, h);
+    ui_col(on ? K8A : hov ? 0x353A37 : K8O); k8_r(x + 1.5, y + 1.5, w - 3, h - 4);
+    ui_cola(0xFFFFFF, on ? 0.3 : 0.08); k8_r(x + 1.5, y + 1.5, w - 3, 1);
+    ui_col(on ? 0x17191B : K8I);
+  ) : (
+    ui_cola(0x000000, 0.55); rd_rr((x + 0.5) * sc, (y + 2) * sc, w * sc, h * sc, 5 * sc);
+    on ? ( ui_cola(K8A, 0.18); rd_rr((x - 3) * sc, (y - 3) * sc, (w + 6) * sc, (h + 6) * sc, 7 * sc); );
+    ui_col(0x0A0B0C); rd_rr(x * sc, y * sc, w * sc, h * sc, 5 * sc);
+    ui_col(on ? ui_mix(K8A, 0x000000, 0.12) : hov ? 0x34383B : 0x2A2D30); rd_rr((x + 1) * sc, (y + 1) * sc, (w - 2) * sc, (h - 2) * sc, 4 * sc);
+    ui_col(on ? 0x0B0C0D : 0xB4BDC0);
+  );
+  gfx_setfont(k8_kf ? k8_kf : 12); k8_ct(x + w * 0.5, y + h * 0.5 + 0.5, lbl);
+  hit;
+);
+// a module's IN key (lit while the stage is in)
+function k8_in(x, y, idx) ( k8_key(x, y, 46, 22, k8_s("IN", "EIN"), slider(idx) >= 0.5) ? k8_set(idx, slider(idx) >= 0.5 ? 0 : 1); );
+// a key that flashes while pressed (the ORDER key)
+function k8_okey(x, y, w, h, s) instance(t) local(hit) ( hit = k8_key(x, y, w, h, s, time_precise() - t < 0.25); hit ? t = time_precise(); hit; );
+// a smooth thick arc and a pointer (pixels)
+function k8_arcw(cx, cy, r, a1, a2, w) local(k) ( k = -w * 0.5; loop(max(1, floor(w * 2) + 1), gfx_arc(cx, cy, r + k, a1, a2, 1); k += 0.5; ); );
+function k8_ptr(cx, cy, a, r1, r2, w) local(ca, sa, k) (
+  ca = sin(a); sa = -cos(a); k = -w * 0.5;
+  loop(max(1, floor(w * 2) + 1), gfx_line(cx + ca * r1 - sa * k, cy + sa * r1 + ca * k, cx + ca * r2 - sa * k, cy + sa * r2 + ca * k, 1); k += 0.5; );
+);
+// a knob: VFD a black rubber knob with its value arc glowing in the display colour; MATRIX a satin-silver face on a
+// dark skirt with printed ticks. k8_kc = a house colour code: the VFD knob gets a cap of that colour, the MATRIX face
+// is that colour. Drag (SHIFT fine), double-click / Ctrl-click = default, wheel. Its name below; the value takes its
+// place while it is touched. k8_off = 1 greys the name (a control the setting leaves out of the path).
+function k8_knob(cx, cy, r, idx, lo, hi, def, lg, label, fmt, stp) local(v, n, dx, dy, hov, did, a, i, t, rr, x, y, k, pc, tw, th, act) (
+  did = 4000 + idx; v = slider(idx);
+  dx = mouse_x - cx * sc; dy = mouse_y - cy * sc; hov = dx * dx + dy * dy <= sqr((r + 6) * sc);
+  pressed && hov && drag_id == 0 ? (
+    (time_precise() - k8_lt < 0.35 && k8_lid == idx && !k8_mv) || (mouse_cap & 4) ? ( k8_set(idx, def); drag_id = -1; k8_lt = 0; ) : (
+      drag_id = did; k8_ky = mouse_y; k8_ky0 = mouse_y; k8_mv = 0; k8_lt = time_precise(); k8_lid = idx;
+      k8_kn = lg ? log(v / lo) / log(hi / lo) : (v - lo) / (hi - lo);
+    );
+  );
+  drag_id == did && !k8_mv && abs(mouse_y - k8_ky0) > 3 * sc ? ( k8_mv = 1; k8_ky = mouse_y; );
+  drag_id == did && k8_mv ? (
+    k8_kn = min(max(k8_kn + (k8_ky - mouse_y) / (((mouse_cap & 8) ? 1200 : 220) * sc), 0), 1); k8_ky = mouse_y;
+    v = lg ? lo * (hi / lo) ^ k8_kn : lo + k8_kn * (hi - lo);
+    stp > 0 ? v = lo + floor((v - lo) / stp + 0.5) * stp;
+    slider(idx) != v ? k8_set(idx, v);
+  );
+  hov && mouse_wheel != 0 && drag_id == 0 ? (
+    n = lg ? log(v / lo) / log(hi / lo) : (v - lo) / (hi - lo);
+    n = min(max(n + mouse_wheel / 120 * (stp > 0 && !lg ? stp / (hi - lo) : ((mouse_cap & 8) ? 0.005 : 0.025)), 0), 1);
+    v = lg ? lo * (hi / lo) ^ n : lo + n * (hi - lo);
+    stp > 0 ? v = lo + floor((v - lo) / stp + 0.5) * stp;
+    k8_set(idx, v); mouse_wheel = 0;
+  );
+  v = slider(idx); n = lg ? log(v / lo) / log(hi / lo) : (v - lo) / (hi - lo); n = min(max(n, 0), 1);
+  a = -0.75 * $pi + n * 1.5 * $pi;
+  x = cx * sc; y = cy * sc; rr = r * sc; k = k8_kc;
+  pc = (k & 255) + ((k >> 8) & 255) + ((k >> 16) & 255) > 380 ? 0x141416 : 0xF4F0E6;
+  k8_m ? (
+    ui_col(K8I2); i = 0;
+    loop(11, t = -0.75 * $pi + i * 0.15 * $pi;
+      gfx_line(x + sin(t) * (rr + 4 * sc), y - cos(t) * (rr + 4 * sc), x + sin(t) * (rr + (i == 0 || i == 5 || i == 10 ? 9 : 7) * sc), y - cos(t) * (rr + (i == 0 || i == 5 || i == 10 ? 9 : 7) * sc), 1);
+      i += 1; );
+    ui_cola(0x000000, 0.35); gfx_circle(x + 1.5 * sc, y + 3 * sc, rr, 1, 1);
+    ui_col(0x1A1B1E); gfx_circle(x, y, rr, 1, 1);
+    k ? (
+      ui_col(k == K8_LPF ? 0x5B6168 : ui_mix(k, 0x000000, 0.4)); gfx_circle(x, y, rr * 0.8, 1, 1);
+      ui_col(k); gfx_circle(x, y, rr * 0.8 - 1.2 * sc, 1, 1);
+      ui_cola(0xFFFFFF, 0.3); k8_arcw(x, y, rr * 0.8 - 2.6 * sc, -0.66 * $pi, 0.06 * $pi, 1.3 * sc);
+      ui_col(pc);
+    ) : (
+      ui_col(0x5B6168); gfx_circle(x, y, rr * 0.8, 1, 1);
+      ui_col(0xB7BCC2); gfx_circle(x, y, rr * 0.8 - 1.2 * sc, 1, 1);
+      ui_col(0xDCDFE3); k8_arcw(x, y, rr * 0.8 - 2.6 * sc, -0.66 * $pi, 0.06 * $pi, 1.3 * sc);
+      ui_col(0x141416);
+    );
+    k8_ptr(x, y, a, rr * 0.2, rr * 0.95, 2 * sc);
+  ) : (
+    t = rr + 5 * sc;
+    ui_col(0x2A2E30); k8_arcw(x, y, t, -0.75 * $pi, 0.75 * $pi, 1.4 * sc);
+    n > 0.004 ? (
+      ui_col(ui_mix(K8A, K8F, 0.78)); k8_arcw(x, y, t, -0.75 * $pi, a, 5 * sc);
+      ui_col(K8A); k8_arcw(x, y, t, -0.75 * $pi, a, 2.2 * sc);
+    );
+    ui_cola(0x000000, 0.5); gfx_circle(x + 1.5 * sc, y + 3 * sc, rr, 1, 1);
+    ui_col(0x090A0B); gfx_circle(x, y, rr, 1, 1);
+    ui_col(0x1B1E20); gfx_circle(x, y, rr - 1.5 * sc, 1, 1);
+    ui_col(0x34383B); k8_arcw(x, y, rr - 2.5 * sc, -0.66 * $pi, 0.06 * $pi, 1.2 * sc);
+    k ? (
+      ui_col(k == K8_LPF ? 0x4A4E52 : ui_mix(k, 0x000000, 0.35)); gfx_circle(x, y, rr * 0.6, 1, 1);
+      ui_col(k); gfx_circle(x, y, rr * 0.6 - 1 * sc, 1, 1);
+      ui_cola(0xFFFFFF, 0.18); gfx_circle(x - rr * 0.18, y - rr * 0.2, rr * 0.22, 1, 1);
+      ui_col(pc); k8_ptr(x, y, a, rr * 0.12, rr - 4 * sc, 2 * sc);
+    ) : (
+      ui_col(ui_mix(K8A, 0xFFFFFF, 0.35)); k8_ptr(x, y, a, rr * 0.3, rr - 4 * sc, 2 * sc);
+    );
+  );
+  act = hov || drag_id == did;
+  act ? ( ui_cola(0xFFFFFF, 0.07); gfx_circle(x, y, (r + 3) * sc, 1, 1); );
+  gfx_setfont(14);
+  act ? (
+    strlen(fmt) ? sprintf(#k8_vv, fmt, v) : strcpy(#k8_vv, #k8_vs); k8_dec(#k8_vv);
+    gfx_measurestr(#k8_vv, tw, th);
+    ui_col(K8G); gfx_rect(x - tw * 0.5 - 5 * sc, (cy + r + 17) * sc - th * 0.5 - 1 * sc, tw + 10 * sc, th + 2 * sc);
+    ui_col(K8A); k8_ct(cx, cy + r + 17, #k8_vv);
+  ) : (
+    ui_col(k8_off ? K8I2 : K8I); k8_ct(cx, cy + r + 17, label);
+  );
+);
+// a glass read-out window: MATRIX black glass in a black bezel, VFD smoked glass with a faint glow
+function k8_glass(x, y, w, h) (
+  k8_m ? (
+    ui_col(K8L); k8_r(x - 2, y - 2, w + 4, h + 4); ui_col(K8G); k8_r(x, y, w, h); ui_cola(0xFFFFFF, 0.05); k8_r(x, y, w, h * 0.4);
+  ) : (
+    ui_col(0x2E3235); k8_r(x - 1, y - 1, w + 2, h + 2); ui_col(K8G); k8_r(x, y, w, h);
+    ui_cola(K8A, 0.035); k8_r(x, y, w, h); ui_cola(0xFFFFFF, 0.04); k8_r(x, y, w, 1);
+  );
+);
+function k8_lcd(x, y, w, h, s) ( k8_glass(x, y, w, h); gfx_setfont(13); ui_col(K8A); k8_lt(x + 9, y + h * 0.5 + 0.5, s); );
+// a drop-down in a glass window: the current item in the display colour, an arrow; a click opens the list
+function k8_drop(x, y, w, h, idx, menu) local(hov, i, n, cur) (
+  hov = k8_hov(x, y, w, h); n = pk_pcount(menu); cur = slider(idx) | 0;
+  k8_glass(x, y, w, h);
+  hov ? ( ui_cola(0xFFFFFF, 0.06); k8_r(x, y, w, h); );
+  gfx_setfont(12); ui_col(K8A); pk_pitem(menu, cur + 1, #k8_di); k8_lt(x + 9, y + h * 0.5 + 0.5, #k8_di);
+  gfx_triangle((x + w - 18) * sc, (y + h * 0.5 - 3) * sc, (x + w - 8) * sc, (y + h * 0.5 - 3) * sc, (x + w - 13) * sc, (y + h * 0.5 + 3) * sc);
+  hov && pressed && drag_id == 0 ? (
+    drag_id = -1;
+    strcpy(#k8_dm, ""); i = 1;
+    loop(n, i == cur + 1 ? strcat(#k8_dm, "!"); strcat(#k8_dm, pk_pitem(menu, i, #k8_dt)); i < n ? strcat(#k8_dm, "|"); i += 1; );
+    gfx_x = x * sc + ui_mdx; gfx_y = (y + h) * sc + ui_mdy; i = gfx_showmenu(#k8_dm); i > 0 ? k8_set(idx, i - 1);
+  );
+);
+// a horizontal segment meter (x, y, w, h), lit to q (0 .. 1): VFD glowing segments with their ghosts (the top ones
+// orange from wz), MATRIX LED blocks (green, amber from wz, red at the top); gr = 1: one colour (gain reduction)
+function k8_bar(x, y, w, h, n, q, wz, gr) local(i, sw, p, lit, c, sx) (
+  k8_glass(x, y, w, h);
+  sw = (w - 4) / n; i = 0;
+  loop(n,
+    sx = x + 2 + i * sw; p = (i + 0.5) / n; lit = q >= p;
+    k8_m ? (
+      c = gr ? 0xD4A373 : p >= 0.92 ? 0xBC3908 : p >= wz ? 0xD4A373 : 0x2E9A58;
+      ui_col(lit ? c : ui_mix(c, 0x000000, 0.8)); k8_r(sx + 0.8, y + 2, sw - 1.6, h - 4);
+      lit ? ( ui_cola(0xFFFFFF, 0.25); k8_r(sx + 0.8, y + 2, sw - 1.6, 1); );
+    ) : (
+      c = gr ? K8A : p >= 0.92 ? 0xFF4A2A : p >= wz ? 0xFF8C00 : K8A;
+      lit ? ( ui_cola(c, 0.2); k8_r(sx, y + 1, sw, h - 2); ui_col(c); ) : ui_col(ui_mix(c, 0x070808, 0.9));
+      k8_r(sx + 0.8, y + 2, sw - 1.6, h - 4);
+    );
+    i += 1;
+  );
+);
+// a status lamp (x, y = centre)
+function k8_lamp(x, y, r, on, col) (
+  on ? ( ui_cola(col, 0.25); gfx_circle(x * sc, y * sc, (r + 4) * sc, 1, 1); );
+  ui_col(0x050606); gfx_circle(x * sc, y * sc, (r + 1.2) * sc, 1, 1);
+  ui_col(on ? col : ui_mix(col, 0x000000, 0.8)); gfx_circle(x * sc, y * sc, r * sc, 1, 1);
+  on ? ( ui_cola(0xFFFFFF, 0.6); gfx_circle((x - r * 0.3) * sc, (y - r * 0.3) * sc, r * 0.3 * sc, 1, 1); );
+);
+function k8_small(cx, y, s) ( gfx_setfont(11); ui_col(K8I2); k8_ct(cx, y, s); );
+function k8_cap(cx, y, s) ( gfx_setfont(14); ui_col(K8I); k8_ct(cx, y, s); );
+// a gain-reduction meter with its label: 0 .. 20 dB
+function k8_grm(x, y, w, gr, lbl) (
+  gfx_setfont(11); ui_col(K8I2); k8_lt(x, y + 7, lbl);
+  k8_bar(x + 34, y, w - 34, 14, 20, min(max(gr, 0), 20) / 20, 1, 1);
+);
+
+// ---------- the modules (x, y = the section's top left) ----------
+function m_pre(x, y) (
+  k8_mod(x, y, 140, 272, k8_s("PREAMP", "VORSTUFE")); k8_in(x + 84, y + 8, 5);
+  k8_knob(x + 70, y + 96, 27, 6, 0, 100, 30, 0, k8_s("DRIVE", "ANTRIEB"), "%.0f%%", 0);
+  k8_knob(x + 36, y + 190, 15, 3, -24, 12, 0, 0, k8_s("TRIM", "EINGANG"), "%+.1f dB", 0);
+  k8_key(x + 70, y + 168, 58, 22, k8_s("GUARD", "SCHUTZ"), slider4 >= 0.5) ? k8_set(4, slider4 >= 0.5 ? 0 : 1);
+  k8_lamp(x + 99, y + 204, 3.5, slider4 >= 0.5 && g_grd > 0.5, 0xFF3A2A);
+  k8_small(x + 70, y + 252, k8_s("IC · TRANSISTOR", "ÜBERTRAGER"));
+);
+function m_low(x, y) (
+  k8_mod(x, y, 104, 272, k8_s("LOW END", "TIEFEN"));
+  slider7 <= 20.5 ? strcpy(#k8_vs, k8_s("OFF", "AUS")) : sprintf(#k8_vs, "%.0f Hz", slider7);
+  k8_kc = K8_HPF; k8_knob(x + 52, y + 90, 20, 7, 20, 80, 60, 0, k8_s("HIGH-PASS", "HOCHPASS"), "", 0);
+  k8_kc = K8_LF; k8_knob(x + 52, y + 184, 20, 8, -3, 0, -2, 0, k8_s("SHELF", "ABSENK."), "%.1f dB", 0); k8_kc = 0;
+  k8_small(x + 52, y + 252, k8_s("150 Hz SHELF", "BEI 150 Hz"));
+);
+function m_opto(x, y) (
+  k8_mod(x, y, 150, 272, "OPTO"); k8_in(x + 94, y + 8, 12);
+  k8_knob(x + 75, y + 90, 25, 13, 0, 100, 35, 0, k8_s("PEAK REDUCTION", "REDUKTION"), "%.0f%%", 0);
+  k8_knob(x + 75, y + 180, 15, 14, -10, 10, 0, 0, k8_s("GAIN", "PEGEL"), "%+.1f dB", 0);
+  k8_grm(x + 12, y + 240, 126, slider12 >= 0.5 ? -g_op : 0, "GR");
+);
+function m_dess(x, y) (
+  k8_mod(x, y, 160, 272, k8_s("DE-ESS", "ENTZISCHER")); k8_in(x + 104, y + 8, 15);
+  k8_hz(#k8_vs, slider16); k8_kc = K8_HF; k8_knob(x + 42, y + 90, 19, 16, 4000, 10000, 4500, 1, "FREQ", "", 0); k8_kc = 0;
+  k8_knob(x + 118, y + 90, 19, 17, -50, 0, -28, 0, k8_s("THRESH", "SCHWELLE"), "%.1f dB", 0);
+  k8_knob(x + 42, y + 186, 16, 18, 0, 12, 6, 0, k8_s("RANGE", "BEREICH"), "%.1f dB", 0);
+  k8_key(x + 86, y + 168, 64, 22, k8_s("LISTEN", "ABHÖREN"), slider19 >= 0.5) ? k8_set(19, slider19 >= 0.5 ? 0 : 1);
+  sprintf(#k8_v, "-%.1f dB", g_ds); k8_dec(#k8_v); k8_small(x + 126, y + 212, slider15 >= 0.5 ? #k8_v : k8_s("OUT", "AUS"));
+  k8_lamp(x + 92, y + 212, 4, slider15 >= 0.5 && g_ds > 1, k8_m ? 0xD4A373 : 0xFF8C00);
+);
+function m_fet(x, y) local(i) (
+  k8_mod(x, y, 186, 272, "FET"); k8_in(x + 130, y + 8, 20);
+  k8_knob(x + 48, y + 92, 24, 21, 0, 24, 6, 0, k8_s("AMOUNT", "MENGE"), "%.1f dB", 0);
+  i = 0; loop(4,
+    k8_key(x + 98 + (i % 2) * 42, y + 46 + floor(i / 2) * 30, 38, 24, i == 0 ? "4" : i == 1 ? "8" : i == 2 ? "12" : "20", (slider22 | 0) == i) ? k8_set(22, i);
+    i += 1; );
+  k8_cap(x + 137, y + 120, "RATIO");
+  k8_knob(x + 50, y + 186, 15, 23, 20, 800, 250, 1, k8_s("ATTACK", "ANSTIEG"), "%.0f us", 0);
+  k8_knob(x + 134, y + 186, 15, 24, 50, 1100, 120, 1, k8_s("RELEASE", "RÜCKLAUF"), "%.0f ms", 0);
+  k8_grm(x + 12, y + 240, 162, slider20 >= 0.5 ? -g_fet : 0, "GR");
+);
+// the EQ: four columns (LF, LMF, HMF, HF), each GAIN, FREQ and Q (LF / HF: their SHELF / BELL keys), in the band's colour
+function k8_eqcol(cx, y, nm, cap, ig, iff, flo, fhi, fdf, iq, ik, gdf) (
+  gfx_setfont(12); ui_col(cap == K8_LPF ? K8I : ui_mix(cap, 0xFFFFFF, 0.45)); k8_ct(cx, y + 44, nm);
+  k8_kc = cap; k8_knob(cx, y + 86, 18, ig, -15, 15, gdf, 0, k8_s("GAIN", "PEGEL"), "%+.1f dB", 0);
+  k8_hz(#k8_vs, slider(iff)); k8_kc = cap; k8_knob(cx, y + 162, 16, iff, flo, fhi, fdf, 1, "FREQ", "", 0);
+  iq > 0 ? ( k8_kc = cap; k8_knob(cx, y + 230, 12, iq, 0.4, 4, 0.8, 1, k8_s("Q", "GÜTE"), "%.2f", 0); ) : (
+    k8_kf = 11;
+    k8_key(cx - 42, y + 210, 84, 22, k8_s("SHELF", "KUHSCHWANZ"), slider(ik) < 0.5) ? k8_set(ik, 0);
+    k8_key(cx - 42, y + 238, 84, 22, k8_s("BELL", "GLOCKE"), slider(ik) >= 0.5) ? k8_set(ik, 1);
+    k8_kf = 0;
+  );
+  k8_kc = 0;
+);
+function m_eq(x, y) (
+  k8_mod(x, y, 376, 272, k8_s("EQ", "ENTZERRER")); k8_in(x + 320, y + 8, 25);
+  k8_small(k8_m ? x + 200 : x + 176, y + 19, k8_s("PROPORTIONAL Q · CRISP TOP", "BREIT · PULT · SANFT"));
+  ui_cola(K8I2, 0.3); k8_r(x + 96, y + 38, 1, 222); k8_r(x + 188, y + 38, 1, 222); k8_r(x + 280, y + 38, 1, 222);
+  k8_eqcol(x + 50, y, k8_s("LF", "TIEFEN"), K8_LF, 26, 27, 30, 450, 100, 0, 28, 0);
+  k8_eqcol(x + 142, y, k8_s("LMF", "T-MITTEN"), K8_LMF, 10, 9, 120, 2000, 240, 11, 0, 1.5);
+  k8_eqcol(x + 234, y, k8_s("HMF", "H-MITTEN"), K8_HMF, 44, 45, 600, 8000, 2800, 46, 0, -1.5);
+  k8_eqcol(x + 326, y, k8_s("HF", "HÖHEN"), K8_HF, 47, 48, 1500, 16000, 9000, 0, 49, 0);
+);
+function m_sat(x, y) (
+  k8_mod(x, y, 136, 244, k8_s("SATURATION", "SÄTTIGUNG"));
+  k8_knob(x + 68, y + 106, 28, 29, 0, 100, 25, 0, k8_s("AMOUNT", "MENGE"), "%.0f%%", 0);
+  k8_small(x + 68, y + 184, k8_s("IC RAIL", "ÜBERTRAGER"));
+  k8_small(x + 68, y + 202, slider29 > 0.05 ? "" : k8_s("OUT", "AUS"));
+);
+function m_chor(x, y) local(i) (
+  k8_mod(x, y, 318, 244, "CHORUS"); k8_in(x + 262, y + 8, 30);
+  sprintf(#k8_v, "%s  %.1f MS  %.2f HZ  ±%.2f MS", k8_m ? "MATRIX" : "VFD", t8c_cen, t8c_rt, t8c_dt * (t8c_shp ? 1 : 1)); k8_dec(#k8_v);
+  k8_lcd(x + 14, y + 40, 290, 26, #k8_v);
+  i = 0; loop(4,
+    sprintf(#k8_b, "%d", i + 1);
+    k8_key(x + 16 + i * 44, y + 84, 38, 28, #k8_b, (slider31 | 0) == i) ? k8_set(31, i);
+    i += 1; );
+  k8_cap(x + 102, y + 126, k8_s("BUTTON", "TASTE"));
+  k8_small(x + 246, y + 98, k8_s("TWO BBD LINES", "ZWEI EIMERKETTEN"));
+  k8_small(x + 246, y + 114, k8_s("MONO SAFE", "MONOKOMPATIBEL"));
+  k8_knob(x + 62, y + 176, 20, 32, 0, 100, 100, 0, k8_s("WIDTH", "BREITE"), "%.0f%%", 0);
+  k8_knob(x + 150, y + 176, 20, 33, 0, 100, 60, 0, k8_s("MIX", "MISCHUNG"), "%.0f%%", 0);
+  k8_small(x + 246, y + 176, t8c_shp ? k8_s("SINE + SHIMMER", "SINUS + SCHIMMER") : k8_s("ROUNDED TRIANGLE", "DREIECK, GERUNDET"));
+);
+function m_dly(x, y) (
+  k8_mod(x, y, 522, 244, k8_s("DIGITAL DELAY", "DIGITALE VERZÖGERUNG")); k8_in(x + 466, y + 8, 34);
+  t8d_jdl ? sprintf(#k8_v, "VINTAGE DIGITAL  %.0f MS  ·  36K CLOCK", t8d_ms) : sprintf(#k8_v, "%s  %.0f MS", k8_s("CRYSTAL", "KRISTALL"), t8d_ms);
+  k8_lcd(x + 14, y + 40, 494, 26, #k8_v);
+  sprintf(#k8_vs, "%.0f ms", slider35);
+  k8_off = slider36 >= 0.5; k8_knob(x + 52, y + 120, 20, 35, 20, 2000, 320, 1, k8_s("TIME", "ZEIT"), "", 1); k8_off = 0;
+  k8_knob(x + 136, y + 120, 20, 37, 0, 90, 25, 0, k8_s("FEEDBACK", "RÜCKKOPPL."), "%.0f%%", 0);
+  k8_hz(#k8_vs, slider38); k8_kc = K8_LPF; k8_knob(x + 220, y + 120, 20, 38, 1500, 16000, 6000, 1, k8_s("TONE", "KLANG"), "", 0); k8_kc = 0;
+  k8_knob(x + 304, y + 120, 20, 39, 0, 100, 0, 0, k8_s("CROSS", "KREUZ"), "%.0f%%", 0);
+  k8_knob(x + 388, y + 120, 20, 40, 0, 100, 15, 0, k8_s("MIX", "MISCHUNG"), "%.0f%%", 0);
+  sprintf(#k8_vs, "%.0f%%  (%.1f dB)", slider41, slider41 * 0.15);
+  k8_knob(x + 468, y + 120, 20, 41, 0, 100, 50, 0, k8_s("DUCK", "DUCKEN"), "", 0);
+  gfx_setfont(12); ui_col(K8I); k8_lt(x + 16, y + 206, "SYNC");
+  k8_drop(x + 62, y + 192, 120, 28, 36, k8_m ? "FREI|1/16|1/8 T|1/8|1/8 P|1/4 T|1/4|1/4 P|1/2" : "FREE|1/16|1/8 T|1/8|1/8 D|1/4 T|1/4|1/4 D|1/2");
+  k8_grm(x + 214, y + 199, 294, slider34 >= 0.5 ? -g_du : 0, "DUCK");
+);
+function m_out(x, y) (
+  k8_mod(x, y, 160, 244, k8_s("OUTPUT", "AUSGANG"));
+  k8_knob(x + 44, y + 82, 18, 42, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+  k8_knob(x + 116, y + 82, 20, 43, -12, 12, 0, 0, k8_s("OUTPUT", "PEGEL"), "%+.1f dB", 0);
+  gfx_setfont(11); ui_col(K8I2); k8_lt(x + 12, y + 151, k8_s("IN", "EIN")); k8_lt(x + 12, y + 175, k8_s("OUT", "AUS"));
+  k8_bar(x + 46, y + 144, 102, 14, 20, min(max((20 * log10(max(g_pi, 0.000001)) + 48) / 48, 0), 1), 0.75, 0);
+  k8_bar(x + 46, y + 168, 102, 14, 20, min(max((20 * log10(max(g_po, 0.000001)) + 48) / 48, 0), 1), 0.75, 0);
+  k8_lamp(x + 16, y + 214, 4, g_clp, 0xFF3A2A);
+  k8_small(x + 90, y + 214, k8_s("CLIP · ALWAYS ON", "CLIP · IMMER AN"));
+);
+
+// ---------- the panel and the header ----------
+ui_col(K8P); gfx_rect(0, 0, gfx_w, gfx_h);
+ui_col(K8H); k8_r(0, 0, 1200, 54);
+ui_col(k8_m ? K8L : 0x050606); k8_r(0, 54, 1200, 2);
+ui_col(K8A); k8_r(0, 56, 1200, 1);
+ui_col(k8_m ? K8A : K8I); gfx_circle(31 * sc, 27 * sc, 16 * sc, 1, 1);
+gfx_setfont(4); ui_col(K8H); ui_text(31 * sc, 21.5 * sc, "GFX");
+gfx_setfont(15); ui_col(K8I); k8_t(58, 11, "STR81");
+gfx_setfont(11); ui_col(K8I2); k8_t(170, 14, k8_s("SERIES 81", "SERIE 81")); k8_t(170, 29, k8_s("VOCAL STRIP", "GESANGSKANAL"));
+// the panel's mailboxes, read and cleared here
+g_op = min(mb_op, g_op * 0.8); mb_op = 0;
+g_fet = min(mb_fet, g_fet * 0.8); mb_fet = 0;
+g_ds = max(mb_ds, g_ds * 0.8); mb_ds = 0;
+g_du = min(mb_du, g_du * 0.85); mb_du = 0;
+g_pi = max(pk_in, g_pi * 0.8); pk_in = 0;
+g_po = max(pk_out, g_po * 0.8); pk_out = 0;
+g_clp = ost_clipped; ost_clipped = 0;
+g_grd = in_grd; in_grd = 0;
+pk_pextra = "Reset all to defaults";
+k8_kp = pk_preset(300 * sc, 10 * sc, 384 * sc, 34 * sc, pr_cur, #vx_pm);
+k8_kp > 0 ? load_preset(k8_kp);
+k8ok.k8_okey(700, 14, 172, 28, slider2 >= 0.5 ? k8_s("EQ > DYNAMICS", "EQ > DYNAMIK") : k8_s("DYNAMICS > EQ", "DYNAMIK > EQ")) ? k8_set(2, slider2 >= 0.5 ? 0 : 1);
+k8_key(898, 14, 64, 28, "VFD", !k8_m) ? k8_set(1, 0);
+k8_key(968, 14, 86, 28, "MATRIX", k8_m) ? k8_set(1, 1);
+ui_size_picker(1116 * sc, 18 * sc);
+
+// ---------- the top row: PREAMP, LOW END, then the EQ and the dynamics in the chosen order ----------
+k8_o = slider2 >= 0.5;
+m_pre(20, 66);
+m_low(168, 66);
+m_eq(k8_o ? 280 : 804, 66);
+m_opto(k8_o ? 664 : 280, 66);
+m_dess(k8_o ? 822 : 438, 66);
+m_fet(k8_o ? 990 : 606, 66);
+// ---------- the bottom row: SATURATION, CHORUS, DIGITAL DELAY, OUTPUT ----------
+m_sat(20, 346);
+m_chor(164, 346);
+m_dly(490, 346);
+m_out(1020, 346);
+
+pk_end();
+ui_end();

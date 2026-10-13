@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX CH57 - manual</title><meta name="description" content="Series 57's channel strip: a valve pre-amp with a high-pass, a passive programme EQ, a variable-mu compressor and the output iron, at 2x.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-ch57">
+<div class="cat">Dynamics</div><h1>CH57</h1>
+<p class="tagline">Series 57's channel strip: a valve pre-amp with a high-pass, a passive programme EQ, a variable-mu compressor and the output iron, at 2x.</p>
+<div class="shot"><img src="img/gfx-ch57.webp" alt="The CH57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-ch57-cph.webp" alt="The CH57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>CH57 is the Series 57 counterpart of CH81: one channel of a late-50s valve desk.</p><p>PRE is a valve pre-amp: GAIN drives it (level matched, so more GAIN means more colour at about the same level), with a high-pass. PROGRAM EQ is a passive programme equaliser with its make-up valve: a low shelf with separate BOOST and ATTEN (both at once give the famous shelf with a dip above it), a broad high boost with its BANDWIDTH, and a HI-CUT. The COMPRESSOR is a variable-mu valve stage whose ratio rises with the reduction. The output transformer (IRON) and the FADER finish the channel. ORDER swaps the EQ and the compressor. The whole channel runs at 2x oversampling.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Valve colour and control on vocals</li><li>Warm bass and drums</li><li>A complete period channel in one plug-in</li><li>The low boost-and-cut trick on kick and bass</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert CH57 on a track. It opens on Init: a little pre-amp colour and gentle compression.</li><li>Set GAIN for the pre-amp's colour and the HIGH-PASS to clear the lows.</li><li>Shape the tone with the PROGRAM EQ: try LOW BOOST and ATTEN together.</li><li>Lower THRESHOLD until the GR needle moves 3 - 6 dB; pick a RECOVERY.</li><li>Set IRON for the transformer's weight and the FADER for the level.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>PRE</h3><p>The IN button next to the title switches the pre-amp in or out (each section has one; changes fade out and back in).</p><dl class="ctl"><dt>IN</dt><dd>An edgewise meter on the input, -20 to +3 VU.</dd><dt>GAIN</dt><dd>The valve pre-amp's drive, 0 - 30 dB (10 dB). Level matched.</dd><dt>HIGH-PASS</dt><dd>OFF, 40, 80 or 160 Hz, 12 dB per octave.</dd><dt>TRIM</dt><dd>Trim before everything, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard (on by default). Its LED lights while it works.</dd></dl>
+<h3>PROGRAM EQ</h3><dl class="ctl"><dt>LOW FREQ</dt><dd>30, 60 or 100 Hz (60 Hz).</dd><dt>LOW BOOST</dt><dd>A low shelf, 0 - 10 (0).</dd><dt>LOW ATTEN</dt><dd>A cut, set a little higher than the boost, 0 - 10 (0): with both up, a deep shelf with a dip above it.</dd><dt>HI-CUT</dt><dd>The top shelf's frequency: 5, 10 or 20 kHz (10 kHz).</dd><dt>HIGH FREQ</dt><dd>3, 5, 8, 10, 12 or 16 kHz (10 kHz).</dd><dt>HIGH BOOST</dt><dd>A peak at HIGH FREQ, 0 - 10 (0).</dd><dt>BANDWIDTH</dt><dd>The peak's width, sharp (0) to broad (10) (5).</dd><dt>ATTEN</dt><dd>The cut above HI-CUT, 0 - 10 (0).</dd></dl>
+<h3>COMPRESSOR</h3><dl class="ctl"><dt>GR</dt><dd>An edgewise gain-reduction meter.</dd><dt>THRESHOLD</dt><dd>-30 to 0 dB (-12 dB). The ratio rises with the reduction.</dd><dt>RECOVERY</dt><dd>FAST (0.3 s), MED (1 s) or SLOW (3 s).</dd><dt>EQ &gt; COMP / COMP &gt; EQ</dt><dd>The order of the EQ and the compressor. Its LED flashes when clicked.</dd></dl>
+<h3>OUTPUT</h3><dl class="ctl"><dt>OUT</dt><dd>An edgewise meter on the output.</dd><dt>IRON</dt><dd>The output transformer, 0 - 100% (30%): the lows saturate first and the top softens.</dd><dt>FADER</dt><dd>The channel's level, -24 to +12 dB (0 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the valves' bias wanders (the pre-amp's colour, the compressor's threshold) and the two channels never quite match.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). Its soft CLIP is always on; the red LED lights when it catches a peak.</dd></dl>
+<h3>The signal path</h3><p>The line along the foot: IN, PRE, EQ, COMP (or COMP, EQ), OUT.</p>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>A tighter pre-amp, narrower and more precise EQ curves, a quicker, firmer compressor.</dd><dt>COPENHAGEN</dt><dd>A warmer pre-amp (more even harmonics), broader EQ curves, a slower, softer compressor and a richer iron.</dd></dl>
+<h2>Presets</h2><p>A preset sets the PRE (not TRIM or GUARD), the PROGRAM EQ, the COMPRESSOR, the order, IRON and FADER; the face, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness.</p><dl class="ctl"><dt>Init</dt><dd>A little pre-amp colour and gentle compression.</dd><dt>Vocal Channel</dt><dd>High-pass 80, a little low cut, presence at 8 kHz, levelling.</dd><dt>Warm Bass</dt><dd>Low boost at 60, a soft top, compression first, heavy iron.</dd><dt>Drum Room</dt><dd>Driven pre, a broad 8 kHz lift, fast compression.</dd><dt>Acoustic Guitar</dt><dd>Low cut at 100, a 10 kHz sparkle.</dd><dt>Bright Piano</dt><dd>A broad 12 kHz lift.</dd><dt>Broadcast Voice</dt><dd>High-pass 160, a low cut, presence, compression first.</dd><dt>Bus Glue</dt><dd>Light compression with slow recovery.</dd><dt>Low Boost Trick</dt><dd>Boost and atten together at 60 Hz, no compression.</dd><dt>Driven Pre</dt><dd>The pre-amp pushed hard, heavy iron.</dd><dt>Lo-Fi Desk</dt><dd>High-pass 160, the top cut at 5 kHz, squashed.</dd><dt>Clean Leveller</dt><dd>The compressor alone.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>The pre-amp is level matched: turn GAIN for colour, then set the FADER.</li><li>LOW BOOST and ATTEN together at 30 or 60 Hz give weight without mud.</li><li>COMP &gt; EQ lets the EQ shape the compressed sound; EQ &gt; COMP makes the compressor react to your EQ.</li><li>COPENHAGEN suits vocals and acoustic instruments; ULM keeps drums and guitars tight.</li></ul>
+<p class="file">File: gfx-ch57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

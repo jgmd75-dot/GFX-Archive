@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX Meter57 - manual</title><meta name="description" content="Series 57's meter: two moving-coil meters (VU, PPM or peak), a cathode-ray stereo scope, a magic-eye correlation tube and nixie peak read-outs. Bit-exact.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-meter57">
+<div class="cat">Mastering</div><h1>Meter57</h1>
+<p class="tagline">Series 57's meter: two moving-coil meters (VU, PPM or peak), a cathode-ray stereo scope, a magic-eye correlation tube and nixie peak read-outs. Bit-exact.</p>
+<div class="shot"><img src="img/gfx-meter57.webp" alt="The Meter57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-meter57-cph.webp" alt="The Meter57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>Meter57 is the Series 57 counterpart of Meter81: the measuring corner of a late-50s control room. Two big moving-coil meters sit in amber windows, a small cathode-ray tube draws the stereo picture (the stereo disc was new in 1957), a magic-eye tube shows the correlation, and the peaks are held on nixie tubes.</p><p>The audio is not touched: the plug-in only reads the signal, so its output is bit-exact with its input and the latency is 0.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Gain staging to a reference level (VU)</li><li>Broadcast-style peak programme metering (PPM)</li><li>Checking peaks before the master</li><li>Checking stereo width and phase</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert Meter57 anywhere: it does not change the sound.</li><li>Pick the SCALE: VU for average level, PPM for programme peaks, PEAK for sample peaks.</li><li>Set REF to your alignment level (0 VU / 0 dB = REF dBFS).</li><li>Watch the scope and the magic eye for the stereo picture; click the nixie tubes to reset the peaks.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>The meters</h3><dl class="ctl"><dt>VU</dt><dd>The volume indicator: the rectified average drives a modelled needle (300 ms to 99%, about 1.5% overshoot). -20 to +3 VU; 0 VU = REF.</dd><dt>PPM</dt><dd>The quasi-peak programme meter: a 5 ms integration (a 10 ms burst reads 1 dB under) and a slow, steady return. The face picks the standard: ULM the German DIN scale (-50 to +5 dB, a return of 20 dB in 1.5 s), COPENHAGEN the Nordic scale (-36 to +9 dB, 20 dB in 1.7 s). 0 dB = REF.</dd><dt>PEAK</dt><dd>The sample peak: instant attack, a return of 20 dB in 1.7 s. -60 to 0 dBFS; REF does not apply.</dd><dt>REF</dt><dd>The alignment level: 0 VU / 0 dB = -18, -14, -12 or -9 dBFS. Sine-referenced: a sine whose peak is at REF reads 0.</dd><dt>HOLD</dt><dd>OFF, 2 S or INF: an orange drag pointer on each meter.</dd><dt>PEAK L / R</dt><dd>Nixie tubes: the true sample peak of each channel since the last reset, in dBFS. Click them to reset; with HOLD OFF they hold each peak for 2 s.</dd><dt>OVER</dt><dd>Lights at 0 dBFS and above.</dd></dl>
+<h3>STEREO</h3><dl class="ctl"><dt>The scope</dt><dd>The stereo picture, mid up and side across: a vertical line is mono, a circle is wide, a horizontal line is out of phase. Green phosphor in ULM, amber in COPENHAGEN.</dd><dt>CORRELATION</dt><dd>The magic eye closes as the channels agree: fully closed = +1 (mono), half open = 0 (unrelated), wide open with the shadow red = negative (out of phase). The nixie shows the number.</dd></dl>
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>The alabaster look; the PPM follows the German DIN standard; the scope's phosphor is green.</dd><dt>COPENHAGEN</dt><dd>The Danish look; the PPM follows the Nordic standard; the scope's phosphor is amber.</dd></dl>
+<h2>Presets</h2><p>A preset sets SCALE, REF and HOLD; the face is left as it is.</p><dl class="ctl"><dt>Init</dt><dd>VU at -18 dBFS, hold 2 s.</dd><dt>Broadcast PPM</dt><dd>PPM at -9 dBFS.</dd><dt>PPM Align -18</dt><dd>PPM at -18 dBFS.</dd><dt>Live Desk -12</dt><dd>PPM at -12 dBFS.</dd><dt>Tracking VU</dt><dd>VU at -18, no hold.</dd><dt>Mix VU -14</dt><dd>VU at -14.</dd><dt>Hot Master VU</dt><dd>VU at -12.</dd><dt>Mastering Peak</dt><dd>PEAK, hold 2 s.</dd><dt>Peak Hold</dt><dd>PEAK, hold forever.</dd><dt>Film VU -18</dt><dd>VU at -18, hold forever.</dd><dt>Stereo Check</dt><dd>VU, no hold: watch the scope and the eye.</dd><dt>Programme PPM -9</dt><dd>PPM at -9, hold forever.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>There is no DRIFT on Meter57: a meter must not wander.</li><li>For tracking, aim the VU around 0 at REF -18: peaks then sit well clear of 0 dBFS.</li><li>A correlation that drops below 0 for long is worth checking in mono.</li><li>The PPM standard follows the face, so switching to COPENHAGEN is also switching to the Nordic scale.</li></ul>
+<p class="file">File: gfx-meter57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

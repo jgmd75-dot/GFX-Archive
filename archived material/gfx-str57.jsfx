@@ -1,0 +1,1017 @@
+desc:GFX STR57 [vocal strip]
+//tags: vocal channel strip preamp valve opto fet de-esser eq iron saturation adt double tracking spring reverb ducking series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-clip, gfx-ui, gfx-panel, gfx-dyn and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// STR57 (Series 57): the Series 57 vocal strip, a sibling of STR92 - the same core chain, with the double tracking and
+// the spring of the valve age. Two models in one unit, the series' two faces: the ULM / COPENHAGEN keys (in the
+// header) set the voicing of every stage and the faceplate together; a change ducks the output (12 ms), swaps at the
+// silent point and fades back in. At Init the two faces are level matched.
+//   ULM        - German modernist: a tight valve pre-amp (mostly odd colour), precise EQ curves (the Q as set, firm
+//                shelves), a firmer, quicker opto, a valve make-up stage for SATURATION; bright, dense springs.
+//   COPENHAGEN - Danish modern: a warm valve pre-amp (more even harmonics, the iron saturating first), broad EQ curves
+//                (wide bells, soft shelves, a sweet, eased top), a softer, slower opto that leans in, the output IRON
+//                for SATURATION (the lows thicken, the top softens); darker springs that drip more gently.
+// The chain, in order:
+//   PREAMP     transformer + valve: DRIVE (level matched: more DRIVE, more colour). The low band saturates first
+//              (the transformer), then a biased soft-knee valve stage (house drive standard: anti-aliased clipper,
+//              drive-tracking pre-filter and knee). TRIM and GUARD (the house input stage) sit here too.
+//   LOW END    the house trick: a high-pass (20 - 80 Hz, 20 = off), then a low shelf at 150 Hz pulling 0 to -3 dB.
+//   EQ         a four-band parametric: LF (shelf or bell, 30 - 450 Hz, +/-15 dB), LMF (bell, 120 Hz - 2 kHz, gain, Q),
+//              HMF (bell, 600 Hz - 8 kHz, gain, Q), HF (shelf or bell, 1.5 - 16 kHz). The face voices the curves (see
+//              above). A SHELF / BELL change glides the band out and back in. The ORDER key puts the EQ before or after
+//              the dynamics (OPTO, DE-ESS, FET); the panel modules swap places.
+//   OPTO       slow optical levelling (always before the FET): PEAK REDUCTION and GAIN; program dependent, with a
+//              smooth two-stage release. COPENHAGEN leans on it more, ULM holds it firmer.
+//   DE-ESS     split band: only the sibilant band is turned down, by no more than RANGE: the cut starts at FREQ
+//              (4 - 10 kHz; an 8th-order split at 1.2 x FREQ, so the presence below about 0.8 x FREQ is left alone;
+//              the split's all-pass stays in the path when DE-ESS is out, so switching it never combs)
+//              and is full an octave above. It listens for sibilance, not brightness: THRESH sets how loud the band
+//              must be, and it only cuts while the band stands out from the rest of the signal (within 6 dB of the
+//              whole: full cut from 2 dB), so steady bright material - a full mix, cymbals, reverb - is left alone
+//              while "s" sounds get the full RANGE. Stereo linked. LISTEN plays the band; the lamp lights while it
+//              works.
+//   FET        a fast peak catcher (always last of the dynamics): AMOUNT (into a fixed threshold), RATIO 4 / 8 / 12 /
+//              20, ATTACK, RELEASE; its gentle colour (mostly 2nd harmonic) grows with the gain it takes away.
+//   SATURATION ULM: the valve make-up stage (a biased soft knee, a little low-mid weight). COPENHAGEN: the output iron
+//              (soft, a slight low bump, a gentle top roll-off). 0 = out.
+//   ADT        (its own IN key; the TAPE ECHO of DRP57) artificial double tracking: the voice is recorded through the
+//              valve record amp onto a second machine and played back TIME later (4 - 60 ms) while an oscillator
+//              swings the machine's varispeed (DEPTH, RATE): a second, slightly late, slightly off-pitch take. SPEED
+//              (7 1/2, 15, 30 ips) picks the replay character (the head bump, the top); the transport's flutter is
+//              there too. SPREAD pans the voice and its double apart; MIX is the double's level (100 % = as loud as
+//              the voice; the IN key and MIX leave the loudness alone).
+//   SPRING     (its own IN key; the SPRING of VRB57) two springs, each a delay with a dispersive chain (the drip) in its
+//              loop, behind the valve send amplifier: TENSION (how much they drip), DECAY (0.5 - 5 s), TONE (dark ..
+//              bright), DRIVE (the send amplifier), MIX (100 % = the return as loud as the voice) and DUCK: the springs
+//              pull back while the voice sings (up to 15 dB) and bloom in the gaps.
+//   OUTPUT     OUTPUT level, then the house output stage with CLIP always on (a character unit, as CH57 / STR92).
+// DRIFT (0 - 100 %, 50 % = standard, 0 = none; the series' own): the valves' bias wanders - the pre-amp's and the
+//   saturation's heat, an uneven supply, the two sides never quite match; the ADT machine's capstan wanders (its time
+//   breathes, +/-1.2 %, as DRP57) and its oscillator's rate a little; the springs' hangers move a hair (as VRB57).
+// Mono or stereo tracks; the dynamics are stereo linked. Every IN key, the face, the order and the presets change
+// without clicks. No latency (0 samples).
+// PRESETS (12 + Reset all to defaults) cover both faces; TRIM, GUARD and DRIFT stay when a preset loads.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-clip.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-dyn.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<0,1,1{Ulm,Copenhagen}>-Model (face)
+slider2:0<0,1,1{EQ after dynamics,EQ before dynamics}>-Order
+slider3:0<-24,12,0.1>-Input trim (dB)
+slider4:1<0,1,1{Off,On}>-Input guard
+slider5:1<0,1,1{Out,In}>-Preamp in
+slider6:30<0,100,1>-Drive (%)
+slider7:60<20,80,1>-High-pass (Hz, 20 = off)
+slider8:-2<-3,0,0.1>-Low shelf 150 Hz (dB)
+slider9:240<120,2000,1>-EQ LMF freq (Hz)
+slider10:2.5<-15,15,0.1>-EQ LMF gain (dB)
+slider11:0.8<0.4,4,0.01>-EQ LMF Q
+slider12:1<0,1,1{Out,In}>-Opto in
+slider13:35<0,100,1>-Opto peak reduction (%)
+slider14:0<-10,10,0.1>-Opto gain (dB)
+slider15:1<0,1,1{Out,In}>-De-ess in
+slider16:4500<4000,10000,10>-De-ess freq (Hz)
+slider17:-28<-50,0,0.1>-De-ess threshold (dB)
+slider18:6<0,12,0.1>-De-ess range (dB)
+slider19:0<0,1,1{Off,On}>-De-ess listen
+slider20:1<0,1,1{Out,In}>-FET in
+slider21:6<0,24,0.1>-FET amount (dB)
+slider22:0<0,3,1{4,8,12,20}>-FET ratio
+slider23:250<20,800,1>-FET attack (us)
+slider24:120<50,1100,1>-FET release (ms)
+slider25:1<0,1,1{Out,In}>-EQ in
+slider26:0<-15,15,0.1>-EQ LF gain (dB)
+slider27:100<30,450,1>-EQ LF freq (Hz)
+slider28:0<0,1,1{Shelf,Bell}>-EQ LF shape
+slider29:25<0,100,1>-Saturation (%)
+slider30:0<0,1,1{Out,In}>-ADT in
+slider31:24<4,60,0.1>-ADT time (ms)
+slider32:30<0,100,1>-ADT depth (%)
+slider33:0.5<0.1,4,0.01>-ADT rate (Hz)
+slider34:40<0,100,1>-ADT spread (%)
+slider35:70<0,100,1>-ADT mix (%)
+slider36:1<0,2,1{7 1/2 ips,15 ips,30 ips}>-ADT tape speed
+slider37:1<0,1,1{Out,In}>-Spring in
+slider38:50<0,100,1>-Spring tension (%)
+slider39:2<0.5,5,0.01>-Spring decay (s)
+slider40:50<0,100,1>-Spring tone (%)
+slider41:20<0,100,1>-Spring drive (%)
+slider42:20<0,100,1>-Spring mix (%)
+slider43:40<0,100,1>-Spring duck (%)
+slider44:50<0,100,1>-Drift (%)
+slider45:0<-12,12,0.1>-Output (dB)
+slider46:-2<-15,15,0.1>-EQ HMF gain (dB)
+slider47:2800<600,8000,1>-EQ HMF freq (Hz)
+slider48:0.8<0.4,4,0.01>-EQ HMF Q
+slider49:-4<-15,15,0.1>-EQ HF gain (dB)
+slider50:7000<1500,16000,10>-EQ HF freq (Hz)
+slider51:0<0,1,1{Shelf,Bell}>-EQ HF shape
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-str57";
+ext_noinit = 1;
+clp_aa = 1; clp_pf_on = 1; clp_kt_on = 1;                   // house drive standard: ADAA, pre-filter, knee tracking (character)
+
+// ================= memory =================
+function vx_alloc(n) local(p) ( p = vx_mem; vx_mem += n; memset(p, 0, n); p; );
+function vx_p2(n) local(m) ( m = 16; while (m < n) ( m *= 2; ); m; );
+function vx_db(d) ( exp(0.11512925465 * d); );
+function vx_kt(t) ( 1 - exp(-1 / (max(t, 0.000001) * srate)); );           // a time constant (s) as a one-pole coefficient
+function vx_kf(f) ( 1 - exp(-2 * $pi * min(f, 0.45 * srate) / srate); );   // a one-pole low-pass coefficient for f Hz
+
+// a per-block glide that snaps when close (instance: v)
+function gl(t) instance(v) ( v += (t - v) * vx_gb; abs(t - v) < 0.0001 * max(abs(t), 0.01) ? v = t; v; );
+function gl_set(t) instance(v) ( v = t; );
+
+// =====================================================================================================================
+// THE CORE CHAIN (prefix vx_), ported from STR92: the same stages, the same fixes. The face variable ulm (1 = ULM,
+// 0 = COPENHAGEN) takes the place of STR92's model: ULM rides its tight / clean constants, COPENHAGEN its warm ones.
+// =====================================================================================================================
+// ================= PREAMP: transformer (lows first) + valve (a biased gfx-clip KNEE clipper) =================
+// one side: x in, kk = the drive into the valve; the curve's rest value and slope are taken out (unity small-signal
+// gain); the anti-aliased reading's half-sample lag is made up, so it mixes with the dry signal without a comb
+function pre_run(x, kk) instance(lo, c1) local(u, y, c) (
+  lo += (x - lo) * pre_lc;
+  x += pre_xa * (lo / sqrt(1 + sqr(pre_xd * lo)) - lo);    // the core: the lows saturate first
+  u = this.pf.clp_pf_run(x) * kk + pre_b;
+  y = this.k.clp_run(u); c = this.k.clp_crv(u);
+  y += 0.5 * (c - c1); c1 = c;
+  (y - pre_cb) / (kk * pre_sl);
+);
+// SATURATION, one side: COPENHAGEN the output iron (a SOFT clipper, symmetric), ULM the valve make-up (a biased KNEE)
+function sat_run(x, kk) instance(c1) local(u, y, c) (
+  u = this.pf.clp_pf_run(x) * kk + sat_b;
+  y = this.k.clp_run(u); c = this.k.clp_crv(u);
+  y += 0.5 * (c - c1); c1 = c;
+  (y - sat_cb) / (kk * sat_sl);
+);
+
+// change detector (instance l)
+function chg(v) instance(l) ( v != l ? ( l = v; 1; ) : 0; );
+// the spring return's calibration: measured on pink noise (MIX 100 %, the return about as loud as the voice); it rises
+// with DECAY (2.5 dB per e-fold), TENSION barely moves it (within 0.15 dB)
+function r7_calf(dec, ten) ( vx_db((ulm ? 3.2 : 3.0) - 2.5 * log(max(dec, 0.5))); );
+
+// ================= DE-ESS: an 8th-order Linkwitz-Riley split (instance: one side) =================
+// the band above the split (two cascaded 4th-order Butterworth high-passes) and the split's own 4th-order all-pass
+// (its low + high sum): out = all-pass(x) + g x band, so the response is exactly 1 + g w^8 / (1 + w^8) - flat below
+// the split, the full cut above it, the same phase on both sides, no comb anywhere
+function dsx_ap(f, q) instance(b0, b1, b2, a1, a2) local(w0, cw, al, n) (
+  w0 = 2 * $pi * min(f, srate * 0.45) / srate; cw = cos(w0); al = sin(w0) / (2 * q); n = 1 + al;
+  b0 = (1 - al) / n; b1 = -2 * cw / n; b2 = 1; a1 = b1; a2 = b0;
+);
+function dsx_set(fc) (
+  this.h1.bq_set(1, fc, 0.5411961, 0); this.h2.bq_set(1, fc, 1.3065630, 0);
+  this.h3.bq_set(1, fc, 0.5411961, 0); this.h4.bq_set(1, fc, 1.3065630, 0);
+  this.p1.dsx_ap(fc, 0.5411961); this.p2.dsx_ap(fc, 1.3065630);
+);
+// one sample: returns the all-passed signal; the band is left in .hi
+function dsx_run(x) instance(hi) (
+  hi = this.h4.bq_run(this.h3.bq_run(this.h2.bq_run(this.h1.bq_run(x))));
+  this.p2.bq_run(this.p1.bq_run(x));
+);
+// the all-pass alone (DE-ESS out: the path keeps the same phase, so switching never combs)
+function dsx_apr(x) ( this.p2.bq_run(this.p1.bq_run(x)); );
+
+// =====================================================================================================================
+// SERIES 57 MOD + SPACE: ADT (prefix a7_) and SPRING (prefix r7_), the parts that make this strip the Series 57 one.
+// =====================================================================================================================
+// ---------- ADT: the TAPE ECHO of gfx-drp57.jsfx (GFX DRP57, Series 57), run as a double-tracking machine ----------
+// Its valve record amp (the biased tanh-like curve at its SATURATION, here a fixed record level: ULM 25 %, COPENHAGEN
+// 35 %; as the house ADAA soft clipper at the running rate - no oversampling, no latency), its tape line with a cubic
+// replay read, its replay character per speed and face (the head bump, the top, the 40 Hz low cut; COPENHAGEN's top
+// 0.8 x, its bump fuller), its flutter (6.3 Hz) and its DRIFT (the capstan, +/-1.2 % of the time). Added for double
+// tracking: the varispeed oscillator (a sine at RATE swinging the time by DEPTH, up to +/-30 %), TIME as the distance
+// between the machines (glided like DRP57's VARISPEED, so a turn is heard as a pitch bend, as on the tape), SPREAD
+// and the loudness-kept MIX. A SPEED change fades the double out (10 ms), changes the replay, fades it back.
+function a7_tapeeq() local(s, top, bump) (
+  s = a7_spd;
+  top = (s == 0 ? 6500 : s == 1 ? 10500 : 15000) * (ulm ? 1 : 0.8);
+  bump = s == 0 ? 55 : s == 1 ? 80 : 120;
+  a7E1.s57_bqset(3, bump, ulm ? 2 : 3, 1.2, srate);
+  a7E2.s57_bqset(0, top, 0, 0.6, srate);
+  a7E3.s57_bqset(1, 40, 0, 0.7, srate);
+);
+function a7_set() local(sat) (
+  a7_on = slider30 >= 0.5;
+  a7_tm_t = min(max(slider31, 4), 60) * 0.001 * srate;
+  a7_dp_t = slider32 / 100; a7_rate = min(max(slider33, 0.1), 4);
+  a7_sp_t = slider34 / 100; a7_mx_t = slider35 / 100;
+  a7_tspd = min(max(slider36 | 0, 0), 2);
+  sat = ulm ? 0.25 : 0.35;                                 // the record level (DRP57's SATURATION)
+  a7_k = 1 + 5 * sat; a7_rb = 0.05 * sat; a7_rg = (1 + 0.6 * sat) / (a7_k * 0.9);
+  a7K.clp_set(1, 1, 1, 0); a7_cb = a7K.clp_crv(a7_rb);
+  a7_wf = ulm ? 1 : 1.25;                                  // COPENHAGEN's transport a little wider (as DRP57)
+);
+function a7_init() (
+  a7_set(); a7_spd = a7_tspd; a7_tapeeq();
+  a7_tm = a7_tv = a7_tm_t; a7_dp = a7_dp_t; a7_sp = a7_sp_t; a7_mx = a7_mx_t;
+  a7_svs = vx_kt(0.07); a7_sfd = 1 / (0.01 * srate); a7_sg = 1; a7_sst = 0;
+);
+function a7_run() local(x, u, y, c, d, r, m, ws, dl, dr, pl, pr, bl, br, nrm) (
+  // the record amp and the tape: always running, so a double switched in replays what was already sung
+  x = (vx_l + vx_r) * 0.5;
+  u = x * a7_k * 0.9 + a7_rb;
+  y = a7K.clp_run(u); c = a7K.clp_crv(u); y += 0.5 * (c - a7_c1); a7_c1 = c;
+  A7_T[a7_wp] = (y - a7_cb) * a7_rg;
+  a7_w += (a7_on - a7_w) * xs_c;
+  a7_w > 0.000001 || a7_on ? (
+    a7_tv += (a7_tm_t - a7_tv) * a7_svs; a7_tm += (a7_tv - a7_tm) * a7_svs;   // (two stages: the bend starts gently)
+    a7_dp += (a7_dp_t - a7_dp) * sm_c; a7_sp += (a7_sp_t - a7_sp) * sm_c; a7_mx += (a7_mx_t - a7_mx) * sm_c;
+    // a SPEED change: out, the new replay, back in
+    a7_sst == 0 && a7_tspd != a7_spd ? a7_sst = 1;
+    a7_sst == 1 ? ( a7_sg -= a7_sfd; a7_sg <= 0 ? ( a7_sg = 0; a7_spd = a7_tspd; a7_tapeeq(); a7_sst = 2; ); ) :
+    a7_sst == 2 ? ( a7_sg += a7_sfd; a7_sg >= 1 ? ( a7_sg = 1; a7_sst = 0; ); );
+    // the varispeed oscillator and the flutter; the capstan's drift
+    a7_ph += a7_rate * (1 + 0.1 * a7_dra) / srate; a7_ph -= floor(a7_ph);
+    a7_fph += 6.3 / srate; a7_fph -= floor(a7_fph);
+    d = a7_tm / (1 + a7_dsp) * (1 + 0.3 * a7_dp * sin(2 * $pi * a7_ph)) + a7_dp * a7_wf * 0.00002 * srate * sin(2 * $pi * a7_fph);
+    d = min(max(d, 2), A7_N - 4);
+    r = a7_wp - d; r < 0 ? r += A7_N;
+    pl = floor(r); pr = r - pl;
+    dl = A7_T[(pl + A7_N - 1) & A7_M]; x = A7_T[pl & A7_M]; dr = A7_T[(pl + 1) & A7_M]; c = A7_T[(pl + 2) & A7_M];
+    r = ((((0.5 * (c - dl) + 1.5 * (x - dr)) * pr + (dl - 2.5 * x + 2 * dr - 0.5 * c)) * pr + 0.5 * (dr - dl)) * pr + x);
+    r = a7E2.s57_bq(a7E1.s57_bq(a7E3.s57_bq(r)));
+    // SPREAD: the voice one way, its double the other (constant power; centre = unity)
+    ws = min(a7_w, 1); ws *= ws * (3 - 2 * ws);           // (the IN fade and the SPEED fade eased: no corner in the double's envelope)
+    m = a7_mx * ws * a7_sg * a7_sg * (3 - 2 * a7_sg);
+    pl = 0.5 + 0.4 * a7_sp; pr = 0.5 - 0.4 * a7_sp * ws;
+    dl = 1.41421356 * cos(pl * 0.5 * $pi); dr = 1.41421356 * sin(pl * 0.5 * $pi);
+    bl = 1.41421356 * cos(pr * 0.5 * $pi); br = 1.41421356 * sin(pr * 0.5 * $pi);
+    nrm = 1 / sqrt(1 + m * m);
+    vx_l = (vx_l * bl + r * m * dl) * nrm; vx_r = (vx_r * br + r * m * dr) * nrm;
+  );
+  a7_wp = (a7_wp + 1) & A7_M;
+);
+
+// ---------- SPRING: the SPRING of gfx-vrb57.jsfx (GFX VRB57, Series 57) ----------
+// Its valve send amplifier (DRIVE: 1 + 5 x DRIVE into a tanh-like curve, made up by 1 + 0.4 x DRIVE; here the house
+// ADAA soft clipper at the running rate), its two springs (33.1 and 39.7 ms loops, a 16-stage dispersive all-pass chain
+// in each - the second at 0.95 x the TENSION - a low-pass and a 90 Hz high-pass in each loop, the loop gain from DECAY),
+// its hangers' DRIFT, its output smoothing, WIDTH (fixed at its 70 % default) and its output colour per face (ULM a
+// lift at 2.5 kHz, COPENHAGEN at 350 Hz), its level (0.9). TONE moves its loop low-pass (ULM 5 kHz, COPENHAGEN 3.8 kHz
+// at 50 %) by +/-0.7 octave; the level calibration across DECAY and TENSION and DUCK belong to the strip.
+function r7_set() local(t) (
+  r7_on = slider37 >= 0.5;
+  r7_ten_t = slider38 / 100; r7_dec_t = min(max(slider39, 0.5), 5); r7_tn_t = slider40 / 100;
+  r7_drv_t = slider41 / 100; r7_mx_t = slider42 / 100;
+  r7_dk = slider43 / 100 * 15;                             // DUCK: up to 15 dB (the strip's)
+);
+// the loop (per block, from the glided knobs): the springs' delays, gains, dispersion and filters
+function r7_loop() local(dec, f) (
+  dec = r7_dec.v;
+  r7_sd1 = 0.0331 * srate; r7_sd2 = 0.0397 * srate;
+  r7_sg1_t = 10 ^ (-3 * 0.0331 / dec); r7_sg2_t = 10 ^ (-3 * 0.0397 / dec);
+  r7_sa_t = -(0.45 + 0.35 * r7_ten.v) * (ulm ? 1 : 0.9);
+  f = (ulm ? 5000 : 3800) * 2 ^ (1.4 * (r7_tn.v - 0.5));
+  vc_r7.chg(f + 3 * ulm) ? (
+    r7SL.s57_bqset(0, f, 0, 0.7, srate); r7SR.s57_bqset(0, f, 0, 0.7, srate);
+  );
+  // the return's level: about the voice's at MIX 100 % (pink noise) across DECAY and TENSION
+  r7_cal_t = r7_calf(dec, r7_ten.v);
+);
+// the per-face constants, set at the silent point of a face change
+function r7_modset() (
+  r7SH.s57_bqset(1, 90, 0, 0.7, srate); r7SI.s57_bqset(1, 90, 0, 0.7, srate);
+  r7OL.s57_bqset(3, ulm ? 2500 : 350, ulm ? 1 : 1.5, 0.8, srate); r7OR.s57_bqset(3, ulm ? 2500 : 350, ulm ? 1 : 1.5, 0.8, srate);
+  vc_r7.l = -12345;
+);
+function r7_clear() (
+  memset(R7_AS1, 0, 32); memset(R7_AS2, 0, 32); memset(R7_S1, 0, R7_N); memset(R7_S2, 0, R7_N);
+  r7_fb1 = r7_fb2 = r7_o1 = r7_o2 = r7_ol = r7_or = 0;
+  r7SL.s57_bqclr(); r7SR.s57_bqclr(); r7SH.s57_bqclr(); r7SI.s57_bqclr(); r7OL.s57_bqclr(); r7OR.s57_bqclr();
+  r7K.clp_reset(); r7_c1 = 0; r7_rsf = 0;                 // (a fresh tank fills from a ramp)
+);
+function r7_init() (
+  r7_set(); r7_ten.gl_set(r7_ten_t); r7_dec.gl_set(r7_dec_t); r7_tn.gl_set(r7_tn_t);
+  r7_drv = r7_drv_t; r7_mx = r7_mx_t;
+  r7K.clp_set(1, 1, 1, 0);
+  r7_ko = vx_kf(7000); r7_rfd = 1 / (0.02 * srate);                                     // its output smoothing (0.6 at 48 kHz)
+  r7_modset(); r7_loop(); r7_clear();
+  r7_sg1 = r7_sg1_t; r7_sg2 = r7_sg2_t; r7_sa = r7_sa_t; r7_cal = r7_cal_t;
+);
+function r7_rd(b, d) local(p, i, f, a) (
+  p = r7_w - d; p < 0 ? p += R7_N; i = floor(p); f = p - i; a = b[i & R7_M]; a + (b[(i + 1) & R7_M] - a) * f;
+);
+function r7_run() local(x, k, u, y, c, v, p, m, s, rl, rr, g) (
+  r7_fw += (r7_on - r7_fw) * xs_c;
+  !r7_idle ? (
+    r7_drv += (r7_drv_t - r7_drv) * sm_c; r7_mx += (r7_mx_t - r7_mx) * sm_c;
+    // (the per-block targets glided per sample: no zipper in the loop)
+    r7_sg1 += (r7_sg1_t - r7_sg1) * sm_c; r7_sg2 += (r7_sg2_t - r7_sg2) * sm_c; r7_sa += (r7_sa_t - r7_sa) * sm_c; r7_cal += (r7_cal_t - r7_cal) * sm_c;
+    // the valve send amplifier
+    r7_rsf = min(r7_rsf + r7_rfd, 1);
+    x = (vx_l + vx_r) * 0.5 * r7_fw * r7_rsf * r7_rsf * (3 - 2 * r7_rsf);
+    k = 1 + 5 * r7_drv;
+    u = x * k; y = r7K.clp_run(u); c = r7K.clp_crv(u); y += 0.5 * (c - r7_c1); r7_c1 = c;
+    x = y / k * (1 + 0.4 * r7_drv);
+    // spring 1: the dispersive chain, the delay, the loop's filters
+    u = x * 0.7 + r7_fb1; p = R7_AS1;
+    loop(16, v = r7_sa * u + p[0]; p[0] = u - r7_sa * v; u = v; p += 2; );
+    R7_S1[r7_w] = u;
+    r7_o1 = r7_rd(R7_S1, r7_sd1 + r7_dma * 3);
+    r7_fb1 = r7SH.s57_bq(r7SL.s57_bq(r7_o1)) * r7_sg1;
+    // spring 2
+    u = x * 0.7 + r7_fb2; p = R7_AS2; s = r7_sa * 0.95;
+    loop(16, v = s * u + p[0]; p[0] = u - s * v; u = v; p += 2; );
+    R7_S2[r7_w] = u;
+    r7_o2 = r7_rd(R7_S2, r7_sd2 - r7_dmb * 3);
+    r7_fb2 = r7SI.s57_bq(r7SR.s57_bq(r7_o2)) * r7_sg2;
+    r7_w = (r7_w + 1) & R7_M;
+    r7_ol += (r7_o1 - r7_ol) * r7_ko; r7_or += (r7_o2 - r7_or) * r7_ko;
+    // WIDTH (70 %), the output colour, the level
+    m = (r7_ol + r7_or) * 0.5; s = (r7_ol - r7_or) * 0.35;
+    rl = r7OL.s57_bq(m + s) * 0.9; rr = r7OR.s57_bq(m - s) * 0.9;
+    // the return: its calibration, the strip's MIX and DUCK
+    du_g += (du_t - du_g) * du_gc;
+    g = r7_cal * r7_mx * du_g;
+    vx_l += rl * g; vx_r += rr * g;
+    r7_pk = max(r7_pk, abs(rl) + abs(rr));
+  );
+);
+
+// ================= sample-rate setup: memory, coefficients =================
+function vx_srinit() (
+  vx_sr = srate; vx_mem = 1024;
+  // the Series 57 mod + space
+  A7_N = vx_p2(0.1 * srate); A7_M = A7_N - 1; A7_T = vx_alloc(A7_N); a7_wp = 0;
+  R7_N = vx_p2(0.045 * srate); R7_M = R7_N - 1; R7_S1 = vx_alloc(R7_N); R7_S2 = vx_alloc(R7_N); r7_w = 0;
+  R7_AS1 = vx_alloc(32); R7_AS2 = vx_alloc(32);
+  pre_lc = vx_kf(110);
+  xs_c = vx_kt(0.01);                                      // IN keys: 10 ms cross-fades
+  sm_c = vx_kt(0.02);                                      // knob glides (per sample)
+  dkr = 1 / (0.012 * srate);                               // FACE / ORDER: 12 ms out, 12 ms in
+  ms_c = vx_kt(0.003);                                     // FET colour: the running mean square
+  op_dc = vx_kt(0.005);                                    // opto detector: RMS over 5 ms
+  ds_at = vx_kt(0.0003); ds_rl = vx_kt(0.06);              // de-ess detector: 0.3 ms / 60 ms
+  ds_rc = vx_kt(0.003);                                    // de-ess: the band against the whole, 3 ms
+  du_at = vx_kt(0.012); du_rl = vx_kt(0.35);               // DUCK: the voice's envelope, 12 ms / 350 ms
+  du_gc = vx_kt(0.006);
+  vx_gb = 1;                                               // (the knob glides: set per block in @block - samplesblock is 0 in @init)
+  ost_init(0);
+  a7_init(); r7_init();
+);
+
+// ================= voicing (per block, from the current face ulm) =================
+// the pre-amp's and the saturation's make-up (dB) across DRIVE / AMOUNT 0, 25, 50, 75, 100 %: measured on the vocal
+// test signal, so turning them up adds colour rather than loudness
+function vx_tab(d, a, b, c, e, f) local(p, i, t) (
+  p = min(max(d, 0), 1) * 4; i = min(floor(p), 3); t = p - i;
+  i == 0 ? a + (b - a) * t : i == 1 ? b + (c - b) * t : i == 2 ? c + (e - c) * t : e + (f - e) * t;
+);
+// the opto's and the FET's make-up (dB): fitted on the vocal test signal so PEAK REDUCTION and AMOUNT change the
+// amount of levelling far more than the loudness
+function op_mkup(pr) ( ulm ? pr * (-3.215 + pr * (16.977 - 4.483 * pr)) : pr * (-3.677 + pr * (27.191 - 8.781 * pr)); );
+function fet_mkup(a, rt) local(d) (
+  d = a / 24;
+  rt == 0 ? vx_tab(d, 0.08, 1.67, 3.43, 6.61, 10.65) : rt == 1 ? vx_tab(d, 0.09, 1.97, 3.95, 7.59, 12.2) :
+  rt == 2 ? vx_tab(d, 0.09, 2.01, 3.93, 7.7, 12.53) : vx_tab(d, 0.1, 2.03, 3.86, 7.71, 12.72);
+);
+
+// a band's SHELF / BELL key: the band glides out (20 ms), changes shape at 0 dB (where both shapes are flat), glides back
+function eqk(want) instance(ty, k) ( want != ty ? ( k = max(k - eq_kr, 0); k <= 0 ? ty = want; ) : k = min(k + eq_kr, 1); k; );
+// the four bands (per block): COPENHAGEN broad and soft (wide bells, soft shelves, an eased HF boost and a rounded
+// corner); ULM precise (the Q as set, firm shelves, narrower LF / HF bells)
+function vx_eq() local(lg, lf, lk, mg, mf, mq, hg, hf, hq, fg, ff, fk, q, g) (
+  eq_kr = samplesblock / (0.02 * srate);
+  lk = eLF.eqk(slider28 >= 0.5); fk = eHF.eqk(slider51 >= 0.5);
+  lg = gd_lg.gl(slider26) * lk; lf = gd_lf.gl(slider27);
+  mg = gd_mg.gl(slider10); mf = gd_mf.gl(slider9); mq = gd_mq.gl(slider11);
+  hg = gd_hg.gl(slider46); hf = gd_hf.gl(slider47); hq = gd_hq.gl(slider48);
+  fg = gd_fg.gl(slider49) * fk; ff = gd_ff.gl(slider50);
+  vc_e1.chg(lg * 1.3 + lf * 0.0173 + eLF.ty * 7 + ulm * 101) ? (
+    q = eLF.ty ? ( !ulm ? 0.6 : 0.9 ) : ( !ulm ? 0.5 : 0.7 );
+    LP_.e1.bq_set(eLF.ty ? 2 : 4, lf, q, lg); RP_.e1.bq_set(eLF.ty ? 2 : 4, lf, q, lg);
+  );
+  vc_e2.chg(mg * 1.3 + mf * 0.0173 + mq * 7.1 + ulm * 101) ? (
+    q = !ulm ? mq * 0.7 : mq;
+    LP_.e2.bq_set(2, mf, q, mg); RP_.e2.bq_set(2, mf, q, mg);
+  );
+  vc_e3.chg(hg * 1.3 + hf * 0.0173 + hq * 7.1 + ulm * 101) ? (
+    q = !ulm ? hq * 0.7 : hq;
+    LP_.e3.bq_set(2, hf, q, hg); RP_.e3.bq_set(2, hf, q, hg);
+  );
+  vc_e4.chg(fg * 1.3 + ff * 0.0173 + eHF.ty * 7 + ulm * 101) ? (
+    eHF.ty ? ( q = !ulm ? 0.6 : 0.9; LP_.e4.bq_set(2, ff, q, fg); RP_.e4.bq_set(2, ff, q, fg); )
+           : ( !ulm ? ( q = 0.5; g = fg > 0 ? 0.85 * fg : fg; ) : ( q = 0.7; g = fg; );
+               LP_.e4.bq_set(3, ff, q, g); RP_.e4.bq_set(3, ff, q, g); );
+  );
+);
+
+function vx_voice() local(d, w, s, f, g, k) (
+  // ---------- PREAMP ----------
+  d = gd_pre.gl(slider6 / 100);
+  pre_on_t = slider5 >= 0.5;
+  !ulm ? (
+    pre_k = vx_db(-6 + 20 * d); pre_b = 0.15; pre_xa = 0.9 * d; pre_xd = 1.5 + 4 * d;
+    PL.k.clp_set(2, 1, 1.3, 0); PR.k.clp_set(2, 1, 1.3, 0);
+  ) : (
+    pre_k = vx_db(-8 + 16 * d); pre_b = 0.05; pre_xa = 0.35 * d; pre_xd = 1 + 2 * d;
+    PL.k.clp_set(2, 1.1, 1.1, 0); PR.k.clp_set(2, 1.1, 1.1, 0);
+  );
+  PL.pf.clp_pf_block(d, srate, samplesblock); PR.pf.clp_pf_block(d, srate, samplesblock);
+  w = pkt.clp_kt_block(d, srate, samplesblock); PL.k.clp_knee(w); PR.k.clp_knee(w);
+  pre_mk_t = vx_db(!ulm ? vx_tab(d, 0.02, 0.16, 0.65, 1.27, 1.8) : vx_tab(d, 0.01, 0.1, 0.26, 0.56, 1.16));
+  pre_cb = PL.k.clp_crv(pre_b);
+  pre_sl = pre_b <= PL.k.cp - w ? 1 : 1 - (pre_b - PL.k.cp + w) / (2 * w);
+  PL.k.clp_tidy(); PR.k.clp_tidy();
+  // the pre-amp's own colour, with DRIVE: COPENHAGEN a little low-mid weight, ULM a touch of presence
+  g = gd_pre.v;
+  vc_pre.chg(g + 2 * ulm) ? (
+    !ulm ? ( LP_.pe.bq_set(2, 220, 0.7, 1.2 * g); RP_.pe.bq_set(2, 220, 0.7, 1.2 * g); )
+         : ( LP_.pe.bq_set(2, 3000, 0.7, 0.6 * g); RP_.pe.bq_set(2, 3000, 0.7, 0.6 * g); );
+  );
+  // ---------- LOW END ----------
+  f = gd_hp.gl(slider7);
+  vc_hp.chg(f) ? ( LP_.hp.bq_set(1, f, 0.70710678, 0); RP_.hp.bq_set(1, f, 0.70710678, 0); );
+  g = gd_ls.gl(slider8);
+  vc_ls.chg(g) ? ( LP_.ls.bq_set(4, 150, 0.70710678, g); RP_.ls.bq_set(4, 150, 0.70710678, g); );
+  // ---------- OPTO ----------
+  s = gd_op.gl(slider13 / 100);
+  !ulm ? (
+    op_thr = -4 - 36 * s; op_sl = 1 - 1 / 3.5; op_kn = 12;
+    op_at = vx_kt(0.010); op_rf = vx_kt(0.08); op_as = vx_kt(0.4); op_rs = vx_kt(2.5); op_sw = 0.65;
+  ) : (
+    op_thr = -4 - 30 * s; op_sl = 1 - 1 / 2.5; op_kn = 8;
+    op_at = vx_kt(0.008); op_rf = vx_kt(0.06); op_as = vx_kt(0.5); op_rs = vx_kt(1.5); op_sw = 0.5;
+  );
+  op_mk_t = vx_db(op_mkup(s) + slider14);
+  op_lin = 10 ^ ((op_thr - 0.5 * op_kn - 3) / 10);              // the detector's mean square at the knee's foot
+  // ---------- DE-ESS ----------
+  f = gd_df.gl(slider16);
+  vc_df.chg(f) ? ( LP_.ds.dsx_set(1.2 * f); RP_.ds.dsx_set(1.2 * f); );
+  ds_thr = slider17; ds_rng = slider18; ds_lin = 10 ^ ((ds_thr - 3) / 20);
+  // ---------- FET ----------
+  k = gd_fa.gl(slider21);
+  fet_rt = slider22 | 0;
+  fet_sl = fet_rt == 0 ? 0.75 : fet_rt == 1 ? 0.875 : fet_rt == 2 ? 0.9167 : 0.95;
+  fet_thr = -6 - k; fet_lin = 10 ^ ((fet_thr - 1.5) / 20);
+  fet_ac = vx_kt(min(max(slider23, 20), 800) * 0.000001);
+  fet_rc = vx_kt(min(max(slider24, 50), 1100) * 0.001);
+  fet_mk_t = vx_db(fet_mkup(k, fet_rt));
+  // ---------- EQ: four bands, voiced by the face ----------
+  vx_eq();
+  // ---------- SATURATION ----------
+  s = gd_sa.gl(slider29 / 100);
+  sat_on_t = slider29 > 0.05;
+  !ulm ? (
+    sat_k = vx_db(-8 + 22 * s); sat_b = 0;
+    SL.k.clp_set(1, 1, 1, 0); SR.k.clp_set(1, 1, 1, 0);
+  ) : (
+    sat_k = vx_db(-8 + 18 * s); sat_b = 0.08;
+    SL.k.clp_set(2, 1, 1.25, 0); SR.k.clp_set(2, 1, 1.25, 0);
+  );
+  SL.pf.clp_pf_block(s, srate, samplesblock); SR.pf.clp_pf_block(s, srate, samplesblock);
+  w = skt.clp_kt_block(s, srate, samplesblock); SL.k.clp_knee(w); SR.k.clp_knee(w);
+  sat_mk_t = vx_db(!ulm ? vx_tab(s, 0, 0.32, 0.78, 1.42, 2.33) : vx_tab(s, 0, 0.07, 0.24, 0.63, 1.31));
+  sat_cb = SL.k.clp_crv(sat_b);
+  sat_sl = ulm ? ( sat_b <= 1 - w ? 1 : 1 - (sat_b - 1 + w) / (2 * w) ) : 1;
+  SL.k.clp_tidy(); SR.k.clp_tidy();
+  vc_sat.chg(s + 2 * ulm) ? (
+    !ulm ? ( LP_.s1.bq_set(2, 90, 0.9, 1.5 * s); RP_.s1.bq_set(2, 90, 0.9, 1.5 * s);
+             LP_.s2.bq_set(3, 9000, 0.6, -2.5 * s); RP_.s2.bq_set(3, 9000, 0.6, -2.5 * s); )
+         : ( LP_.s1.bq_set(2, 180, 0.8, 1.0 * s); RP_.s1.bq_set(2, 180, 0.8, 1.0 * s);
+             LP_.s2.bq_set(3, 9000, 0.6, 0); RP_.s2.bq_set(3, 9000, 0.6, 0); );
+  );
+  // ---------- the Series 57 mod + space ----------
+  a7_set(); r7_set();
+  r7_ten.gl(r7_ten_t); r7_dec.gl(r7_dec_t); r7_tn.gl(r7_tn_t); r7_loop();
+  // ---------- OUTPUT ----------
+  out_t = vx_db(slider45) * (ulm ? ULM_TRIM : 1);
+);
+// the face's fixed parts, set at the silent point of a swap
+function vx_model() (
+  !ulm ? (
+    PL.pf.clp_pf_cfg(22000, 7500, -1.0, 80);  PR.pf.clp_pf_cfg(22000, 7500, -1.0, 80);  pkt.clp_kt_cfg(0.55, 1.0);
+    SL.pf.clp_pf_cfg(22000, 9000, -1.5, 90);  SR.pf.clp_pf_cfg(22000, 9000, -1.5, 90);  skt.clp_kt_cfg(0.6, 1.0);
+  ) : (
+    PL.pf.clp_pf_cfg(22000, 12000, -2.0, 120); PR.pf.clp_pf_cfg(22000, 12000, -2.0, 120); pkt.clp_kt_cfg(0.5, 0.9);
+    SL.pf.clp_pf_cfg(22000, 11000, -1.5, 100); SR.pf.clp_pf_cfg(22000, 11000, -1.5, 100); skt.clp_kt_cfg(0.5, 0.9);
+  );
+  pkt.kti = 0; skt.kti = 0;
+  a7_set(); a7_tapeeq(); r7_modset(); r7_loop(); r7_clear();
+  vc_pre.l = vc_sat.l = vc_e1.l = vc_e2.l = vc_e3.l = vc_e4.l = -12345;
+);
+
+// ================= the stages (one sample, both sides: in vx_l / vx_r) =================
+
+function st_lowcut() (
+  vx_l = LP_.hp.bq_run(vx_l); vx_r = RP_.hp.bq_run(vx_r);
+  vx_l = LP_.ls.bq_run(vx_l); vx_r = RP_.ls.bq_run(vx_r);
+);
+function st_eq() local(a, b) (
+  eq_w += (eq_on_t - eq_w) * xs_c;
+  eq_w > 0.000001 || eq_on_t ? (
+    a = LP_.e4.bq_run(LP_.e3.bq_run(LP_.e2.bq_run(LP_.e1.bq_run(vx_l)))); b = RP_.e4.bq_run(RP_.e3.bq_run(RP_.e2.bq_run(RP_.e1.bq_run(vx_r))));
+    vx_l += (a - vx_l) * eq_w; vx_r += (b - vx_r) * eq_w;
+  );
+);
+function st_dyn() local(sc, t, e, g, a, b, gl_, y1, y2) (
+  // ---- OPTO (stereo linked) ----
+  op_w += (op_on_t - op_w) * xs_c;
+  op_w > 0.000001 || op_on_t ? (
+    sc = max(abs(vx_l), abs(vx_r));
+    op_ms += (sc * sc - op_ms) * op_dc;
+    // below the knee nothing is taken (the same result without the logarithm)
+    t = op_ms <= op_lin ? 0 : -op_sl * dy_curve(10 * log10(op_ms + 0.0000000001) + 3 - op_thr, op_kn);
+    op_ef += (t - op_ef) * (t < op_ef ? op_at : op_rf);
+    op_es += (t - op_es) * (t < op_es ? op_as : op_rs);
+    e = min(op_ef, op_es * op_sw);
+    op_mk += (op_mk_t - op_mk) * sm_c;
+    g = (e < -0.0000001 ? vx_db(e) : 1) * op_mk;
+    vx_l *= 1 + (g - 1) * op_w; vx_r *= 1 + (g - 1) * op_w;
+    op_grm = min(op_grm, e * op_w);
+  ) : ( op_ef = op_es = op_ms = 0; );
+  // ---- DE-ESS (split band, stereo linked) ----
+  ds_w += (ds_on_t - ds_w) * xs_c; ds_lw += (ds_lis_t - ds_lw) * xs_c;
+  ds_w > 0.000001 || ds_on_t ? (
+    ds_pa = LP_.ds.dsx_run(vx_l); ds_pb = RP_.ds.dsx_run(vx_r); a = LP_.ds.hi; b = RP_.ds.hi;
+    sc = max(abs(a), abs(b));
+    ds_env += (sc - ds_env) * (sc > ds_env ? ds_at : ds_rl);
+    // the band's power against the whole signal's (both sides): only sibilance stands out like this
+    ds_mh += (a * a + b * b - ds_mh) * ds_rc; ds_mf += (vx_l * vx_l + vx_r * vx_r - ds_mf) * ds_rc;
+    t = ds_env <= ds_lin || ds_mh <= 0.25118864 * ds_mf ? 0 :
+        min(ds_rng, dy_curve(20 * log10(ds_env + 0.000000001) - ds_thr, 6) * 0.75) * min((10 * log10(ds_mh / ds_mf) + 6) * 0.25, 1);
+    ds_gr += (t - ds_gr) * 0.5;
+    g = ds_gr > 0.0000001 ? vx_db(-ds_gr) - 1 : 0;
+    y1 = ds_pa + a * g; y2 = ds_pb + b * g;
+    y1 += (a - y1) * ds_lw; y2 += (b - y2) * ds_lw;           // LISTEN: the detector's band
+    vx_l = ds_pa + (y1 - ds_pa) * ds_w; vx_r = ds_pb + (y2 - ds_pb) * ds_w;
+    ds_grm = max(ds_grm, ds_gr * ds_w);
+  ) : ( vx_l = LP_.ds.dsx_apr(vx_l); vx_r = RP_.ds.dsx_apr(vx_r); ds_env = ds_gr = ds_mh = ds_mf = 0; );
+  // ---- FET (stereo linked), its colour grows with the gain it takes away ----
+  fet_w += (fet_on_t - fet_w) * xs_c;
+  fet_w > 0.000001 || fet_on_t ? (
+    sc = max(abs(vx_l), abs(vx_r));
+    t = sc <= fet_lin ? 0 : -fet_sl * dy_curve(20 * log10(sc + 0.000001) - fet_thr, 3);
+    fet_e += (t - fet_e) * (t < fet_e ? fet_ac : fet_rc);
+    fet_mk += (fet_mk_t - fet_mk) * sm_c;
+    g = fet_e < -0.0000001 ? vx_db(fet_e) : 1;
+    gl_ = 1 - g; gl_ *= gl_ * 0.35;
+    y1 = vx_l * g; y2 = vx_r * g;
+    a = min(y1 * y1, 4); b = min(y2 * y2, 4);
+    fet_m1 += (a - fet_m1) * ms_c; fet_m2 += (b - fet_m2) * ms_c;
+    y1 = (y1 + gl_ * (a - fet_m1)) * fet_mk; y2 = (y2 + gl_ * (b - fet_m2)) * fet_mk;
+    vx_l += (y1 - vx_l) * fet_w; vx_r += (y2 - vx_r) * fet_w;
+    fet_grm = min(fet_grm, fet_e * fet_w);
+  ) : ( fet_e = fet_m1 = fet_m2 = 0; );
+);
+
+// ================= presets =================
+// the whole unit apart from TRIM, GUARD and DRIFT
+function vx_dflt() (
+  slider1 = 0; slider2 = 0; slider5 = 1; slider6 = 30; slider7 = 60; slider8 = -2; slider9 = 240; slider10 = 2.5; slider11 = 0.8;
+  slider12 = 1; slider13 = 35; slider14 = 0; slider15 = 1; slider16 = 4500; slider17 = -28; slider18 = 6; slider19 = 0;
+  slider20 = 1; slider21 = 6; slider22 = 0; slider23 = 250; slider24 = 120; slider25 = 1; slider26 = 0; slider27 = 100; slider28 = 0;
+  slider29 = 25; slider30 = 0; slider31 = 24; slider32 = 30; slider33 = 0.5; slider34 = 40; slider35 = 70; slider36 = 1;
+  slider37 = 1; slider38 = 50; slider39 = 2; slider40 = 50; slider41 = 20; slider42 = 20; slider43 = 40; slider45 = 0;
+  slider46 = -2; slider47 = 2800; slider48 = 0.8; slider49 = -4; slider50 = 7000; slider51 = 0;
+);
+// short setters: front end (face, drive, hpf, shelf), dynamics (opto pr, opto gain, de-ess freq, thr, range, fet amount,
+// ratio, attack, release), EQ (order; LF gain, freq, bell; LMF gain, freq, Q; HMF gain, freq, Q; HF gain, freq, bell),
+// saturation, ADT, spring (+ output)
+function p_fe(m, dr, hp, ls) ( slider1 = m; slider6 = dr; slider7 = hp; slider8 = ls; );
+function p_dy(pr, og, df, dt, dg, fa, fr, fat, frl) ( slider13 = pr; slider14 = og; slider16 = df; slider17 = dt; slider18 = dg; slider21 = fa; slider22 = fr; slider23 = fat; slider24 = frl; );
+function p_eq(od, lg, lf, lb, mg, mf, mq, hg, hf, hq, fg, ff, fb) (
+  slider2 = od; slider26 = lg; slider27 = lf; slider28 = lb; slider10 = mg; slider9 = mf; slider11 = mq;
+  slider46 = hg; slider47 = hf; slider48 = hq; slider49 = fg; slider50 = ff; slider51 = fb;
+);
+function p_sat(s) ( slider29 = s; );
+function p_adt(on, t, dp, rt, sp, mx, spd) ( slider30 = on; slider31 = t; slider32 = dp; slider33 = rt; slider34 = sp; slider35 = mx; slider36 = spd; );
+function p_spr(on, te, dc, tn, dr, mx, dk, ou) ( slider37 = on; slider38 = te; slider39 = dc; slider40 = tn; slider41 = dr; slider42 = mx; slider43 = dk; slider45 = ou; );
+#vx_pm = "Init|Ulm Close Lead|Ulm Double-Tracked Lead|Ulm Spring Ballad|Ulm Radio Voice|Ulm Bright Twist|Copenhagen Warm Croon|Copenhagen Iron Lead|Copenhagen Wide Double|Copenhagen Spring Room|Copenhagen Late Session|Two Faces Hybrid";
+function load_preset(p) local(k) (
+  vx_dflt();
+  p == 2  ? ( p_fe(0, 25, 70, -2); p_dy(30, 0, 4760, -26, 6, 8, 0, 200, 120); p_eq(0, 0, 100, 0, 1.5, 250, 0.9, 2, 3500, 1, 1.5, 9000, 0); p_sat(20);
+              p_spr(1, 40, 1.4, 55, 15, 14, 50, 0.07); ) :
+  p == 3  ? ( p_fe(0, 30, 60, -2); p_dy(35, 0, 4760, -28, 6, 7, 0, 250, 120); p_eq(0, 0, 100, 0, 2, 240, 0.8, 1, 3200, 0.9, -2, 8000, 0); p_sat(25);
+              p_adt(1, 22, 30, 0.6, 50, 80, 1); p_spr(1, 50, 1.8, 50, 20, 14, 50, -1.95); ) :
+  p == 4  ? ( p_fe(0, 25, 70, -2.5); p_dy(40, 0, 4550, -28, 6, 6, 0, 250, 140); p_eq(0, 1, 150, 1, -1.5, 400, 1.2, 1.5, 3000, 0.9, -1, 9000, 0); p_sat(20);
+              p_spr(1, 65, 3.2, 45, 25, 30, 60, 1.20); ) :
+  p == 5  ? ( p_fe(0, 45, 80, -3); p_dy(45, 0, 4900, -26, 7, 10, 1, 150, 100); p_eq(0, -2, 180, 0, -2, 300, 1.2, 4, 3000, 1.2, -6, 7000, 0); p_sat(45);
+              p_spr(0, 50, 2, 50, 20, 20, 40, 1.00); ) :
+  p == 6  ? ( p_fe(0, 35, 60, -2); p_dy(30, 0, 5040, -24, 7, 10, 2, 120, 90); p_eq(0, 0, 100, 0, -1, 400, 1, 3, 3800, 1, 3, 11000, 0); p_sat(35);
+              p_adt(1, 12, 20, 1.2, 30, 60, 2); p_spr(1, 80, 1.6, 65, 35, 16, 50, -0.52); ) :
+  p == 7  ? ( p_fe(1, 35, 60, -1.5); p_dy(45, 0, 4340, -28, 6, 6, 0, 300, 160); p_eq(0, 2, 120, 0, 2.5, 220, 0.8, -2, 2800, 0.7, -5, 6500, 0); p_sat(35);
+              p_spr(1, 35, 2.2, 35, 15, 18, 45, -1.00); ) :
+  p == 8  ? ( p_fe(1, 55, 70, -2); p_dy(50, 0, 4550, -28, 6, 8, 1, 300, 160); p_eq(0, 1.5, 100, 0, 2, 280, 0.8, 1.5, 3200, 0.8, -3, 7500, 0); p_sat(60);
+              p_spr(1, 45, 1.6, 45, 30, 12, 50, -2.68); ) :
+  p == 9  ? ( p_fe(1, 30, 60, -2); p_dy(40, 0, 4550, -28, 6, 6, 0, 250, 120); p_eq(0, 0, 100, 0, 2, 240, 0.8, -1.5, 2800, 0.8, -4, 7000, 0); p_sat(25);
+              p_adt(1, 30, 40, 0.4, 85, 90, 0); p_spr(1, 40, 2.0, 45, 20, 14, 50, -0.61); ) :
+  p == 10 ? ( p_fe(1, 30, 70, -2.5); p_dy(40, 0, 4760, -28, 6, 6, 0, 250, 140); p_eq(1, 1, 150, 1, -2, 350, 1.2, 1, 3000, 0.9, -3, 7000, 0); p_sat(25);
+              p_spr(1, 55, 3.6, 40, 25, 32, 60, 1.56); ) :
+  p == 11 ? ( p_fe(1, 40, 80, -3); p_dy(55, 0, 4900, -32, 8, 7, 1, 300, 180); p_eq(0, -1, 150, 0, -2.5, 320, 1.2, -2, 2500, 0.8, -6, 6000, 0); p_sat(40);
+              p_adt(1, 40, 25, 0.25, 20, 50, 0); p_spr(1, 30, 2.8, 25, 20, 22, 55, 0.90); ) :
+  p == 12 ? ( p_fe(0, 35, 70, -2); p_dy(40, 0, 4760, -28, 6, 7, 0, 250, 130); p_eq(1, 1, 120, 0, 1.5, 250, 0.9, 2.5, 3500, 1, 2, 10000, 0); p_sat(30);
+              p_adt(1, 18, 35, 0.8, 60, 70, 1); p_spr(1, 60, 2.4, 50, 25, 20, 50, -0.74); );
+  p == 13 ? ( slider3 = 0; slider4 = 1; slider44 = 50; );
+  k = 1; loop(51, (p == 13 || (k != 3 && k != 4 && k != 44)) ? ui_auto(k); k += 1; );
+  pr_cur = p > 12 ? 1 : p;
+);
+
+// ================= start =================
+ULM_TRIM = 1.118;                                            // ULM level matched to COPENHAGEN at Init (vocal test signal)
+ulm = slider1 < 0.5; ord = slider2 >= 0.5;
+vx_srinit();
+in_init();
+PL.k.clp_set(2, 1, 1.3, 0); PR.k.clp_set(2, 1, 1.3, 0); SL.k.clp_set(1, 1, 1, 0); SR.k.clp_set(1, 1, 1, 0);
+PL.pf.clp_pf_reset(); PR.pf.clp_pf_reset(); SL.pf.clp_pf_reset(); SR.pf.clp_pf_reset();
+ostL.ost_ch_init(); ostR.ost_ch_init();
+dr_hA.drift_init(0.8 + rand(0.4)); dr_hB.drift_init(0.8 + rand(0.4)); dr_sA.drift_init(0.8 + rand(0.4)); dr_sB.drift_init(0.8 + rand(0.4));
+a7_dfS.drift_init(0.7 + rand(0.4)); a7_dfR.drift_init(0.8 + rand(0.4)); r7_dfA.drift_init(0.6 + rand(0.4)); r7_dfB.drift_init(0.7 + rand(0.4));
+sup_a = rand(2) - 1; sup_b = rand(2) - 1;                    // the two sides never quite match
+gd_pre.gl_set(slider6 / 100); gd_hp.gl_set(slider7); gd_ls.gl_set(slider8);
+gd_lg.gl_set(slider26); gd_lf.gl_set(slider27); gd_mg.gl_set(slider10); gd_mf.gl_set(slider9); gd_mq.gl_set(slider11);
+gd_hg.gl_set(slider46); gd_hf.gl_set(slider47); gd_hq.gl_set(slider48); gd_fg.gl_set(slider49); gd_ff.gl_set(slider50);
+eLF.ty = slider28 >= 0.5; eLF.k = 1; eHF.ty = slider51 >= 0.5; eHF.k = 1;
+gd_op.gl_set(slider13 / 100); gd_df.gl_set(slider16); gd_fa.gl_set(slider21);
+gd_sa.gl_set(slider29 / 100);
+vx_model();
+drift_macro(slider44);
+vx_voice();
+op_mk = op_mk_t; fet_mk = fet_mk_t; out_g = out_t;
+pre_kl = pre_kr = pre_sl_ = pre_sr_ = pre_k; pre_mk = pre_mk_t; sat_mk = sat_mk_t; sat_kl = sat_kr = sat_sl_ = sat_sr_ = sat_k;
+a7_init(); r7_init();
+pre_w = pre_on_t; op_w = slider12 >= 0.5; ds_w = slider15 >= 0.5; fet_w = slider20 >= 0.5; eq_w = slider25 >= 0.5;
+sat_w = sat_on_t; a7_w = a7_on; r7_fw = r7_on;
+dk = 1; dst = 0; du_g = 1; vx_dn = 0.000000000000000001;
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+0;
+
+@block
+srate != vx_sr ? ( vx_srinit(); in_init(); vx_model(); );
+in_setup(slider3, slider4 >= 0.5);
+drift_macro(slider44);
+// DRIFT: the heat (pre-amp, saturation), the ADT machine's capstan and oscillator, the springs' hangers
+vx_di = dm_s * samplesblock / srate;
+dr_hA.drift_tick(0.15 * vx_di); dr_hB.drift_tick(0.11 * vx_di); dr_sA.drift_tick(0.13 * vx_di); dr_sB.drift_tick(0.09 * vx_di);
+a7_dsp = dm_a * 0.012 * a7_dfS.drift_tick(0.12 * vx_di);   // (DRP57's capstan)
+a7_dra = dm_a * a7_dfR.drift_tick(0.2 * vx_di);
+r7_dma = dm_a * 0.8 * r7_dfA.drift_tick(0.12 * vx_di); r7_dmb = dm_a * 0.8 * r7_dfB.drift_tick(0.12 * vx_di);   // (VRB57's hangers)
+// a FACE or ORDER change: duck, swap at the silent point, fade back in (the voicing is rebuilt in the gap)
+dst == 0 && ((slider1 < 0.5) != ulm || (slider2 >= 0.5) != ord) ? dst = 1;
+dst == 2 ? ( vx_model(); dst = 3; );
+op_on_t = slider12 >= 0.5; ds_on_t = slider15 >= 0.5; ds_lis_t = slider19 >= 0.5; fet_on_t = slider20 >= 0.5; eq_on_t = slider25 >= 0.5;
+vx_gb = 1 - exp(-max(samplesblock, 1) / (0.03 * srate));   // the knob glides (30 ms), from this block's length
+vx_voice();
+// per side: the heat's wander (DRIFT) on the pre-amp and the saturation
+pre_kl = pre_k * (1 + dm_a * (0.05 * dr_hA.v + 0.015 * sup_a)); pre_kr = pre_k * (1 + dm_a * (0.05 * dr_hB.v + 0.015 * sup_b));
+sat_kl = sat_k * (1 + dm_a * (0.05 * dr_sA.v + 0.015 * sup_b)); sat_kr = sat_k * (1 + dm_a * (0.05 * dr_sB.v + 0.015 * sup_a));
+// the duck's target from the voice's envelope (per block)
+du_lv = 20 * log10(du_env + 0.0000001);
+du_t = vx_db(-r7_dk * min(max((du_lv + 42) / 18, 0), 1));
+// meters (mailboxes: raised here, read and cleared on the panel)
+mb_op = min(mb_op, op_grm); mb_fet = min(mb_fet, fet_grm); mb_ds = max(mb_ds, ds_grm); mb_du = min(mb_du, 20 * log10(du_g + 0.000001) * r7_fw);
+mb_sp = max(mb_sp, r7_pk * r7_cal);
+op_grm = 0; fet_grm = 0; ds_grm = 0;
+// housekeeping (denormals)
+abs(op_ms) < 0.000000000001 ? op_ms = 0; abs(ds_env) < 0.000000000001 ? ds_env = 0; abs(du_env) < 0.000000000001 ? du_env = 0;
+abs(fet_m1) < 0.000000000001 ? fet_m1 = 0; abs(fet_m2) < 0.000000000001 ? fet_m2 = 0;
+a7K.clp_tidy(); r7K.clp_tidy();
+// the springs idle: once the feed is off and the tail has died away, stop running them
+r7_idle = !r7_on && r7_fw < 0.000001 && r7_pk < 0.0000001; r7_pk = 0;
+r7_idle && !r7_clr ? ( r7_clear(); r7_clr = 1; ); !r7_idle ? r7_clr = 0;
+ost_setup(0, 0, 120, 6000, -0.3, 1);                  // the house output stage: CLIP always on (a character unit), no band SAT
+pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;        // no latency
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+in_process(spl0, spl1);
+vx_dn = -vx_dn;
+vx_l = in_l + vx_dn; vx_r = in_r + vx_dn;
+pk_in = max(pk_in, max(abs(in_l), abs(in_r)));
+
+// ---------- PREAMP ----------
+pre_w += (pre_on_t - pre_w) * xs_c;
+pre_w > 0.000001 || pre_on_t ? (
+  pre_sl_ += (pre_kl - pre_sl_) * sm_c; pre_sr_ += (pre_kr - pre_sr_) * sm_c;     // the drive glides per sample
+  pre_mk += (pre_mk_t - pre_mk) * sm_c;
+  pr_a = PL.pre_run(LP_.pe.bq_run(vx_l), pre_sl_) * pre_mk; pr_b = PR.pre_run(RP_.pe.bq_run(vx_r), pre_sr_) * pre_mk;
+  vx_l += (pr_a - vx_l) * pre_w; vx_r += (pr_b - vx_r) * pre_w;
+);
+// ---------- LOW END ----------
+st_lowcut();
+// ---------- EQ / DYNAMICS in the chosen order ----------
+ord ? ( st_eq(); st_dyn(); ) : ( st_dyn(); st_eq(); );
+// ---------- SATURATION ----------
+sat_w += (sat_on_t - sat_w) * xs_c;
+sat_w > 0.000001 || sat_on_t ? (
+  sat_sl_ += (sat_kl - sat_sl_) * sm_c; sat_sr_ += (sat_kr - sat_sr_) * sm_c;
+  sat_mk += (sat_mk_t - sat_mk) * sm_c;
+  pr_a = SL.sat_run(LP_.s2.bq_run(LP_.s1.bq_run(vx_l)), sat_sl_) * sat_mk; pr_b = SR.sat_run(RP_.s2.bq_run(RP_.s1.bq_run(vx_r)), sat_sr_) * sat_mk;
+  vx_l += (pr_a - vx_l) * sat_w; vx_r += (pr_b - vx_r) * sat_w;
+);
+// the voice's envelope for DUCK (before the effects)
+du_x = max(abs(vx_l), abs(vx_r));
+du_env += (du_x - du_env) * (du_x > du_env ? du_at : du_rl);
+
+// ---------- the Series 57 mod + space: ADT, SPRING (DUCK on its return) ----------
+a7_run();
+r7_run();
+
+// ---------- FACE / ORDER change: duck, swap at the silent point, fade back in ----------
+dst == 1 ? ( dk -= dkr; dk <= 0 ? ( dk = 0; ulm = slider1 < 0.5; ord = slider2 >= 0.5; dst = 2; ); ) :
+dst == 3 ? ( dk += dkr; dk >= 1 ? ( dk = 1; dst = 0; ); );
+dst ? ( dkg = dk * dk * (3 - 2 * dk); vx_l *= dkg; vx_r *= dkg; );
+
+// ---------- OUTPUT: level, the house output stage (CLIP always on) ----------
+out_g += (out_t - out_g) * sm_c;
+vx_l = ostL.ost_band(vx_l * out_g); vx_r = ostR.ost_band(vx_r * out_g);
+ost_out(vx_l, vx_r);
+spl0 = ost_l; spl1 = ost_r;
+pk_out = max(pk_out, max(abs(spl0), abs(spl1)));
+
+@gfx 1200 600
+ui_begin(1200, 600);
+
+// =====================================================================================================================
+// the faceplate: Series 57 (gfx-s57 parts: the enamel faceplate with its fine grid, the orange 57 badge, raised plates
+// and recessed wells, cream Bakelite knobs - the EQ, the high-pass, the shelf and the tone knobs in the house colour
+// code - lit keys, the IN buttons with their amber LEDs, edgewise meters in amber windows, a valve, the springs).
+// The face sets the palette: ULM alabaster, charcoal and signal orange; COPENHAGEN grey-birch, sage, oatmeal wool in the
+// wells, teak cheeks, teal and mustard. The modules run left to right in signal order: the top row, then the bottom.
+// =====================================================================================================================
+G7_LF = 0x7A4A2A; G7_LMF = 0x2F5FA8; G7_HMF = 0x2F7D46; G7_HF = 0xC0302A; G7_HPF = 0xE0B52A; G7_LPF = 0x1C1C1E;
+// a knob; with g7_kc set, its resin cap in the house colour (a darker skirt, a light index line)
+function g7_knob(cx, cy, r, idx, lo, hi, def, lg, label, fmt, stp) local(c0, c1, c2, c3) (
+  g7_kc ? ( c0 = S57_CREAM; c1 = S57_KSKT; c2 = S57_IDX; c3 = S57_KSHN;
+    S57_CREAM = g7_kc; S57_KSKT = ui_mix(g7_kc, 0x000000, 0.3); S57_IDX = g7_kc == G7_HPF ? 0x24242A : 0xF6F1E6; S57_KSHN = 0.25; );
+  s57_knob(cx, cy, r, idx, lo, hi, def, lg, label, fmt, stp);
+  g7_kc ? ( S57_CREAM = c0; S57_KSKT = c1; S57_IDX = c2; S57_KSHN = c3; );
+  g7_kc = 0;
+);
+// a module: a raised plate (pl = 1) or a recessed well, its title, its IN button after the title (idx > 0)
+function g7_mod(x, y, w, h, pl, s, idx) local(tw, th) (
+  pl ? s57_plate(x, y, w, h) : s57_well(x, y, w, h);
+  s57_title(x + 12, y + 9, s);
+  idx > 0 ? ( gfx_measurestr(s, tw, th); s57_inkey(x + 20 + tw / sc, y + 10, idx); );
+);
+// a drop-down: a charcoal-rimmed key, the current item, an orange arrow; a click opens the list
+function g7_drop(x, y, w, h, idx, menu) local(hov, i, n, cur) (
+  hov = s57_hov(x, y, w, h); n = pk_pcount(menu); cur = slider(idx) | 0;
+  ui_cola(0x000000, 0.14); s57_rr(x + 1, y + 2, w, h, 2);
+  ui_col(S57_INK); s57_rr(x, y, w, h, 2);
+  ui_col(hov ? S57_KEYH : S57_PLATE); s57_rr(x + 1.2, y + 1.2, w - 2.4, h - 2.4, 1.5);
+  gfx_setfont(13); ui_col(S57_INK); pk_pitem(menu, cur + 1, #g7_di); s57_t(x + 9, y + h * 0.5 - 6.5, #g7_di);
+  ui_col(S57_ORNG); gfx_triangle((x + w - 18) * sc, (y + h * 0.5 - 3) * sc, (x + w - 8) * sc, (y + h * 0.5 - 3) * sc, (x + w - 13) * sc, (y + h * 0.5 + 3) * sc);
+  hov && pressed && drag_id == 0 ? (
+    drag_id = -1;
+    strcpy(#g7_dm, ""); i = 1;
+    loop(n, i == cur + 1 ? strcat(#g7_dm, "!"); strcat(#g7_dm, pk_pitem(menu, i, #g7_dt)); i < n ? strcat(#g7_dm, "|"); i += 1; );
+    gfx_x = x * sc; gfx_y = (y + h) * sc; i = gfx_showmenu(#g7_dm); i > 0 ? s57_set(idx, i - 1);
+  );
+);
+// the Series 57 edgewise gain-reduction meter (as s57_gredge), its scale numbered at 2, 6, 10 and 20 so it reads at
+// narrower widths; the rest tick (0) is unnumbered, so the needle at rest crosses no label
+function g7_gredge(x, y, w, h, gr, label) instance(pos, vel, lt) local(dt, tgt, i, d, px, wx, ww) (
+  lt == 0 ? pos = 1;                                        // (the needle starts at rest)
+  dt = min(max(time_precise() - lt, 0.001), 0.05); lt = time_precise();
+  tgt = s57_grpos(gr);
+  vel += (150 * (tgt - pos) - 17 * vel) * dt; pos += vel * dt; pos = min(max(pos, -0.02), 1.02);
+  ui_cola(0x000000, 0.18); s57_rr(x + 1, y + 2, w, h, 3);
+  ui_col(S57_INK); s57_rr(x, y, w, h, 3);
+  wx = x + 6; ww = w - 12;
+  ui_col(S57_AMBD); s57_r(wx, y + 5, ww, h - 10);
+  i = 0; loop(10, ui_cola(S57_AMBW, 0.13); s57_r(wx + ww * 0.03 * i, y + 5 + i * 0.5, ww * (1 - 0.06 * i), h - 10 - i); i += 1; );
+  i = 0;
+  loop(8,
+    d = i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 4 : i == 4 ? 6 : i == 5 ? 10 : i == 6 ? 14 : 20;
+    px = wx + 20 + (ww - 40) * s57_grpos(d);
+    ui_col(S57_INK); s57_r(px, y + 8, 1.2, d == 0 || d == 10 || d == 20 ? 7 : 4);
+    gfx_setfont(13);
+    d == 2 || d == 6 || d == 10 || d == 20 ? ( sprintf(#g7_e, "-%d", d); s57_tc(px, y + 25, #g7_e); );   // (0, the rest, unnumbered)
+    i += 1;
+  );
+  ui_cola(S57_INK, 0.7); s57_r(wx + 20, y + 8, ww - 40, 1);
+  px = wx + 20 + (ww - 40) * pos;
+  ui_col(S57_NDL); s57_r(px - 0.8, y + 6, 1.8, h - 12);
+  ui_cola(0x000000, 0.25); s57_r(px + 1, y + 6, 1, h - 12);
+  gfx_setfont(13); ui_col(S57_INK); s57_tc(wx + ww * 0.5, y + h - 13, label);
+  ui_cola(0xFFFFFF, 0.08); s57_r(wx, y + 5, ww, (h - 10) * 0.4);
+);
+// the Series 57 edgewise VU meter (as s57_edge), its rest tick (-20) unnumbered, so the needle at rest crosses no label
+function g7_edge(x, y, w, h, lvl, label) instance(pos, vel, lt) local(dt, tgt, i, d, px, wx, ww) (
+  lt == 0 ? pos = -0.04;                                    // (the needle starts at rest)
+  dt = min(max(time_precise() - lt, 0.001), 0.05); lt = time_precise();
+  d = 20 * log10(max(lvl, 0.00001));
+  tgt = min(max((d + 20) / 23, -0.04), 1.04);
+  vel += (150 * (tgt - pos) - 17 * vel) * dt; pos += vel * dt; pos = min(max(pos, -0.05), 1.05);
+  ui_cola(0x000000, 0.18); s57_rr(x + 1, y + 2, w, h, 3);
+  ui_col(S57_INK); s57_rr(x, y, w, h, 3);
+  wx = x + 6; ww = w - 12;
+  ui_col(S57_AMBD); s57_r(wx, y + 5, ww, h - 10);
+  i = 0; loop(10, ui_cola(S57_AMBW, 0.13); s57_r(wx + ww * 0.03 * i, y + 5 + i * 0.5, ww * (1 - 0.06 * i), h - 10 - i); i += 1; );
+  i = 0;
+  loop(8,
+    d = i == 0 ? -20 : i == 1 ? -10 : i == 2 ? -7 : i == 3 ? -5 : i == 4 ? -3 : i == 5 ? 0 : i == 6 ? 1 : 3;
+    px = wx + 24 + (ww - 48) * (d + 20) / 23;
+    ui_col(d > 0 ? 0xC2321A : S57_INK); s57_r(px, y + 8, 1.2, d == 0 || d == -20 || d == 3 ? 7 : 4);
+    gfx_setfont(13); ui_col(d > 0 ? 0xC2321A : S57_INK);
+    d == -10 || d == -5 || d == 0 || d == 3 ? ( sprintf(#g7_e, d > 0 ? "+%d" : "%d", d); s57_tc(px, y + 25, #g7_e); );
+    i += 1;
+  );
+  ui_cola(S57_INK, 0.7); s57_r(wx + 24, y + 8, (ww - 48) * 20 / 23, 1); ui_col(0xC2321A); s57_r(wx + 24 + (ww - 48) * 20 / 23, y + 8, (ww - 48) * 3 / 23, 1);
+  px = wx + 24 + (ww - 48) * pos;
+  ui_col(S57_NDL); s57_r(px - 0.8, y + 6, 1.8, h - 12);
+  ui_cola(0x000000, 0.25); s57_r(px + 1, y + 6, 1, h - 12);
+  gfx_setfont(13); ui_col(S57_INK); s57_tc(wx + ww * 0.5, y + h - 13, label);
+  ui_cola(0xFFFFFF, 0.08); s57_r(wx, y + 5, ww, (h - 10) * 0.4);
+);
+function g7_hz(dst, f) ( f >= 1000 ? sprintf(dst, "%.2f kHz", f / 1000) : sprintf(dst, "%.0f Hz", f); );
+function g7_key(x, y, w, h, idx, s) ( s57_key(x, y, w, h, slider(idx) >= 0.5, s) ? s57_set(idx, slider(idx) >= 0.5 ? 0 : 1); );
+function g7_smallc(cx, y, s) ( gfx_setfont(13); ui_col(S57_DIM); s57_tc(cx, y, s); );
+
+// ---------- the modules (x, y = the section's top left) ----------
+function m_pre(x, y) (
+  g7_mod(x, y, 140, 276, 1, "PREAMP", 5);
+  s57_knob(x + 70, y + 88, 26, 6, 0, 100, 30, 0, "DRIVE", "%.0f%%", 0);
+  s57_knob(x + 38, y + 182, 14, 3, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+  g7_key(x + 72, y + 166, 56, 22, 4, "GUARD");
+  pk_led((x + 100) * sc, (y + 202) * sc, 3.5 * sc, slider4 >= 0.5 && g_grd > 0.5, 0xFF3A22);
+  g7_smallc(x + 70, y + 254, g7_m ? "WARM VALVE" : "TIGHT VALVE");
+);
+function m_low(x, y) (
+  g7_mod(x, y, 104, 276, 0, "LOW END", 0);
+  slider7 <= 20.5 ? strcpy(#s57_vs, "OFF") : sprintf(#s57_vs, "%.0f Hz", slider7);
+  g7_kc = G7_HPF; g7_knob(x + 52, y + 84, 20, 7, 20, 80, 60, 0, "HIGH-PASS", "", 0);
+  g7_kc = G7_LF; g7_knob(x + 52, y + 178, 20, 8, -3, 0, -2, 0, "SHELF", "%.1f dB", 0);
+  g7_smallc(x + 52, y + 254, "150 Hz SHELF");
+);
+function m_opto(x, y) (
+  g7_mod(x, y, 170, 276, 0, "OPTO", 12);
+  s57_knob(x + 85, y + 82, 25, 13, 0, 100, 35, 0, "PEAK REDUCTION", "%.0f%%", 0);
+  s57_knob(x + 85, y + 166, 15, 14, -10, 10, 0, 0, "GAIN", "%+.1f dB", 0);
+  g7mO.g7_gredge(x + 8, y + 214, 154, 54, slider12 >= 0.5 ? -g_op : 0, "GR");
+);
+function m_dess(x, y) (
+  g7_mod(x, y, 156, 276, 0, "DE-ESS", 15);
+  pk_led((x + 142) * sc, (y + 17) * sc, 3.5 * sc, slider15 >= 0.5 && g_ds > 1, 0xFF3A22);
+  g7_hz(#s57_vs, slider16); g7_kc = G7_HF; g7_knob(x + 42, y + 84, 19, 16, 4000, 10000, 4500, 1, "FREQ", "", 0);
+  s57_knob(x + 118, y + 84, 19, 17, -50, 0, -28, 0, "THRESH", "%.1f dB", 0);
+  s57_knob(x + 42, y + 178, 16, 18, 0, 12, 6, 0, "RANGE", "%.1f dB", 0);
+  g7_key(x + 86, y + 160, 62, 22, 19, "LISTEN");
+  sprintf(#g7_v, "-%.1f dB", g_ds); g7_smallc(x + 117, y + 204, slider15 >= 0.5 ? #g7_v : "OUT");
+  g7_smallc(x + 80, y + 254, "SPLIT BAND");
+);
+function m_fet(x, y) local(i) (
+  g7_mod(x, y, 170, 276, 0, "FET", 20);
+  s57_knob(x + 44, y + 84, 24, 21, 0, 24, 6, 0, "AMOUNT", "%.1f dB", 0);
+  i = 0; loop(4,
+    s57_key(x + 88 + (i % 2) * 40, y + 44 + floor(i / 2) * 28, 38, 22, (slider22 | 0) == i, i == 0 ? "4" : i == 1 ? "8" : i == 2 ? "12" : "20") ? s57_set(22, i);
+    i += 1; );
+  s57_cap(x + 126, y + 114, "RATIO");
+  s57_knob(x + 46, y + 166, 15, 23, 20, 800, 250, 1, "ATTACK", "%.0f us", 0);
+  s57_knob(x + 124, y + 166, 15, 24, 50, 1100, 120, 1, "RELEASE", "%.0f ms", 0);
+  g7mF.g7_gredge(x + 8, y + 214, 154, 54, slider20 >= 0.5 ? -g_fet : 0, "GR");
+);
+// the EQ: four columns (LF, LMF, HMF, HF), each GAIN, FREQ and Q (LF / HF: their SHELF / BELL keys), in the band's colour
+function g7_eqcol(cx, y, nm, cap, ig, iff, flo, fhi, fdf, iq, ik, gdf) (
+  gfx_setfont(12); ui_col(cap); s57_tc(cx, y + 40, nm);
+  g7_kc = cap; g7_knob(cx, y + 84, 18, ig, -15, 15, gdf, 0, "GAIN", "%+.1f dB", 0);
+  g7_hz(#s57_vs, slider(iff)); g7_kc = cap; g7_knob(cx, y + 160, 16, iff, flo, fhi, fdf, 1, "FREQ", "", 0);
+  iq > 0 ? ( g7_kc = cap; g7_knob(cx, y + 230, 12, iq, 0.4, 4, 0.8, 1, "Q", "%.2f", 0); ) : (
+    s57_key(cx - 41, y + 222, 40, 22, slider(ik) < 0.5, "SHELF") ? s57_set(ik, 0);
+    s57_key(cx + 1, y + 222, 40, 22, slider(ik) >= 0.5, "BELL") ? s57_set(ik, 1);
+  );
+);
+function m_eq(x, y) (
+  g7_mod(x, y, 376, 276, 0, "EQ", 25);
+  gfx_setfont(13); ui_col(S57_DIM); s57_t(x + 84, y + 12, g7_m ? "BROAD  ·  SOFT SHELVES  ·  SWEET TOP" : "PRECISE  ·  FIRM SHELVES  ·  TIGHT Q");
+  ui_cola(S57_INK, 0.25); s57_r(x + 96, y + 34, 1, 232); s57_r(x + 188, y + 34, 1, 232); s57_r(x + 280, y + 34, 1, 232);
+  g7_eqcol(x + 50, y, "LF", G7_LF, 26, 27, 30, 450, 100, 0, 28, 0);
+  g7_eqcol(x + 142, y, "LMF", G7_LMF, 10, 9, 120, 2000, 240, 11, 0, 2.5);
+  g7_eqcol(x + 234, y, "HMF", G7_HMF, 46, 47, 600, 8000, 2800, 48, 0, -2);
+  g7_eqcol(x + 326, y, "HF", G7_HF, 49, 50, 1500, 16000, 7000, 0, 51, -4);
+);
+function m_sat(x, y) (
+  g7_mod(x, y, 150, 240, 1, "SATURATION", 0);
+  s57_knob(x + 75, y + 86, 26, 29, 0, 100, 25, 0, "AMOUNT", "%.0f%%", 0);
+  s57_valve(x + 75, y + 168, 0.62, slider29 > 0.05 ? 0.25 + 0.75 * slider29 / 100 : 0);
+  g7_smallc(x + 75, y + 222, slider29 > 0.05 ? (g7_m ? "OUTPUT IRON" : "VALVE MAKE-UP") : "OUT");
+);
+function m_adt(x, y) local(i, a, cx, cy, sp) (
+  g7_mod(x, y, 360, 240, 0, "ADT", 30);
+  gfx_setfont(13); ui_col(S57_DIM); s57_t(x + 84, y + 12, "ARTIFICIAL DOUBLE TRACKING");
+  sprintf(#s57_vs, "%.1f ms", slider31); s57_knob(x + 44, y + 86, 20, 31, 4, 60, 24, 0, "TIME", "", 0);
+  s57_knob(x + 112, y + 86, 20, 32, 0, 100, 30, 0, "DEPTH", "%.0f%%", 0);
+  s57_knob(x + 180, y + 86, 20, 33, 0.1, 4, 0.5, 1, "RATE", "%.2f Hz", 0);
+  s57_knob(x + 248, y + 86, 20, 34, 0, 100, 40, 0, "SPREAD", "%.0f%%", 0);
+  s57_knob(x + 316, y + 86, 20, 35, 0, 100, 70, 0, "MIX", "%.0f%%", 0);
+  s57_cap(x + 66, y + 166, "SPEED");
+  g7_drop(x + 104, y + 154, 118, 24, 36, "7 1/2 IPS|15 IPS|30 IPS");
+  // the second machine's reels, turning while the double runs
+  sp = slider30 >= 0.5 ? 1 : 0;
+  g7_rot += sp * 0.12 * (1 + 0.3 * slider32 / 100 * sin(time_precise() * 2 * $pi * slider33));
+  i = 0; loop(2,
+    cx = x + 262 + i * 62; cy = y + 180;
+    ui_col(S57_INK); gfx_circle(cx * sc, cy * sc, 25 * sc, 1, 1);
+    ui_col(S57_PLATE); gfx_circle(cx * sc, cy * sc, 22.5 * sc, 1, 1);
+    ui_col(S57_INK); gfx_circle(cx * sc, cy * sc, 6 * sc, 1, 1);
+    a = 0; loop(3, ui_col(S57_INK);
+      s57_ln(cx + 7 * cos(g7_rot + i + a), cy + 7 * sin(g7_rot + i + a), cx + 20 * cos(g7_rot + i + a), cy + 20 * sin(g7_rot + i + a), 3);
+      a += 2 * $pi / 3; );
+    ui_col(sp ? S57_ORNG : S57_DIM); gfx_circle(cx * sc, cy * sc, 2.5 * sc, 1, 1);
+    i += 1; );
+  ui_col(S57_INK); s57_r(x + 262, y + 204, 62, 1.5);
+  g7_smallc(x + 162, y + 220, "VARISPEED  ·  SECOND MACHINE");
+);
+function m_spring(x, y) local(i, j, sy, xa, am) (
+  g7_mod(x, y, 438, 240, 0, "SPRING", 37);
+  gfx_setfont(13); ui_col(S57_DIM); s57_t(x + 112, y + 12, g7_m ? "TWO SPRINGS  ·  DARK" : "TWO SPRINGS  ·  BRIGHT");
+  s57_knob(x + 42, y + 86, 20, 38, 0, 100, 50, 0, "TENSION", "%.0f%%", 0);
+  s57_knob(x + 112, y + 86, 20, 39, 0.5, 5, 2, 1, "DECAY", "%.2f s", 0);
+  g7_hz(#s57_vs, (g7_m ? 3800 : 5000) * 2 ^ (1.4 * (slider40 / 100 - 0.5)));
+  g7_kc = G7_LPF; g7_knob(x + 182, y + 86, 20, 40, 0, 100, 50, 0, "TONE", "", 0);
+  s57_knob(x + 252, y + 86, 20, 41, 0, 100, 20, 0, "DRIVE", "%.0f%%", 0);
+  s57_knob(x + 322, y + 86, 20, 42, 0, 100, 20, 0, "MIX", "%.0f%%", 0);
+  sprintf(#s57_vs, "%.0f%%  (%.1f dB)", slider43, slider43 * 0.15); s57_knob(x + 392, y + 86, 20, 43, 0, 100, 40, 0, "DUCK", "", 0);
+  // the window: the two springs between their transducers; they tremble with the return
+  ui_col(S57_INK); s57_rr(x + 12, y + 150, 236, 72, 3);
+  ui_col(S57_AMBD); s57_r(x + 17, y + 155, 226, 62);
+  i = 0; loop(8, ui_cola(S57_AMBW, 0.12); s57_r(x + 17 + i * 5, y + 155 + i * 2, 226 - i * 10, 62 - i * 4); i += 1; );
+  i = 0; loop(2,
+    sy = y + 172 + i * 28;
+    ui_col(S57_INK); s57_rr(x + 24, sy - 8, 12, 16, 2); s57_rr(x + 224, sy - 8, 12, 16, 2);
+    j = 0; loop(47, xa = x + 36 + j * 4; am = 4 + min(g_sp * 14, 4) * sin(time_precise() * 30 + j * 0.4 + i);
+      ui_col(0x9EA3AA); s57_ln(xa, sy - am * (j & 1 ? 1 : -1), xa + 4, sy + am * (j & 1 ? 1 : -1), 1.3); j += 1; );
+    i += 1; );
+  g7mD.g7_gredge(x + 258, y + 150, 168, 54, slider37 >= 0.5 ? -g_du : 0, "DUCK");
+  g7_smallc(x + 342, y + 216, "VALVE SEND AMP");
+);
+function m_out(x, y) (
+  g7_mod(x, y, 184, 240, 1, "OUTPUT", 0);
+  s57_knob(x + 50, y + 62, 18, 44, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+  s57_knob(x + 132, y + 62, 20, 45, -12, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+  g7mI.g7_edge(x + 10, y + 108, 164, 54, g_pi * 2.83, "IN");
+  g7mU.g7_edge(x + 10, y + 166, 164, 54, g_po * 2.83, "OUT");
+  pk_led((x + 24) * sc, (y + 230) * sc, 3.5 * sc, g_clp, 0xFF3A22);
+  gfx_setfont(13); ui_col(S57_DIM); s57_t(x + 34, y + 224, "CLIP · ALWAYS ON");
+);
+
+// ---------- the frame ----------
+g7_m = slider1 >= 0.5;
+s57_pal(g7_m);
+s57_fonts();
+s57_face(1200, 600);
+// the panel's mailboxes, read and cleared here
+g_op = min(mb_op, g_op * 0.8); mb_op = 0;
+g_fet = min(mb_fet, g_fet * 0.8); mb_fet = 0;
+g_ds = max(mb_ds, g_ds * 0.8); mb_ds = 0;
+g_du = min(mb_du, g_du * 0.85); mb_du = 0;
+g_sp = max(mb_sp, g_sp * 0.7); mb_sp = 0;
+g_pi = max(pk_in, g_pi * 0.8); pk_in = 0;
+g_po = max(pk_out, g_po * 0.8); pk_out = 0;
+g_clp = ost_clipped; ost_clipped = 0;
+g_grd = in_grd; in_grd = 0;
+
+// ---------- the header: the 57 badge, the name, the small print, presets, ORDER, the face keys, the size picker ----------
+ui_col(S57_INK); s57_r(0, 52, 1200, 2);
+ui_col(S57_ORNG); s57_r(24, 14, 26, 26);
+gfx_setfont(15); ui_col(g7_m ? 0xF2EEE2 : 0xFFF7EE); s57_tc(37, 27, "57");
+gfx_setfont(14); gfx_measurestr("STR57", g7_tw, g7_th); ui_col(S57_INK); gfx_x = 60 * sc; gfx_y = 14 * sc - g7_th * 0.2; gfx_drawstr("STR57");
+g7_sx = 60 + g7_tw / sc + 14;
+gfx_setfont(13); ui_col(S57_DIM); s57_t(g7_sx, 16, "SERIES 57"); s57_t(g7_sx, 30, g7_m ? "VOCAL STRIP · COPENHAGEN" : "VOCAL STRIP · ULM");
+pk_pextra = "Reset all to defaults";
+gk_ = pk_preset(320 * sc, 10 * sc, 370 * sc, 34 * sc, pr_cur, #vx_pm);
+gk_ > 0 ? load_preset(gk_);
+g7ok.s57_orderkey(712, 16, 170, 22, slider2 >= 0.5 ? "EQ > DYNAMICS" : "DYNAMICS > EQ") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+s57_facekeys(952, 16, 1);
+ui_size_picker(1116 * sc, 18 * sc);
+
+// ---------- the top row: PREAMP, LOW END, then the EQ and the dynamics in the chosen order ----------
+g7_o = slider2 >= 0.5;
+m_pre(20, 64);
+m_low(168, 64);
+m_eq(g7_o ? 280 : 800, 64);
+m_opto(g7_o ? 664 : 280, 64);
+m_dess(g7_o ? 842 : 458, 64);
+m_fet(g7_o ? 1006 : 622, 64);
+// ---------- the bottom row: SATURATION, ADT, SPRING, OUTPUT ----------
+m_sat(20, 350);
+m_adt(178, 350);
+m_spring(546, 350);
+m_out(992, 350);
+
+s57_cheeks(1200, 600);
+pk_end();
+ui_end();

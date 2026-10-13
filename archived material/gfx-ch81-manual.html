@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX CH81 - manual</title><meta name="description" content="A modular channel strip built from the GFX range: pick an engine for each slot and mix and match.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-ch81">
+<div class="cat">Dynamics</div><h1>CH81</h1>
+<p class="tagline">A modular channel strip built from the GFX range: pick an engine for each slot and mix and match.</p>
+<div class="shot"><img src="img/gfx-ch81.webp" alt="The CH81 panel, TKY theme" loading="lazy"></div><div class="shot"><img src="img/gfx-ch81-matrix.webp" alt="The CH81 panel, NYC theme" loading="lazy"></div>
+<h2>Overview</h2>
+<p>CH81 is a full channel strip in the 81 series: input, gate, compressor, equaliser, saturation and output in one compact panel. Each slot has three or four engines to choose from, and every engine is the sound engine of a GFX plug-in itself - set the same controls and it sounds like the original. Pick, for example, Tony Q into Fet81 into the Gate, or Board EQ into the OB Q compressor into the expander, and swap any of them while the music plays.</p>
+<p>The signal runs: INPUT (gain, low cut, high cut) &gt; GATE &gt; EQ and COMP in the ORDER you choose &gt; SAT &gt; OUTPUT (level and the house output stage).</p>
+<ul>
+<li><strong>GATE</strong> - GATE (the GFX Gate), EXPANDER (the OB Q console expander) or DRUM GATE (a fast keyed gate new to this strip).</li>
+<li><strong>COMP</strong> - FET81, OB Q or SMOOTH.</li>
+<li><strong>EQ</strong> - TONY Q (Tony Q 550, TKY and NYC), BOARD (Board EQ) or SKYE.</li>
+<li><strong>SAT</strong> - IRON or TRANS (an output transformer or a transistor line stage), HEAD (the tape head of Headsmoother) or TS-7.</li>
+</ul>
+<p>Each engine keeps its own settings, so you can set up two compressors, say, and flip between them to compare. Only the chosen engine in each slot runs, so the strip costs no more CPU than the plug-ins you picked.</p>
+<h3>Reach for it for</h3><ul class="when"><li>A complete channel on any track, without building a chain of plug-ins</li><li>Trying a different compressor or EQ in the same place in seconds</li><li>Vocals, drums, bass and guitars from one familiar panel</li><li>Coloured console-style processing with one supply that breathes across the whole strip</li></ul>
+
+<h2>Two themes</h2><p>CH81 has two panel themes, the TKY / NYC keys in the header, named after the two cities of the Tony Q 550: TKY, charcoal with vermillion keys (the default), and NYC, a blue-grey console with amber keys. The theme changes only the look - the labels are in English in both, and every engine can be picked in every slot whichever theme is showing. Presets leave the theme as it is.</p>
+
+<h2>Controls</h2>
+<h3>Header</h3>
+<dl class="ctl"><dt>PRESETS</dt><dd>Opens the list of the 14 factory presets (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>The name of the preset in use. New instances open on Init.</dd><dt>TKY / NYC</dt><dd>The panel theme: TKY (charcoal, the default) or NYC (blue-grey), the two cities of the Tony Q 550. It changes only the look (see Two themes).</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>The design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>Engine keys and IN keys</h3>
+<p>Each slot has a row of lit keys: the lit one is the engine in the slot. Changing an engine fades the strip out, swaps the engine at the silent point and fades back in (about 30 ms, plus the new engine's latency), so it never clicks. The engine you switch to starts from a clean state, with the settings you last gave it.</p>
+<p>The small grey IN button at the right of each slot's title (its amber LED is lit while the slot is in) switches the slot in or out with a 10 ms crossfade. Out, the slot's engine keeps running, and the bypass is delayed to match it, so the timing never jumps.</p>
+
+<h3>INPUT</h3>
+<dl class="ctl"><dt>LOW CUT</dt><dd>A 12 dB/octave high-pass, 20 - 500 Hz. Fully left is OFF. It glides to a new setting and fades in and out, so moving it never clicks.</dd><dt>HIGH CUT</dt><dd>A 12 dB/octave low-pass, 2 - 22 kHz. Fully right is OFF.</dd><dt>GAIN</dt><dd>The input level, -24 to +24 dB, before everything else. Click the knob (its LED, upper right) for GUARD: on by default, it eases very hot sources down towards about -18 dBFS average and catches fast peaks above -6 dBFS. It never boosts quiet sources.</dd><dt>IN meters</dt><dd>The level after GAIN and GUARD, left and right.</dd></dl>
+
+<h3>COMP</h3>
+<p>The GR row shows the gain reduction of the slot's compressor: 1, 2, 3, 4, 6, 9, 12 and 20 dB.</p>
+<p class="sub"><strong>FET81</strong> - the fast FET limiter, as on Fet81 (2x oversampled, 23 samples of latency).</p>
+<dl class="ctl"><dt>INPUT</dt><dd>-24 to +24 dB into the fixed threshold: more INPUT, more compression.</dd><dt>OUTPUT</dt><dd>-24 to +24 dB after the gain element and the class-A line amp.</dd><dt>ATTACK / RELEASE</dt><dd>1 (slowest) to 7 (fastest): 800 to 20 microseconds, 1.1 s to 50 ms, with a two-stage, programme-dependent release.</dd><dt>RATIO</dt><dd>4, 8, 12, 20 or ALL (all buttons in: about 40:1 at first, bending over to about 12:1, with the famous overshoot and grit).</dd><dt>MIX</dt><dd>Parallel compression, 0 - 100%.</dd><dt>LINK</dt><dd>Stereo link, on by default.</dd></dl>
+<p class="sub"><strong>OB Q</strong> - the 80s broadcast console compressor and limiter, as on OB Q.</p>
+<dl class="ctl"><dt>THRESH</dt><dd>-40 to 0 dB.</dd><dt>RATIO</dt><dd>1:1 to 20:1 (20 = infinity).</dd><dt>ATTACK / RELEASE</dt><dd>0.1 - 30 ms and 30 - 3000 ms.</dd><dt>GAIN</dt><dd>Make-up gain, -10 to +20 dB.</dd><dt>LIMIT</dt><dd>The brick-wall limiter after the compressor, -20 to 0 dB (0 = off).</dd><dt>MIX</dt><dd>Parallel compression, 0 - 100%.</dd><dt>XFMR</dt><dd>The output transformer: the lows saturate gently with level and the extreme top softens. On by default.</dd><dt>LINK</dt><dd>Stereo link.</dd></dl>
+<p class="sub"><strong>SMOOTH</strong> - the one-knob optical-style compressor, as in Headsmoother.</p>
+<dl class="ctl"><dt>COMPRESS</dt><dd>0 - 10: lowers the threshold (3 dB per step) into a 3:1 soft-knee curve.</dd><dt>OUTPUT</dt><dd>-12 to +24 dB.</dd><dt>BLEND</dt><dd>The compressed, coloured signal against the dry, 0 - 100%.</dd><dt>LIMIT</dt><dd>20:1 with a hard knee and twice-as-fast attack.</dd><dt>ATTACK / RELEASE</dt><dd>SLOW, MED or FAST; the release has two stages and slows the longer it has been squeezing.</dd></dl>
+
+<h3>GATE</h3>
+<p>The GR row shows how far the gate is closing (out by default: switch the slot IN to use it).</p>
+<p class="sub"><strong>GATE</strong> - the GFX Gate in its gate mode.</p>
+<dl class="ctl"><dt>THRESH / RANGE</dt><dd>Opening threshold, -80 to 0 dB; how far it closes, 0 - 80 dB.</dd><dt>ATTACK / HOLD / RELEASE</dt><dd>0.01 - 100 ms, 0 - 2000 ms, 5 - 4000 ms.</dd><dt>KEY HPF / KEY LPF</dt><dd>Filters in the detector only (the yellow cap is the high-pass), so a kick can open the gate and the hi-hat cannot.</dd><dt>HYST</dt><dd>Hysteresis, 0 - 20 dB: it closes this far below where it opened, so it does not chatter.</dd><dt>AHEAD</dt><dd>Look-ahead, 0 - 10 ms, so the very first transient is never cut. It adds its time to the strip's latency; changing it fades the strip out and back in.</dd><dt>SOFT</dt><dd>A soft knee instead of a hard switch.</dd><dt>LISTEN</dt><dd>Hear the filtered key signal.</dd></dl>
+<p class="sub"><strong>EXPANDER</strong> - the OB Q console expander: a soft downward expander that turns the quiet parts down gently rather than switching them off.</p>
+<dl class="ctl"><dt>THRESH</dt><dd>-80 to 0 dB.</dd><dt>RANGE</dt><dd>0 - 60 dB: the most it turns down.</dd><dt>RELEASE</dt><dd>20 - 2000 ms.</dd></dl>
+<p class="sub"><strong>DRUM GATE</strong> - a fast peak gate for close drum mics, new for this strip.</p>
+<dl class="ctl"><dt>THRESH / RANGE</dt><dd>-60 to 0 dB; 0 - 80 dB.</dd><dt>HOLD / RELEASE</dt><dd>0 - 500 ms; 5 - 1000 ms.</dd><dt>KEY</dt><dd>The centre of the band-pass the detector listens through, 40 Hz - 8 kHz: low for a kick, around 200 Hz for a snare.</dd><dt>FAST / SOFT</dt><dd>The opening: 0.08 ms for every stick attack, or 1.5 ms for a rounder start.</dd></dl>
+<p>DRUM GATE always looks 1 ms ahead (added to the strip's latency) and has 4 dB of hysteresis.</p>
+
+<h3>EQ</h3>
+<p>In every EQ engine the knob caps follow the bands: LF brown, LMF blue, HMF green and HF red.</p>
+<p class="sub"><strong>TONY Q</strong> - the Tony Q 550, with its two cities (run at the host rate here, with no latency; its op-amp is anti-aliased).</p>
+<dl class="ctl"><dt>TKY / NYC</dt><dd>The city: each has its own settings, and switching crossfades between them.</dd><dt>HIGH / MID / LOW</dt><dd>Stepped FREQ and the LEVEL (TKY, -15 to +15 dB in 1 dB steps) or GAIN (NYC, -12 to +12 dB in steps) of each band.</dd><dt>SHELF</dt><dd>HIGH and LOW as shelves (lit) or bells.</dd><dt>DRIVE</dt><dd>0 - 24 dB into the city's discrete preamp and transformer, taken off again after it: DRIVE changes the colour, not the level.</dd><dt>OUTPUT</dt><dd>-12 to +12 dB.</dd></dl>
+<p class="sub"><strong>BOARD</strong> - the Board EQ, a four-band console EQ.</p>
+<dl class="ctl"><dt>HF / HMF / LMF / LF</dt><dd>FREQ and GAIN (&plusmn;15 dB) of each band; Q on the two mids.</dd><dt>BELL</dt><dd>HF and LF as bells (lit) instead of shelves.</dd><dt>BROWN / BLACK</dt><dd>The voicing: BROWN, the gentler card with broad curves; BLACK, the later card whose bells tighten as you boost or cut.</dd><dt>DRIVE</dt><dd>The channel's line amp, 0 - 100% (level matched).</dd><dt>OUTPUT</dt><dd>-12 to +12 dB.</dd></dl>
+<p class="sub"><strong>SKYE</strong> - the Skye broadcast parametric.</p>
+<dl class="ctl"><dt>BAND 1 - 4</dt><dd>FREQ, GAIN (&plusmn;16 dB) and BW (0.1 - 4 octaves) for each of four overlapping bands, each with its own IN button.</dd><dt>SHELF</dt><dd>BAND 1 and BAND 4 as low and high shelves; BW then sets the slope.</dd><dt>OUTPUT</dt><dd>-12 to +12 dB.</dd></dl>
+
+<h3>SAT</h3>
+<dl class="ctl"><dt>IRON</dt><dd>An output transformer: a little low-end weight, the low band saturates first in the core, the wave rounds softly and the top softens as you drive it.</dd><dt>TRANS</dt><dd>A transistor line stage: a harder knee, a touch of asymmetry and a little presence.</dd><dt>DRIVE</dt><dd>(IRON and TRANS) 0 - 100% (20% by default), roughly level compensated: the shelves of IRON and TRANS add a little weight or presence as you drive them.</dd></dl>
+<p class="sub"><strong>HEAD</strong> - the tape head of Headsmoother.</p>
+<dl class="ctl"><dt>DRIVE</dt><dd>0 - 10. As DRIVE goes up, more of the lows skip the curve, so the bass does not push the rest in and out of saturation; the level stays about the same.</dd><dt>TRIM</dt><dd>-24 to +6 dB after the head.</dd><dt>BOOST</dt><dd>0 - 100%: tape asymmetry (even harmonics), and the band saturation of the output stage with it, as on Headsmoother.</dd><dt>NORMAL / MEDIUM / BRIGHT</dt><dd>The head's voicing.</dd></dl>
+<p class="sub"><strong>TS-7</strong> - the TS-7 tape and transformer box (2x or 4x oversampled).</p>
+<dl class="ctl"><dt>INPUT</dt><dd>-12 to +24 dB: drives the iron and the compressor (their thresholds are fixed).</dd><dt>WARMTH</dt><dd>OFF, 1 - 6: the HF tape tamer, each step 4 dB lower.</dd><dt>MIX</dt><dd>Parallel compression, 0 - 100%.</dd><dt>OUTPUT</dt><dd>-24 to +12 dB.</dd><dt>COMP</dt><dd>OFF, TX (gentle 2:1 into an output transformer), BUS (3:1 programme compression) or SLAM (feedback, ultra fast).</dd><dt>IRON</dt><dd>The input transformer.</dd><dt>2x / 4x</dt><dd>Oversampling (31 or 36 samples of latency). Changing it fades the strip out and back in.</dd></dl>
+
+<h3>OUTPUT</h3>
+<dl class="ctl"><dt>Meters</dt><dd>The output, left and right, on LED bars from -48 to 0 dBFS. The bar shows the average level with VU ballistics (0 VU = -18 dBFS, where green turns amber); the single segment above it is the peak, held for a moment.</dd><dt>ORDER</dt><dd>One key: each press swaps EQ &gt; COMP and COMP &gt; EQ, and its legend shows the order in use. Its LED lights while the key is held. Changing it fades the strip out and back in.</dd><dt>LEVEL</dt><dd>The strip's output level, -24 to +12 dB.</dd><dt>DRIFT</dt><dd>The supply, 0 - 100% (50% by default) - see Drift below.</dd><dt>BAND SAT</dt><dd>The house output stage's band saturation, 0 - 100% (off by default): only the lows and highs are saturated.</dd><dt>CLIP</dt><dd>The house soft clipper is always on, at -0.3 dBFS; the lamp lights while it works.</dd><dt>latency</dt><dd>The strip's latency in samples, when it has any: the sum of the engines in use (Fet81 23, TS-7 31 or 36, GATE its look-ahead, DRUM GATE 1 ms). REAPER compensates for it.</dd></dl>
+<p class="sub"><strong>Parameter list only</strong></p><p>BIAS, LOW and HIGH bands and CEILING of the output stage. Every engine's controls are in REAPER's parameter list too, named after their slot and engine (EQ Board: HMF gain, Comp Fet81: Input ...).</p>
+
+<h3>Drift</h3>
+<p>One supply feeds the whole strip. Its voltage wanders slowly, and it sags under load (a slow follower of the input level), and every stage's headroom follows it: the saturation, the compressors' thresholds and the engines' own non-linear stages all move a little together, most of all when the strip is pushed. The engines' own drift is off; the strip breathes from the one supply. 50% is the standard amount, 100% twice that, 0% a perfectly steady supply.</p>
+
+<h2>Presets</h2>
+<p>Presets set the engines and their settings. The theme, GUARD, DRIFT and the output stage stay as they are (Reset all to defaults sets GUARD, DRIFT and the output stage too). A preset changes at the silent point of a short fade, so it never clicks, and every preset is level matched to Init.</p>
+<dl class="ctl"><dt>Init</dt><dd>Tony Q (TKY) and Fet81 at their defaults, IRON at 20%, gate out.</dd><dt>Vocal Chain</dt><dd>Expander, Fet81 at 4:1, Board EQ (black) with a low-mid dip and presence, low cut at 90 Hz.</dd><dt>Vocal Smooth</dt><dd>Smooth, Skye with a little air on BAND 4 as a shelf, HEAD on the medium voicing.</dd><dt>Kick</dt><dd>Drum gate keyed at 70 Hz, Fet81, Tony Q TKY with a low lift and the mids scooped, IRON at 35%.</dd><dt>Snare</dt><dd>Drum gate keyed at 220 Hz, Fet81 on ALL with 70% mix, Board EQ crack at 5 kHz, TRANS.</dd><dt>Toms</dt><dd>The GFX Gate with key filters and look-ahead, OB Q, Board EQ with the boxiness cut.</dd><dt>Bass DI</dt><dd>Fet81 slow, Tony Q NYC, HEAD driven.</dd><dt>Electric Guitar</dt><dd>OB Q, Board EQ with the HF as a bell cut, high cut at 9.5 kHz, TRANS.</dd><dt>Acoustic Guitar</dt><dd>OB Q gentle, Skye with low-mid cuts and air, TS-7 iron.</dd><dt>Piano</dt><dd>Smooth with a light blend, Tony Q TKY, IRON.</dd><dt>Drum Bus</dt><dd>OB Q parallel at 60%, Board EQ, TS-7 BUS with warmth.</dd><dt>Broadcast Voice</dt><dd>Expander, OB Q with the limiter, Skye in a broadcast curve.</dd><dt>Room Smash</dt><dd>Fet81 on ALL with 18 dB in and 60% mix, Board EQ, TRANS at 50%.</dd><dt>Lo-Fi</dt><dd>Low cut at 200 Hz and high cut at 5 kHz, Fet81 on ALL, Tony Q NYC mids, TS-7 SLAM with full warmth.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control, every engine's settings and the output stage to their starting values.</dd></dl>
+
+<h2>Tips</h2><ul class="tips">
+<li>To compare engines fairly, match their levels first (each engine's OUTPUT or the strip's LEVEL), then switch while the track loops.</li>
+<li>COMP &gt; EQ lets you boost after the compressor without it reacting to the boost; EQ &gt; COMP makes the compressor hear your EQ.</li>
+<li>Gate first is deliberate: the compressor then never brings up the noise the gate has just removed.</li>
+<li>HEAD's BOOST and the output stage's BAND SAT add up: turn BAND SAT down if HEAD gets too fizzy.</li>
+<li>Latency only changes when you change an engine (or the look-ahead or oversampling), and then at the silent point of the fade.</li>
+</ul>
+<p class="file">File: gfx-ch81.jsfx</p></section></main>
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a></div></footer></body></html>

@@ -1,0 +1,317 @@
+desc:GFX CH57 [channel strip]
+//tags: channel strip preamp valve program eq passive compressor vari-mu transformer console series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// CH57 (Series 57). The 1957 counterpart of CH81: one channel of a late-50s valve desk.
+//   PRE   a valve pre-amp: GAIN drives it (level matched: more GAIN, more colour, about the same level) and a
+//         high-pass (OFF, 40, 80 or 160 Hz).
+//   PROGRAM EQ  a passive programme equaliser with its make-up valve:
+//         LOW  FREQ 30 / 60 / 100 Hz, BOOST and ATTEN (both at once give the famous shelf with a dip above it).
+//         HIGH FREQ 3 - 16 kHz, BOOST (a broad peak) and its BANDWIDTH; HI-CUT 5 / 10 / 20 kHz and its ATTEN.
+//   COMPRESSOR  a variable-mu valve stage (as in Vari-Mu57): THRESHOLD, RECOVERY (FAST 0.3 s, MED 1 s, SLOW 3 s);
+//         the ratio rises with the reduction.
+//   OUTPUT  IRON (the output transformer: the lows saturate first, the top softens), FADER.
+//   ORDER  EQ > COMP (the default) or COMP > EQ. Each section has its IN button (by its title).
+//   The whole channel runs at 2x (linear-phase half-bands); latency 31 samples, reported.
+// ULM / COPENHAGEN (the face): ULM - a tighter pre-amp, narrower, more precise EQ curves, a firmer compressor.
+//   COPENHAGEN - a warmer pre-amp (more even harmonics), broader EQ curves, a softer compressor, a richer iron.
+//   Level matched; presets leave the face alone; switching fades out and back in.
+// DRIFT (0 - 100 %, 50 % = standard): the valves' bias wanders (the pre-amp's colour, the compressor's threshold)
+//   and the two channels never quite match.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:1<0,1,1{Out,In}>-Pre in
+slider4:10<0,30,0.1>-Gain (dB)
+slider5:0<0,3,1{Off,40 Hz,80 Hz,160 Hz}>-High-pass
+slider6:1<0,1,1{Out,In}>-EQ in
+slider7:1<0,2,1{30 Hz,60 Hz,100 Hz}>-Low freq
+slider8:0<0,10,0.1>-Low boost
+slider9:0<0,10,0.1>-Low atten
+slider10:3<0,5,1{3k,5k,8k,10k,12k,16k}>-High freq
+slider11:0<0,10,0.1>-High boost
+slider12:5<0,10,0.1>-High bandwidth (sharp .. broad)
+slider13:1<0,2,1{5k,10k,20k}>-Hi-cut freq
+slider14:0<0,10,0.1>-Hi-cut atten
+slider15:1<0,1,1{Out,In}>-Comp in
+slider16:-12<-30,0,0.1>-Threshold (dB)
+slider17:1<0,2,1{Fast,Med,Slow}>-Recovery
+slider18:0<0,1,1{EQ first,Comp first}>-Order
+slider19:30<0,100,1>-Iron (%)
+slider20:0<-24,12,0.1>-Fader (dB)
+slider21:50<0,100,1>-Drift (%)
+slider22:0<0,100,1>-Band sat (%)
+slider23:30<0,100,1>-Bias (output stage, %)
+slider24:120<40,400,1>-Sat low band (Hz)
+slider25:6000<2000,16000,10>-Sat high band (Hz)
+slider26:-0.3<-24,0,0.1>-Ceiling (dB)
+slider27:0<0,1,1{Ulm,Copenhagen}>-Face
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-ch57";
+ext_noinit = 1;
+s57_mem = 0;
+
+c7_HB = s57_alloc(64); s57_hbdesign(c7_HB, 63, 8);
+c7uL.s57_upinit(63, c7_HB, 64); c7uR.s57_upinit(63, c7_HB, 64); c7dL.s57_dninit(63, c7_HB, 64); c7dR.s57_dninit(63, c7_HB, 64);
+c7_LAT = 31;
+
+// ---------- one channel's sections at 2x ----------
+function c7_pre(x) instance(hp1, hp2) local(u, y, b) (
+  b = c7_pb + this.db;
+  u = x * c7_g;
+  y = u >= -b ? s57_th(u + b) : s57_th(0.6 * (u + b)) / 0.6;   // a triode: softer on one side (even harmonics)
+  y = (y - s57_th(b)) * c7_gm;
+  c7_hpon ? ( y = hp2.s57_bq(hp1.s57_bq(y)); );
+  y;
+);
+function c7_eq(x) instance(lb, la, hb, hc) local(y) (
+  y = lb.s57_bq(x); y = la.s57_bq(y); y = hb.s57_bq(y); y = hc.s57_bq(y);
+  y;
+);
+function c7_iron(x) instance(lo, hf) local(y) (
+  lo += (x - lo) * c7_klo;
+  y = (x - lo) + s57_th(lo * c7_ig) / c7_ig;
+  hf += (y - hf) * c7_khf;
+  hf;
+);
+
+// the pre-amp's make-up correction (dB, at GAIN 0 .. 30 in 5 dB steps; measured on pink noise)
+function c7_mkp(d) local(p, i, f, a, b) (
+  p = min(max(d, 0), 30) / 5; i = min(floor(p), 5); f = p - i;
+  a = i == 0 ? 0.5 : i == 1 ? 2.1 : i == 2 ? 3.7 : i == 3 ? 4.3 : i == 4 ? 5.0 : 6.2;
+  b = i == 0 ? 2.1 : i == 1 ? 3.7 : i == 2 ? 4.3 : i == 3 ? 5.0 : i == 4 ? 6.2 : 8.4;
+  a + (b - a) * f;
+);
+function c7_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  c7_tpre = slider3 >= 0.5; c7_teq = slider6 >= 0.5; c7_tcmp = slider15 >= 0.5; c7_tord = slider18 >= 0.5; c7_tfc = slider27 >= 0.5;
+  c7_tg = 10 ^ (slider4 / 20) * 0.5;
+  // the pre-amp's make-up: measured so GAIN changes the colour far more than the level
+  c7_tgm = 10 ^ (c7_mkp(slider4) / 20) / (c7_tg * (1 + 0.012 * slider4 * slider4 / (1 + 0.02 * slider4 * slider4)));
+  c7_thr = slider16;
+  c7_rec = slider17 == 0 ? 0.3 : slider17 == 1 ? 1 : 3;
+  c7_ig = 1 + 2.5 * slider19 / 100 * (c7_fc ? 1.3 : 1);
+  c7_tfd = 10 ^ (slider20 / 20);
+  drift_macro(slider21);
+  ost_setup(slider22 / 100, slider23 / 100, slider24, slider25, slider26, 1);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = c7_LAT;
+);
+function c7_filters() local(fs, f, q, lf, hf, hcut) (
+  fs = c7_fs2;
+  c7_hpon = slider5 > 0;
+  f = slider5 == 1 ? 40 : slider5 == 2 ? 80 : 160;
+  c7L.hp1.s57_bqset(1, f, 0, 0.54, fs); c7R.hp1.s57_bqset(1, f, 0, 0.54, fs);
+  c7L.hp2.s57_bqset(1, f, 0, 1.31, fs); c7R.hp2.s57_bqset(1, f, 0, 1.31, fs);
+  // the programme EQ
+  lf = slider7 == 0 ? 30 : slider7 == 1 ? 60 : 100;
+  c7L.lb.s57_bqset(4, lf * 1.4, slider8 * 1.35, c7_fc ? 0.5 : 0.7, fs); c7R.lb.s57_bqset(4, lf * 1.4, slider8 * 1.35, c7_fc ? 0.5 : 0.7, fs);
+  // the attenuator sits a little higher: boost and cut together leave a dip above the shelf
+  c7L.la.s57_bqset(4, lf * 2.6, -slider9 * 1.2, 0.6, fs); c7R.la.s57_bqset(4, lf * 2.6, -slider9 * 1.2, 0.6, fs);
+  hf = slider10 == 0 ? 3000 : slider10 == 1 ? 5000 : slider10 == 2 ? 8000 : slider10 == 3 ? 10000 : slider10 == 4 ? 12000 : 16000;
+  q = (2.6 - 2.2 * slider12 / 10) * (c7_fc ? 0.7 : 1);
+  c7L.hb.s57_bqset(3, hf, slider11 * 1.6, q, fs); c7R.hb.s57_bqset(3, hf, slider11 * 1.6, q, fs);
+  hcut = slider13 == 0 ? 5000 : slider13 == 1 ? 10000 : 20000;
+  c7L.hc.s57_bqset(5, hcut, -slider14 * 1.6, c7_fc ? 0.5 : 0.7, fs); c7R.hc.s57_bqset(5, hcut, -slider14 * 1.6, c7_fc ? 0.5 : 0.7, fs);
+  c7_klo = s57_k(c7_fc ? 80 : 120, fs); c7_khf = s57_k(c7_fc ? 17000 : 21000, fs);
+  c7_pb = c7_fc ? 0.22 : 0.08;
+  c7_ka = s57_kt(c7_fc ? 0.0012 : 0.0005, fs);
+  c7_knee = c7_fc ? 7 : 4; c7_a1 = c7_fc ? 0.18 : 0.26;
+  c7_l5 = slider5; c7_l7 = slider7; c7_l8 = slider8; c7_l9 = slider9; c7_l10 = slider10; c7_l11 = slider11; c7_l12 = slider12; c7_l13 = slider13; c7_l14 = slider14;
+);
+function c7_srinit() (
+  c7_sr = srate; c7_fs2 = 2 * srate;
+  c7_sm = s57_kt(0.02, srate); c7_fd = 1 / (0.006 * srate);
+  c7_filters();
+  ost_init(0);
+);
+
+in_init();
+c7_fc = c7_tfc = slider27 >= 0.5;
+c7_update(); c7_srinit();
+c7_pon = c7_tpre; c7_eqon = c7_teq; c7_cmp = c7_tcmp; c7_ord = c7_tord;
+c7_g = c7_tg; c7_gm = c7_tgm; c7_fdr = c7_tfd;
+c7_dA.drift_init(0.8 + rand(0.4)); c7_dB.drift_init(0.8 + rand(0.4)); c7_dT.drift_init(0.7 + rand(0.4));
+c7_sA = rand(2) - 1; c7_sB = rand(2) - 1;
+c7o.ost_ch_init(); c7p.ost_ch_init();
+c7_fade = 1; c7_fst = 0; c7_env = 0; c7_gr = 0; c7_lv = 1;
+
+function c7_set(pr, ga, hp, eq, lf, lb, la, hf, hb, bw, hc, ha, cp, th, rc, od, ir, fd) (
+  slider3 = pr; slider4 = ga; slider5 = hp; slider6 = eq; slider7 = lf; slider8 = lb; slider9 = la; slider10 = hf; slider11 = hb;
+  slider12 = bw; slider13 = hc; slider14 = ha; slider15 = cp; slider16 = th; slider17 = rc; slider18 = od; slider19 = ir; slider20 = fd;
+  slider_automate(1048572);                             // sliders 3 - 20
+);
+#c7_pm = "Init|Vocal Channel|Warm Bass|Drum Room|Acoustic Guitar|Bright Piano|Broadcast Voice|Bus Glue|Low Boost Trick|Driven Pre|Lo-Fi Desk|Clean Leveller";
+function load_preset(p) (
+  //                pr  ga  hp  eq lf  lb   la  hf  hb  bw  hc  ha  cp  th   rc od  ir  fd
+  p == 1  ? c7_set(1, 10,  0,  1, 1,  0,   0,  3,  0,  5,  1,  0,  1, -12,  1, 0, 30,   0) :     // Init
+  p == 2  ? c7_set(1, 14, 2, 1, 2, 1, 2, 2, 4, 6, 1, 1, 1, -18, 1, 0, 30, 3.45) :  // Vocal Channel
+  p == 3  ? c7_set(1, 16, 1, 1, 1, 5, 2, 0, 1, 5, 0, 3, 1, -16, 2, 1, 60, 3.4) :  // Warm Bass
+  p == 4  ? c7_set(1, 18, 1, 1, 1, 3, 0, 2, 5, 7, 2, 0, 1, -24, 0, 0, 40, 7.25) :  // Drum Room
+  p == 5  ? c7_set(1, 12, 2, 1, 2, 0, 3, 4, 4, 5, 2, 0, 1, -16, 1, 0, 20, 2.8) :     // Acoustic Guitar
+  p == 6  ? c7_set(1, 10, 1, 1, 1, 1, 0, 5, 5, 8, 2, 0, 1, -12, 1, 0, 20, 0.4) :     // Bright Piano
+  p == 7  ? c7_set(1, 16, 3, 1, 2, 0, 4, 1, 6, 4, 0, 2, 1, -22, 0, 1, 40, 4.95) :    // Broadcast Voice
+  p == 8  ? c7_set(1, 8, 0, 1, 0, 2, 0, 3, 2, 8, 1, 0, 1, -14, 2, 0, 40, 1.05) :     // Bus Glue
+  p == 9  ? c7_set(1, 10, 0, 1, 1, 7, 6, 3, 0, 5, 1, 0, 0, -12, 1, 0, 30, -0.65) :    // Low Boost Trick
+  p == 10 ? c7_set(1, 28, 1, 1, 1, 2, 0, 2, 3, 5, 1, 2, 1, -14, 1, 0, 70, 1.7) :  // Driven Pre
+  p == 11 ? c7_set(1, 24, 3, 1, 2, 0, 8, 0, 6, 2, 0, 8, 1, -26, 0, 0, 80, 9.95) :    // Lo-Fi Desk
+  p == 12 ? c7_set(0, 10, 0, 0, 1, 0, 0, 3, 0, 5, 1, 0, 1, -20, 2, 0, 0, 5.8) :     // Clean Leveller
+  p == 13 ? (
+    c7_set(1, 10, 0, 1, 1, 0, 0, 3, 0, 5, 1, 0, 1, -12, 1, 0, 30, 0);
+    slider1 = 0; slider2 = 1; slider21 = 50; slider22 = 0; slider23 = 30; slider24 = 120; slider25 = 6000; slider26 = -0.3;
+    slider_automate(67108863);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+c7_update();
+
+@block
+srate != c7_sr ? c7_srinit();
+c7_update();
+(slider5 != c7_l5 || slider7 != c7_l7 || slider8 != c7_l8 || slider9 != c7_l9 || slider10 != c7_l10 || slider11 != c7_l11 ||
+ slider12 != c7_l12 || slider13 != c7_l13 || slider14 != c7_l14) ? c7_filters();
+(c7_tpre != c7_pon || c7_teq != c7_eqon || c7_tcmp != c7_cmp || c7_tord != c7_ord || c7_tfc != c7_fc) && c7_fst == 0 ? c7_fst = 1;
+c7_di = 0.12 * dm_s * samplesblock / srate;
+c7L.db = dm_a * (0.04 * c7_dA.drift_tick(c7_di) + 0.015 * c7_sA); c7R.db = dm_a * (0.04 * c7_dB.drift_tick(c7_di) + 0.015 * c7_sB);
+c7_dth = dm_a * 0.6 * c7_dT.drift_tick(c7_di);
+c7_kr = s57_kt(c7_rec, c7_fs2);
+c7a_gr = max(c7a_gr, c7_grm); c7_grm = 0;
+c7a_vi = max(c7a_vi, c7_viL); c7a_vo = max(c7a_vo, c7_vL);
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+c7_g += (c7_tg - c7_g) * c7_sm; c7_gm += (c7_tgm - c7_gm) * c7_sm; c7_fdr += (c7_tfd - c7_fdr) * c7_sm;
+c7_fst == 1 ? ( c7_fade -= c7_fd; c7_fade <= 0 ? (
+  c7_fade = 0; c7_pon = c7_tpre; c7_eqon = c7_teq; c7_cmp = c7_tcmp; c7_ord = c7_tord;
+  c7_tfc != c7_fc ? ( c7_fc = c7_tfc; c7_update(); c7_filters(); );
+  c7_env = 0; c7_gr = 0; c7_lv = 1;
+  c7_hold = c7_LAT + 8; c7_fst = 2; ); ) :
+c7_fst == 2 ? ( c7_hold -= 1; c7_hold <= 0 ? c7_fst = 3; ) :
+c7_fst == 3 ? ( c7_fade += c7_fd; c7_fade >= 1 ? ( c7_fade = 1; c7_fst = 0; ); );
+
+in_process(spl0, spl1);
+c7_xl = in_l; c7_xr = in_r;
+c7_viL = max(c7_viL * 0.9995, abs(c7_xl) + abs(c7_xr));
+
+// ---------- one 2x sample of both channels (c7_a, c7_b) ----------
+function c7_comp() local(pk, l, over, g, c) (
+  // the gain from the feedback side-chain (it heard the last output), linked
+  c7_a *= c7_lv; c7_b *= c7_lv;
+  pk = max(abs(c7_a), abs(c7_b));
+  c7_env += (pk - c7_env) * (pk > c7_env ? c7_ka : c7_kr);
+  l = 20 * log10(max(c7_env, 0.0000001));
+  over = l - c7_thr - c7_dth; c = c7_knee;
+  over <= -c ? g = 0 : over < c ? g = sqr(over + c) / (4 * c) : g = over;
+  c7_gr = min(g * (0.5 + c7_a1 * c7_gr), 30);
+  c7_lv = 10 ^ (-c7_gr / 20);
+  c7_grm = max(c7_grm, c7_gr);
+);
+function c7_step() (
+  c7_pon ? ( c7_a = c7L.c7_pre(c7_a); c7_b = c7R.c7_pre(c7_b); );
+  !c7_ord ? (
+    c7_eqon ? ( c7_a = c7L.c7_eq(c7_a); c7_b = c7R.c7_eq(c7_b); );
+    c7_cmp ? c7_comp();
+  ) : (
+    c7_cmp ? c7_comp();
+    c7_eqon ? ( c7_a = c7L.c7_eq(c7_a); c7_b = c7R.c7_eq(c7_b); );
+  );
+  c7_a = c7L.c7_iron(c7_a); c7_b = c7R.c7_iron(c7_b);
+);
+c7uL.s57_up(c7_xl); c7uR.s57_up(c7_xr);
+c7_a = c7uL.o0; c7_b = c7uR.o0; c7_step(); c7_q0l = c7_a; c7_q0r = c7_b;
+c7_a = c7uL.o1; c7_b = c7uR.o1; c7_step(); c7_q1l = c7_a; c7_q1r = c7_b;
+c7_yl = c7dL.s57_dn(c7_q0l, c7_q1l) * c7_fdr * c7_fade; c7_yr = c7dR.s57_dn(c7_q0r, c7_q1r) * c7_fdr * c7_fade;
+c7_vL = max(c7_vL * 0.9995, abs(c7_yl) + abs(c7_yr));
+c7_yl = c7o.ost_band(c7_yl); c7_yr = c7p.ost_band(c7_yr);
+ost_out(c7_yl, c7_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 400
+ui_begin(960, 400);
+s57_pal(slider27);
+s57_fonts();
+s57_face(960, 400);
+k_ = s57_header(960, "CH57", "SERIES 57", "CHANNEL STRIP", #c7_pm, 27);
+k_ > 0 ? load_preset(k_);
+
+s57_path(960, 372, 5);
+s57_small(30, 378, "IN"); s57_small(240, 378, "PRE"); s57_small(468, 378, slider18 < 0.5 ? "EQ" : "COMP"); s57_small(694, 378, slider18 < 0.5 ? "COMP" : "EQ"); s57_small(892, 378, "OUT");
+
+// ---------- PRE ----------
+s57_plate(20, 68, 176, 292);
+s57_title(32, 76, "PRE"); s57_inkey(78, 77, 3);
+c7I.s57_edge(32, 100, 152, 56, c7a_vi * 2.83, "IN");
+c7a_vi *= 0.6;
+s57_knob(108, 194, 24, 4, 0, 30, 10, 0, "GAIN", "%.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_t(32, 252, "HIGH-PASS");
+m_ = 0; loop(4, s57_key(32 + m_ * 39, 266, 35, 20, slider5 == m_, m_ == 0 ? "OFF" : m_ == 1 ? "40" : m_ == 2 ? "80" : "160") ? s57_set(5, m_); m_ += 1; );
+s57_knob(56, 318, 13, 1, -24, 12, 0, 0, "TRIM", "%+.1f dB", 0);
+s57_key(114, 304, 52, 20, slider2 >= 0.5, slider2 >= 0.5 ? "GUARD" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(176 * sc, 314 * sc, 3 * sc, 1, S57_ORNG); ); in_grd = 0;
+
+// ---------- PROGRAM EQ ----------
+s57_well(206, 68, 340, 292);
+s57_title(218, 76, "PROGRAM EQ"); s57_inkey(334, 77, 6);
+s57_small(218, 104, "LOW"); s57_small(218, 222, "HIGH");
+s57_knob(250, 160, 18, 7, 0, 2, 1, 0, "FREQ", "", 1);
+strcpy(#c7_lf, slider7 == 0 ? "30 Hz" : slider7 == 1 ? "60 Hz" : "100 Hz"); gfx_setfont(13); ui_col(S57_ORNG); s57_tc(250, 128, #c7_lf);
+s57_knob(330, 160, 18, 8, 0, 10, 0, 0, "BOOST", "%.1f", 0);
+s57_knob(410, 160, 18, 9, 0, 10, 0, 0, "ATTEN", "%.1f", 0);
+s57_knob(498, 160, 18, 13, 0, 2, 1, 0, "HI-CUT", "", 1);
+strcpy(#c7_hc, slider13 == 0 ? "5 kHz" : slider13 == 1 ? "10 kHz" : "20 kHz"); gfx_setfont(13); ui_col(S57_ORNG); s57_tc(498, 128, #c7_hc);
+s57_knob(250, 284, 18, 10, 0, 5, 3, 0, "FREQ", "", 1);
+strcpy(#c7_hf, slider10 == 0 ? "3 kHz" : slider10 == 1 ? "5 kHz" : slider10 == 2 ? "8 kHz" : slider10 == 3 ? "10 kHz" : slider10 == 4 ? "12 kHz" : "16 kHz");
+gfx_setfont(13); ui_col(S57_ORNG); s57_tc(250, 252, #c7_hf);
+s57_knob(330, 284, 18, 11, 0, 10, 0, 0, "BOOST", "%.1f", 0);
+s57_knob(410, 284, 18, 12, 0, 10, 5, 0, "BANDWIDTH", "%.1f", 0);
+s57_knob(498, 284, 18, 14, 0, 10, 0, 0, "ATTEN", "%.1f", 0);
+ui_cola(S57_INK, 0.3); s57_r(454, 104, 1, 236);
+
+// ---------- COMPRESSOR ----------
+s57_well(556, 68, 206, 292);
+s57_title(568, 76, "COMPRESSOR"); s57_inkey(688, 77, 15);
+c7G.s57_gredge(568, 100, 182, 56, slider15 >= 0.5 ? c7a_gr : 0, "GR");
+c7a_gr *= 0.5;
+s57_knob(612, 220, 24, 16, -30, 0, -12, 0, "THRESHOLD", "%.1f dB", 0);
+s57_knob(712, 220, 20, 17, 0, 2, 1, 0, "RECOVERY", "", 1);
+strcpy(#c7_rc, slider17 == 0 ? "FAST" : slider17 == 1 ? "MED" : "SLOW"); gfx_setfont(13); ui_col(S57_ORNG); s57_tc(712, 186, #c7_rc);
+c7ok.s57_orderkey(568, 300, 166, 22, slider18 < 0.5 ? "EQ > COMP" : "COMP > EQ") ? s57_set(18, slider18 >= 0.5 ? 0 : 1);
+
+// ---------- OUTPUT ----------
+s57_plate(772, 68, 168, 292);
+s57_title(784, 76, "OUTPUT");
+c7O.s57_edge(784, 100, 144, 56, c7a_vo * 2.83, "OUT");
+c7a_vo *= 0.6;
+s57_knob(816, 214, 20, 19, 0, 100, 30, 0, "IRON", "%.0f%%", 0);
+s57_knob(898, 214, 20, 20, -24, 12, 0, 0, "FADER", "%+.1f dB", 0);
+s57_knob(816, 312, 13, 21, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(898, 312, 13, 22, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+ost_clipped ? pk_led(926 * sc, 296 * sc, 3.5 * sc, 1, 0xFF3A22); ost_clipped = 0;
+
+s57_cheeks(960, 400);
+pk_end();
+ui_end();

@@ -93,3 +93,5 @@ Plugins here may need the shared `.jsfx-inc` files from GFX-II beside them to ru
 - `gfx-meter74.jsfx` — GFX Meter74 (removed from GFX-II 13 Oct 2026; lives on as the 74 model of GFX Meter; manual beside it as gfx-meter74-manual.html). Needs gfx-ui, gfx-panel and gfx-s74 from GFX-II.
 - `gfx-meter81.jsfx` — GFX Meter81 (removed from GFX-II 13 Oct 2026; lives on as the 81 model of GFX Meter (in English); manual beside it as gfx-meter81-manual.html). Needs gfx-ui and gfx-panel from GFX-II.
 - `gfx-meter92.jsfx` — GFX Meter92 (removed from GFX-II 13 Oct 2026; lives on as the 92 model of GFX Meter; manual beside it as gfx-meter92-manual.html). Needs gfx-ui, gfx-panel and gfx-s92 from GFX-II.
+- `gfx-squashball.jsfx` — GFX Squashball (removed from GFX-II 14 Oct 2026; lives on as the SQUASH model of GFX Echo 34; manual beside it as gfx-squashball-manual.html). Needs gfx-drift, gfx-input, gfx-lfo, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate from GFX-II.
+- `gfx-g-anvil.jsfx` — GFX G Anvil (removed from GFX-II 14 Oct 2026; archived at your request; manual beside it as gfx-g-anvil-manual.html). Needs its includes from GFX-II (see the file's header).

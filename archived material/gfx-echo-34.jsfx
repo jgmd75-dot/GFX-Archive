@@ -1,0 +1,974 @@
+desc:GFX Echo 34 [analogue delay]
+//tags: delay echo bbd analog chorus saturation lo-fi slapback mini
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-lfo, gfx-output, gfx-ui, gfx-panel, gfx-dyn and gfx-faceplate (.jsfx-inc) in the same folder.
+//
+// ECHO 34: three bucket-brigade echoes in one unit. MODEL (the STUDIO / MINI / SQUASH keys in the header) picks the engine and
+// the faceplate together; each model keeps its own controls and settings. A change is click-free: the new model
+// fades in (20 ms) while the old one's input is closed and its repeats fade away (250 ms), then it stops - only the
+// selected engine runs, so the CPU is that of one model.
+//
+// STUDIO - a stereo analogue BBD delay line (navy face):
+//   TRIM        - input level, -24 to +12 dB.
+//   DRIVE       - the op-amp drive: asymmetric saturation on the input and again in the feedback loop.
+//   LONG / SHORT- the chip: the long chip gives 50 - 550 ms, the short chip 50 - 110 ms.
+//   TIME        - the delay time; the clock glides, so turning it bends the repeats.
+//   REPEATS     - feedback, 0 - 110 % (self-oscillation above 100 %).
+//   DUAL CHIP   - the right side runs about 3 % longer: a wider, doubled echo.
+//   OSC LIMIT   - holds runaway feedback at a usable level.
+//   CLOCK LPF   - the clock / anti-alias filter on the repeats, 1 - 8 kHz (inside the loop: each repeat darker).
+//   NOISE       - the chip's clock noise on the repeats.
+//   MIX         - dry / echo; OUTPUT - output level; the OUT meters.
+//   DRIFT (50 % = standard): the BBD clock wanders, so the delay time breathes a little, and the clock filter
+//   (the tone of the repeats) slowly opens and closes. 0 % = steady, 100 % = twice the standard amount.
+//
+// MINI - a small, cheap solid-state echo box in the spirit of the early-80s budget bucket-brigade mini echoes
+// (painted black steel face): one BBD line (mono), a compander round it, a narrow 3 - 4 kHz echo path and audible hiss.
+//   INST / MIC  - the two input sockets: MIC has 12 dB more preamp gain and a low cut, and brings up the hiss.
+//   VOLUME      - input level into the preamp; the PEAK light flickers as the preamp starts to clip.
+//   BALANCE     - dry (fully left) to echo only (fully right).
+//   REPEAT      - from a single slap to runaway feedback past about 2 o'clock; the REPEAT light shows the loop's level.
+//   DELAY TIME  - 20 - 400 ms. The clock glides, so turning it bends the repeats. SYNC locks it to the project tempo.
+//   ECHO        - echo on / off (latching). Off stops new signal reaching the echo; the repeats already in it die away.
+//   MOMENTARY   - does not latch: while held it flips ECHO - pauses the echo if it is on, turns it on if it is off.
+//   OUTPUT      - output level; the OUT meters.
+//   The echo path is mono (as on the original); the dry signal stays stereo.
+//   DRIFT (50 % = standard): the BBD clock wanders, so the delay time breathes, and the supply voltage sags and
+//   wanders, so the preamp's headroom and gain move (loud passages pull the supply down and squash a little more).
+//   0 % = steady, 100 % = twice the standard amount.
+//
+// SQUASH - an analogue delay stompbox with a pitch-stretch switch (matte black and yellow face; was GFX Squashball):
+//   GAIN        - op-amp style overdrive into the delay line (asymmetric, warm); the dry signal stays clean.
+//   TIME        - 30 - 1500 ms, or a tempo division with SYNC. Turning it glides the clock: the repeats bend in pitch.
+//   REGEN       - feedback 0 - 130 %; past 100 % the loop howls into steady self-oscillation, held by a soft limiter.
+//   TONE        - the roll-off in the loop (about 700 Hz - 9 kHz): every repeat comes back darker than the last.
+//   LEVEL       - volume of the repeats; MIX - dry / wet (50 % = both at full level); OUTPUT; the OUT meters.
+//   STRETCH     - hold the key (HOLD) or click it on and off (LATCH): the delay time sweeps towards STRETCH TIME at
+//                 the STRETCH RATE (fast = a tape yank, slow = a lazy dive), heard as a pitch bend; let go and it
+//                 glides back. The readout shows the time in ms; TEMPO blinks every repeat, HOWL lights past 100 %.
+//   DRIFT (50 % = standard): the BBD clock breathes - a slow, small wander of the delay time (a little different left
+//   and right) and of the repeats' tone. 0 % = steady, 100 % = twice the standard amount.
+//
+// PRESETS (27 + Reset all to defaults) cover all three models; each preset sets its model. Init = the STUDIO defaults.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-lfo.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-dyn.jsfx-inc
+import gfx-faceplate.jsfx-inc
+
+slider1:0<0,1,1{Long chip,Short chip}>-Studio chip
+slider2:250<50,550,1>-Studio time (ms)
+slider3:40<0,110,1>-Studio repeats (%)
+slider4:30<0,100,1>-Studio op-amp drive (%)
+slider5:3500<1000,8000,10>-Studio clock LPF (Hz)
+slider6:15<0,100,1>-Studio clock noise (%)
+slider7:0<0,1,1{Off,On}>-Studio dual chip
+slider8:1<0,1,1{Off,On}>-Studio oscillation limit
+slider9:35<0,100,1>-Studio mix (%)
+slider10:0<-24,12,0.1>-Studio output (dB)
+slider11:0<-24,12,0.1>-Studio input trim (dB)
+slider12:50<0,100,1>-Studio drift (%)
+slider13:0<0,26,1{Init,Slapback (Studio),Dark Repeats (Studio),Dual Chip Doubler (Studio),Ambient Wash (Studio),Self-Oscillation (Studio),Lo-Fi Short (Studio),Clean Long (Studio),Init (Mini),Slapback (Mini),ADT Double (Mini),Metallic Room (Mini),Dub Repeats (Mini),Runaway (Mini),Mic Booth (Mini),Lo-Fi Haze (Mini),Init (Squash),Slapback (Squash),Dark Repeats (Squash),Rubbery Lead (Squash),Ambient Swell (Squash),Self-Oscillation (Squash),Tape Yank (Squash),Dub Throw (Squash),Warble Double (Squash),Lo-Fi Crunch (Squash),Siren Howl (Squash)}>-Preset
+slider14:0<0,2,1{Studio,Mini,Squash}>-Model
+slider15:0<0,1,1{Inst,Mic}>-Mini input
+slider16:0<-24,18,0.1>-Mini volume (dB)
+slider17:35<0,100,1>-Mini balance (%)
+slider18:35<0,110,1>-Mini repeat (%)
+slider19:180<20,400,1>-Mini delay time (ms)
+slider20:0<0,8,1{Free,1/32,1/16T,1/16,1/8T,1/16D,1/8,1/4T,1/8D}>-Mini sync
+slider21:1<0,1,1{Off,On}>-Mini echo
+slider22:50<0,100,1>-Mini drift (%)
+slider23:0<-24,12,0.1>-Mini output (dB)
+slider24:0<0,1,1{Released,Held}>-Mini momentary
+slider25:350<30,1500,1>-Squash time (ms)
+slider26:0<0,1,1{Off,On}>-Squash sync to tempo
+slider27:6<0,15,1{4 bars,2 bars,1 bar,1/2,1/2 D,1/2 T,1/4,1/4 D,1/4 T,1/8,1/8 D,1/8 T,1/16,1/16 D,1/16 T,1/32}>-Squash time (sync)
+slider28:35<0,130,1>-Squash regen (%)
+slider29:55<0,100,1>-Squash tone (%)
+slider30:25<0,100,1>-Squash gain (%)
+slider31:0<-24,6,0.1>-Squash level (dB)
+slider32:35<0,100,1>-Squash mix (%)
+slider33:0<0,1,1{Off,On}>-Squash stretch
+slider34:0<0,1,1{Hold,Latch}>-Squash stretch switch mode
+slider35:900<30,2000,1>-Squash stretch time (ms)
+slider36:50<0,100,1>-Squash stretch rate (%)
+slider37:50<0,100,1>-Squash drift (%)
+slider38:0<-24,12,0.1>-Squash output (dB)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-echo-34";
+
+// =====================================================================================================
+// STUDIO engine
+// =====================================================================================================
+// Delay memory (long chip / short chip buffers)
+dlen = ceil(1.0 * srate) + 8;
+bufL = 100000; bufR = bufL + dlen;
+memset(bufL, 0, dlen * 2);
+wp = 0;
+
+// Op-amp drive, asymmetrical saturation: y = x / (1 + k |x|), k = drv above zero, 1.2 x drv below
+// ANTI-ALIASING (the house drive standard): first-order ADAA on all four stages (input L / R, feedback L / R):
+// y = (F(x) - F(x1)) / (x - x1) with the exact antiderivative F(x) = |x| / k - ln(1 + k |x|) / k^2 (the curve at
+// the midpoint when the two are within 1e-5). A fixed high shelf after each stage makes up the half-sample average's
+// top-end droop (flat within 0.01 dB to 12 kHz at 48 kHz), so the dry path and every repeat keep their tone.
+function ja_set(a) instance(ka, kb, ia, ib, ia2, ib2, x1, f1) (
+  a !== ka ? (
+    ka = a; kb = 1.2 * a; ia = 1 / ka; ib = 1 / kb; ia2 = ia * ia; ib2 = ib * ib;
+    f1 = x1 >= 0 ? x1 * ia - log(1 + ka * x1) * ia2 : -x1 * ib - log(1 - kb * x1) * ib2;   // re-read under the new curve
+  );
+);
+function ja_run(x) instance(ka, kb, ia, ib, ia2, ib2, x1, f1) local(f, d, y) (
+  f = x >= 0 ? x * ia - log(1 + ka * x) * ia2 : -x * ib - log(1 - kb * x) * ib2;
+  d = x - x1;
+  abs(d) > 0.00001 ? y = (f - f1) / d : ( y = 0.5 * (x + x1); y = y >= 0 ? y / (1 + ka * y) : y / (1 - kb * y); );
+  x1 = x; f1 = f;
+  y;
+);
+function ja_clr() instance(x1, f1) ( x1 = f1 = 0; );
+function bq_clr() instance(x1, x2, y1, y2) ( x1 = x2 = y1 = y2 = 0; );
+
+// Interpolated delay read
+function rdl(buf, d) local(p, i, f, x0, x1, x2, x3) (
+  p = wp - d; p < 0 ? p += dlen; i = floor(p); f = p - i;
+  x0 = buf[(i - 1 + dlen) % dlen]; x1 = buf[i % dlen]; x2 = buf[(i + 1) % dlen]; x3 = buf[(i + 2) % dlen];
+  (((0.5 * (x3 - x0) + 1.5 * (x1 - x2)) * f + (x0 - 2.5 * x1 + 2 * x2 - 0.5 * x3)) * f + 0.5 * (x2 - x0)) * f + x1;
+);
+
+// Helper function: returns text ONLY when mouse is hovering over the knob area
+function hover_txt(cx, cy, r, txt) (
+  mouse_x >= (cx - r) * sc && mouse_x <= (cx + r) * sc &&
+  mouse_y >= (cy - r) * sc && mouse_y <= (cy + r) * sc ? txt : "";
+);
+
+// gain smoothing (click-free control and preset changes): one pole, 15 ms, snapped to the target when it arrives
+gsc = 1 - exp(-1 / (0.015 * srate));
+
+function update() (
+  mode = slider1;
+  t_ms = mode ? min(max(slider2, 50), 110) : slider2;
+  repeats_t = slider3 / 100;
+  drv = 1 + 4 * (slider4 / 100);
+  jaIL.ja_set(drv); jaIR.ja_set(drv); jaFL.ja_set(drv); jaFR.ja_set(drv);
+  lpf_cutoff = min(slider5, srate * 0.45);
+  bbd_alpha = 1 - exp(-2 * $pi * lpf_cutoff / srate);
+  noise_lvl = (slider6 / 100) * 0.002;
+  dual_chip = slider7;
+  osc_lim = slider8;
+  mix_tt = slider9 / 100;
+  out_tt = 10 ^ (slider10 / 20);
+  in_trim_t = 10 ^ (slider11 / 20);
+  t_s = t_ms * 0.001 * srate;
+  drift_macro(slider12); st_dma = dm_a; st_dms = dm_s;
+  st_gl = repeats != repeats_t || mix_t != mix_tt || out_t != out_tt || in_trim != in_trim_t;
+);
+// a fresh start (the model is switched to STUDIO): empty line, settled filters, the controls where they are
+function st_reset() (
+  memset(bufL, 0, dlen * 2); wp = 0;
+  lpf_stateL = lpf_stateR = 0;
+  jaIL.ja_clr(); jaIR.ja_clr(); jaFL.ja_clr(); jaFR.ja_clr();
+  jsIL.bq_clr(); jsIR.bq_clr(); jsFL.bq_clr(); jsFR.bq_clr();
+  update();
+  repeats = repeats_t; mix_t = mix_tt; out_t = out_tt; in_trim = in_trim_t; st_gl = 0;
+  t_sm = t_s;
+);
+
+// =====================================================================================================
+// MINI engine
+// =====================================================================================================
+// the BBD line (mono)
+mi_dlen = ceil(0.45 * srate) + 8;
+mi_buf = bufR + dlen + 64;
+memset(mi_buf, 0, mi_dlen);
+mi_wp = 0;
+
+// interpolated read, d samples back
+function mi_rdl(ie_d) local(p, i, f, x0, x1, x2, x3) (
+  p = mi_wp - ie_d; p < 0 ? p += mi_dlen; i = floor(p); f = p - i;
+  x0 = mi_buf[(i - 1 + mi_dlen) % mi_dlen]; x1 = mi_buf[i % mi_dlen]; x2 = mi_buf[(i + 1) % mi_dlen]; x3 = mi_buf[(i + 2) % mi_dlen];
+  (((0.5 * (x3 - x0) + 1.5 * (x1 - x2)) * f + (x0 - 2.5 * x1 + 2 * x2 - 0.5 * x3)) * f + 0.5 * (x2 - x0)) * f + x1;
+);
+
+// the preamp: an op-amp running off a modest supply; hv = headroom (falls as the supply sags), slightly asymmetric:
+// s / (1 + |s|^2.2)^(1 / 2.2) above zero, s / (1 + |s|^2.6)^(1 / 2.6) below, s = x / hv (ie_pre, anti-aliased, below)
+
+// ANTI-ALIASING (the house drive standard): first-order ADAA on the preamp and the feedback clip:
+// y = (F(s) - F(s1)) / (s - s1), the curve at the midpoint when within 1e-5. The preamp's curve (two p-norm knees)
+// has no closed antiderivative, so each side is a table (read linearly) with its exact running integral: IE_N points
+// over 0 .. IE_U, the rail beyond (no pow() per sample). The feedback clip 1.1 x / sqrt(1 + (x / 1.1)^2)
+// has F = 1.1 x^2 / (sqrt(1 + (x / 1.1)^2) + 1). A fixed high shelf after each makes up the half-sample average's droop.
+IE_N = 8192; IE_U = 64; IE_S = IE_N / IE_U;
+IE_TP = 40000; IE_CP = IE_TP + IE_N + 2; IE_TN = IE_CP + IE_N + 2; IE_CN = IE_TN + IE_N + 2;   // curve, integral: + then -
+function ie_build(t, c, k) local(i, x) (
+  i = 0; loop(IE_N + 1, x = i / IE_S; t[i] = x / (1 + x ^ k) ^ (1 / k); i += 1; );
+  c[0] = 0; i = 0; loop(IE_N, c[i + 1] = c[i] + 0.5 * (t[i] + t[i + 1]) / IE_S; i += 1; );
+);
+ie_build(IE_TP, IE_CP, 2.2); ie_build(IE_TN, IE_CN, 2.6);
+function ie_F(a, t, c) local(i, p) (            // a = |s| x IE_S
+  a >= IE_N ? c[IE_N] + t[IE_N] * (a - IE_N) / IE_S : ( i = floor(a); p = a - i; c[i] + (t[i] * p + 0.5 * (t[i + 1] - t[i]) * p * p) / IE_S; );
+);
+function ie_pre(s) instance(s1, f1) local(f, d, a, i) (
+  f = s >= 0 ? ie_F(s * IE_S, IE_TP, IE_CP) : ie_F(-s * IE_S, IE_TN, IE_CN);
+  d = s - s1;
+  abs(d) > 0.00001 ? d = (f - f1) / d : (
+    d = 0.5 * (s + s1); a = min(abs(d) * IE_S, IE_N - 0.001); i = floor(a); a -= i;
+    d = d >= 0 ? IE_TP[i] + (IE_TP[i + 1] - IE_TP[i]) * a : -(IE_TN[i] + (IE_TN[i + 1] - IE_TN[i]) * a);
+  );
+  s1 = s; f1 = f;
+  d;
+);
+function ie_fbc(x) instance(x1, f1) local(f, d) (
+  f = 1.1 * x * x / (sqrt(1 + x * x * 0.82644628) + 1);
+  d = x - x1;
+  d = abs(d) > 0.00001 ? (f - f1) / d : ( d = 0.5 * (x + x1); 1.1 * d / sqrt(1 + d * d * 0.82644628); );
+  x1 = x; f1 = f;
+  d;
+);
+function ie_clr() instance(s1, x1, f1) ( s1 = x1 = f1 = 0; );
+
+// sync divisions in quarter notes
+function mi_divqn(k) (
+  k == 1 ? 0.125 : k == 2 ? 1/6 : k == 3 ? 0.25 : k == 4 ? 1/3 : k == 5 ? 0.375 : k == 6 ? 0.5 : k == 7 ? 2/3 : 0.75;
+);
+function mi_divname(k) (
+  k == 0 ? "FREE" : k == 1 ? "1/32" : k == 2 ? "1/16T" : k == 3 ? "1/16" : k == 4 ? "1/8T" : k == 5 ? "1/16D" : k == 6 ? "1/8" : k == 7 ? "1/4T" : "1/8D";
+);
+
+function mi_update() (
+  mic = slider15 > 0.5;
+  vol_t = 10 ^ ((slider16 + (mic ? 12 : 0)) / 20);
+  // the echo's level trim: driven hard, the anti-aliased preamp feeds the compander less fizz, so the echoes came out
+  // a little louder (up to +0.5 dB at +30 dB of preamp gain); dB by the total gain (VOLUME + the MIC socket's 12 dB)
+  ie_gt = slider16 + (mic ? 12 : 0);
+  ie_tr = ie_gt <= 6 ? 0.0033 * max(ie_gt, 0) : ie_gt <= 12 ? 0.02 + 0.0075 * (ie_gt - 6) : ie_gt <= 18 ? 0.065 + 0.0175 * (ie_gt - 12) :
+          ie_gt <= 24 ? 0.17 + 0.04 * (ie_gt - 18) : 0.41 + 0.02 * (ie_gt - 24);
+  ie_tr_t = 10 ^ (-ie_tr / 20);
+  bal_t = slider17 / 100;
+  rep_t = slider18 / 100 * 1.08;
+  ie_sync = floor(slider20 + 0.5);
+  mi_tms = ie_sync > 0 && tempo > 0 ? min(max(mi_divqn(ie_sync) * 60000 / tempo, 20), 400) : slider19;
+  mi_ts = mi_tms * 0.001 * srate;
+  fsw_t = (slider21 > 0.5) != (slider24 > 0.5);    // MOMENTARY held flips ECHO
+  out_g_t = 10 ^ (slider23 / 20);
+  hiss = (mic ? 0.0016 : 0.0009);
+  drift_macro(slider22); mi_dma = dm_a; mi_dms = dm_s;
+  // the slower the clock (longer delay), the narrower the echo: about 4.2 kHz at 20 ms, 2.6 kHz at 400 ms
+  ie_bw = 4200 - 1600 * (mi_tms - 20) / 380;
+  lpa = 1 - exp(-2 * $pi * min(ie_bw, srate * 0.45) / srate);
+  lpb = 1 - exp(-2 * $pi * min(ie_bw * 1.4, srate * 0.45) / srate);
+  mi_gl = vol != vol_t || bal != bal_t || rep != rep_t || out_g != out_g_t || ie_trs != ie_tr_t || fsw != fsw_t;
+);
+// a fresh start (the model is switched to MINI)
+function mi_reset() (
+  memset(mi_buf, 0, mi_dlen); mi_wp = 0;
+  mcs = sag = mi_f1 = mi_f2 = hps = wf = 0;
+  ieA.ie_clr(); ieB.ie_clr(); ieP.bq_clr(); ieF.bq_clr();
+  mi_update();
+  vol = vol_t; bal = bal_t; rep = rep_t; out_g = out_g_t; ie_trs = ie_tr_t; fsw = fsw_t; mi_gl = 0;
+  mi_tsm = mi_ts; envC = envE = 0.1;
+);
+
+// =====================================================================================================
+// SQUASH engine (was GFX Squashball): GAIN -> BBD line -> clock / TONE filter in the loop -> REGEN (soft-limited)
+// =====================================================================================================
+// two lines of 4.3 s (TIME, STRETCH and tempo sync all clamp to 4 s), after the MINI line
+qb_len = ceil(4.3 * srate) + 8;
+qb_bL = mi_buf + mi_dlen + 64; qb_bR = qb_bL + qb_len;
+memset(qb_bL, 0, qb_len * 2);
+qb_wp = 0;
+// cubic (Catmull-Rom) read, d samples behind the write point
+function qb_rd(buf, d) local(p, i, f, x0, x1, x2, x3, im, ip, ip2) (
+  p = qb_wp - d; p < 0 ? p += qb_len; i = floor(p); f = p - i;
+  im = i - 1; im < 0 ? im += qb_len;
+  ip = i + 1; ip >= qb_len ? ip -= qb_len;
+  ip2 = ip + 1; ip2 >= qb_len ? ip2 -= qb_len;
+  x0 = buf[im]; x1 = buf[i]; x2 = buf[ip]; x3 = buf[ip2];
+  (((0.5 * (x3 - x0) + 1.5 * (x1 - x2)) * f + (x0 - 2.5 * x1 + 2 * x2 - 0.5 * x3)) * f + 0.5 * (x2 - x0)) * f + x1;
+);
+// ANTI-ALIASING (the house drive standard): first-order ADAA on the GAIN stage and on the loop's soft limiter:
+// y = (F(u) - F(u1)) / (u - u1), the curve at the midpoint when within 1e-5. tanh: F = ln cosh u = |u| + ln(1 + e^-2|u|)
+// - ln 2. A fixed high shelf after each makes up the half-sample average's top-end droop (so each repeat keeps its tone).
+QB_LG2 = log(2);
+function qb_lc(u) ( u = abs(u); u + log(1 + exp(-2 * u)) - QB_LG2; );
+// GAIN: low cut, op-amp style asymmetric soft clip (unity at 0 %), a gentle top cut and a DC trap after it
+function qb_drive(x) instance(hz, lz, dx, dy, u1, f1) local(sv, y, f, d) (
+  hz += (x - hz) * qb_dhc; x -= hz;                         // ~45 Hz: keeps the lows from flubbing the drive
+  sv = x * qb_g + 0.12;                                      // bias = even harmonics, warm and a touch lopsided
+  f = qb_lc(sv); d = sv - u1;
+  y = abs(d) > 0.00001 ? (f - f1) / d : ost_tanh(0.5 * (sv + u1));
+  u1 = sv; f1 = f;
+  y = this.qbs.bq_run((y - qb_tb) * qb_mk);
+  lz += (y - lz) * qb_dlc; y = lz;                           // ~7 kHz: no fizz
+  dy = y - dx + 0.9993 * dy; dx = y;                         // DC trap (the bias)
+  dy;
+);
+// the BBD clock / TONE filter: two cascaded one-poles (each repeat passes through it again)
+function qb_lp2(x) instance(a, b) ( a += (x - a) * qb_la; b += (a - b) * qb_la; b; );
+// low cut inside the loop (~60 Hz), so a howling loop never builds up rumble or DC
+function qb_hp(x) instance(z) ( z += (x - z) * qb_lhc; x - z; );
+// soft limiter inside the loop: clean below 0.55, rounds into a 1.0 ceiling
+function qb_soft(x) instance(x1, f1) local(a, f, d) (
+  a = abs(x); f = a < 0.55 ? 0.5 * x * x : 0.15125 + 0.55 * (a - 0.55) + 0.2025 * qb_lc((a - 0.55) * 2.2222222);
+  d = x - x1;
+  abs(d) > 0.00001 ? d = (f - f1) / d : (
+    d = 0.5 * (x + x1); a = abs(d); d = a < 0.55 ? d : sign(d) * (0.55 + 0.45 * ost_tanh((a - 0.55) * 2.2222222)); );
+  x1 = x; f1 = f;
+  this.qbs.bq_run(d);
+);
+function qb_clr() instance(hz, lz, dx, dy, u1, f1, x1, a, b, z) ( hz = lz = dx = dy = u1 = f1 = x1 = a = b = z = 0; );
+function qb_update() local(q) (
+  qb_sync = slider26;
+  q = lfo_div_q(slider27);
+  qb_tms = qb_sync ? q * 60000 / max(tempo, 20) : slider25;
+  qb_tms = min(max(qb_tms, 20), 4000);
+  qb_sms = min(max(slider35, 20), 4000);
+  qb_fbt = min(max(slider28, 0), 130) / 100;
+  qb_tfc = 700 * (9000 / 700) ^ (slider29 / 100);
+  qb_g = 1 + 15 * sqr(slider30 / 100);                       // up to about +24 dB of drive
+  qb_mk = sqrt(qb_g) / (qb_g * (1 - qb_tb * qb_tb));          // small-signal gain = sqrt(drive): louder, but held in
+  qb_lvt = 10 ^ (slider31 / 20);
+  qb_mxt = slider32 / 100;
+  qb_st = slider33 >= 0.5;
+  qb_rinc = 1 / ((4 * (0.03 / 4) ^ (slider36 / 100)) * srate);   // STRETCH RATE: a 4 s dive .. a 30 ms yank
+  drift_macro(slider37); qb_dma = dm_a; qb_dms = dm_s;
+  qb_out = 10 ^ (slider38 / 20);
+);
+// a fresh start (the model is switched to SQUASH)
+function sq_reset() (
+  memset(qb_bL, 0, qb_len * 2); qb_wp = 0;
+  qdL.qb_clr(); qdR.qb_clr(); qsL.qb_clr(); qsR.qb_clr(); qtL.qb_clr(); qtR.qb_clr(); qhL.qb_clr(); qhR.qb_clr();
+  qdL.qbs.bq_clr(); qdR.qbs.bq_clr(); qsL.qbs.bq_clr(); qsR.qbs.bq_clr();
+  qb_update();
+  qb_ds = qb_tms * 0.001 * srate; qb_vel = 0; qb_sp = qb_st ? 1 : 0;
+  qb_fbs = qb_fbt; qb_lvs = qb_lvt; qb_mxs = qb_mxt; qb_outs = qb_out;
+  qb_la = 1 - exp(-2 * $pi * min(qb_tfc, srate * 0.45) / srate);
+  qb_tdisp = qb_tms;
+);
+
+// =====================================================================================================
+// presets: each sets its model and that model's controls (STUDIO: trim and output are left alone; MINI: echo,
+// momentary and output are left alone). 0 - 7 STUDIO, 8 - 15 MINI; 16 = Reset all to defaults (the list only)
+// =====================================================================================================
+// STUDIO: chip, time, repeats, drive, clock LPF, noise, dual chip, osc limit, mix, drift
+function setp(m, t, r, d, lp, nz, dc, ol_, mx, dr_) (
+  slider14 = 0;
+  slider1 = m; slider2 = t; slider3 = r; slider4 = d; slider5 = lp; slider6 = nz; slider7 = dc; slider8 = ol_; slider9 = mx; slider12 = dr_;
+);
+// MINI: input, volume, balance, repeat, time, sync, drift
+function mi_setp(ip, vo, ba, re, ti, sy, dr_) (
+  slider14 = 1;
+  slider15 = ip; slider16 = vo; slider17 = ba; slider18 = re; slider19 = ti; slider20 = sy; slider22 = dr_;
+);
+// SQUASH: time, sync, division, regen, tone, gain, level, mix, stretch mode, stretch time, stretch rate, drift
+function qb_set(t, sy, dv, rg, tn, gn, lv, mx, md, stt, str, dr) (
+  slider14 = 2;
+  slider25 = t; slider26 = sy; slider27 = dv; slider28 = rg; slider29 = tn; slider30 = gn; slider31 = lv; slider32 = mx;
+  slider33 = 0; slider34 = md; slider35 = stt; slider36 = str; slider37 = dr;
+);
+function reset_all() (
+  setp(0, 250, 40, 30, 3500, 15, 0, 1, 35, 50); slider10 = 0; slider11 = 0;
+  mi_setp(0, 0, 35, 35, 180, 0, 50); slider21 = 1; slider23 = 0; slider24 = 0;
+  qb_set(350, 0, 6, 35, 55, 25, 0, 35, 0, 900, 50, 50); slider38 = 0;
+  slider14 = 0; slider13 = 0;
+  slider_automate(2^38 - 1);
+);
+function apply_preset(n) (
+  n = floor(n + 0.5);
+  n == 0  ? setp(0, 250,  40, 30, 3500, 15, 0, 1, 35, 50) :     // Init
+  n == 1  ? setp(1,  95,  10, 35, 4500, 10, 0, 1, 30, 40) :     // Slapback (Studio)
+  n == 2  ? setp(0, 380,  60, 40, 1800, 20, 0, 1, 35, 50) :     // Dark Repeats (Studio)
+  n == 3  ? setp(1,  60,  15, 25, 5000,  8, 1, 1, 40, 60) :     // Dual Chip Doubler (Studio)
+  n == 4  ? setp(0, 520,  78, 20, 2600, 12, 1, 1, 45, 70) :     // Ambient Wash (Studio)
+  n == 5  ? setp(0, 300, 105, 55, 3000, 25, 0, 1, 40, 60) :     // Self-Oscillation (Studio)
+  n == 6  ? setp(1,  80,  50, 70, 1400, 60, 0, 1, 40, 80) :     // Lo-Fi Short (Studio)
+  n == 7  ? setp(0, 450,  35, 10, 7000,  3, 0, 1, 30, 25) :     // Clean Long (Studio)
+  n == 8  ? mi_setp(0,  0, 35, 35, 180, 0, 50) :                // Init (Mini)
+  n == 9  ? mi_setp(0,  2, 30,  6, 110, 0, 40) :                // Slapback (Mini)
+  n == 10 ? mi_setp(0,  0, 45,  0,  28, 0, 70) :                // ADT Double (Mini)
+  n == 11 ? mi_setp(0,  3, 40, 72,  24, 0, 50) :                // Metallic Room (Mini)
+  n == 12 ? mi_setp(0,  0, 40, 68, 375, 0, 60) :                // Dub Repeats (Mini)
+  n == 13 ? mi_setp(0,  4, 50, 98, 260, 0, 80) :                // Runaway (Mini)
+  n == 14 ? mi_setp(1, -4, 30, 22, 140, 0, 50) :                // Mic Booth (Mini)
+  n == 15 ? mi_setp(0,  8, 45, 45, 320, 0, 90) :                // Lo-Fi Haze (Mini)
+  n == 16 ? qb_set( 350, 0,  6,  35, 55, 25,  0.0, 35, 0,  900, 50,  50) :   // Init (Squash)
+  n == 17 ? qb_set(  95, 0,  6,   8, 72, 35,  0.0, 30, 0,  160, 60,  35) :   // Slapback (Squash)
+  n == 18 ? qb_set( 420, 0,  6,  62, 20, 30,  0.0, 38, 0,  700, 45,  55) :   // Dark Repeats (Squash)
+  n == 19 ? qb_set( 380, 1, 10,  45, 50, 40,  0.0, 32, 0,  520, 35,  60) :   // Rubbery Lead (Squash, 1/8 D)
+  n == 20 ? qb_set( 720, 0,  6,  78, 38, 15, -1.0, 45, 1, 1100, 10,  75) :   // Ambient Swell (Squash)
+  n == 21 ? qb_set( 300, 0,  6, 112, 45, 45, -3.0, 40, 0,  120, 55,  60) :   // Self-Oscillation (Squash)
+  n == 22 ? qb_set( 450, 0,  6,  55, 48, 30,  0.0, 40, 0,   60, 92,  50) :   // Tape Yank (Squash)
+  n == 23 ? qb_set( 450, 1,  7,  72, 32, 35,  0.0, 45, 0, 1200, 40,  55) :   // Dub Throw (Squash, 1/4 D)
+  n == 24 ? qb_set(  42, 0,  6,  10, 65, 15,  0.0, 45, 1,   55, 25, 100) :   // Warble Double (Squash)
+  n == 25 ? qb_set( 180, 0,  6,  50, 18, 85, -2.0, 40, 0,  240, 60,  65) :   // Lo-Fi Crunch (Squash)
+            qb_set( 260, 0,  6, 118, 62, 20, -4.0, 42, 1,   40, 30,  50);     // Siren Howl (Squash)
+  n < 8 ? slider_automate(2^9 - 1 + 2^11 + 2^13) :              // sliders 1-9, 12 and 14
+  n < 16 ? slider_automate(2^13 + 2^14 + 2^15 + 2^16 + 2^17 + 2^18 + 2^19 + 2^21) :   // 14-20 and 22
+           slider_automate(2^13 + 2^24 + 2^25 + 2^26 + 2^27 + 2^28 + 2^29 + 2^30 + 2^31 + 2^32 + 2^33 + 2^34 + 2^35 + 2^36);   // 14, 25-37
+);
+// the LCD shows the name; the list adds the model
+function pname(n) ( n = floor(n + 0.5);
+  n == 0 ? "INIT" : n == 1 ? "SLAPBACK" : n == 2 ? "DARK REPEATS" : n == 3 ? "DUAL CHIP DOUBLER" :
+  n == 4 ? "AMBIENT WASH" : n == 5 ? "SELF-OSCILLATION" : n == 6 ? "LO-FI SHORT" : n == 7 ? "CLEAN LONG" :
+  n == 8 ? "INIT" : n == 9 ? "SLAPBACK" : n == 10 ? "ADT DOUBLE" : n == 11 ? "METALLIC ROOM" :
+  n == 12 ? "DUB REPEATS" : n == 13 ? "RUNAWAY" : n == 14 ? "MIC BOOTH" : n == 15 ? "LO-FI HAZE" :
+  n == 16 ? "INIT" : n == 17 ? "SLAPBACK" : n == 18 ? "DARK REPEATS" : n == 19 ? "RUBBERY LEAD" : n == 20 ? "AMBIENT SWELL" :
+  n == 21 ? "SELF-OSCILLATION" : n == 22 ? "TAPE YANK" : n == 23 ? "DUB THROW" : n == 24 ? "WARBLE DOUBLE" : n == 25 ? "LO-FI CRUNCH" : "SIREN HOWL"; );
+function pmname(n) ( n = floor(n + 0.5);
+  n == 0 ? "Init" : n == 1 ? "Slapback (Studio)" : n == 2 ? "Dark Repeats (Studio)" : n == 3 ? "Dual Chip Doubler (Studio)" :
+  n == 4 ? "Ambient Wash (Studio)" : n == 5 ? "Self-Oscillation (Studio)" : n == 6 ? "Lo-Fi Short (Studio)" : n == 7 ? "Clean Long (Studio)" :
+  n == 8 ? "Init (Mini)" : n == 9 ? "Slapback (Mini)" : n == 10 ? "ADT Double (Mini)" : n == 11 ? "Metallic Room (Mini)" :
+  n == 12 ? "Dub Repeats (Mini)" : n == 13 ? "Runaway (Mini)" : n == 14 ? "Mic Booth (Mini)" : n == 15 ? "Lo-Fi Haze (Mini)" :
+  n == 16 ? "Init (Squash)" : n == 17 ? "Slapback (Squash)" : n == 18 ? "Dark Repeats (Squash)" : n == 19 ? "Rubbery Lead (Squash)" :
+  n == 20 ? "Ambient Swell (Squash)" : n == 21 ? "Self-Oscillation (Squash)" : n == 22 ? "Tape Yank (Squash)" : n == 23 ? "Dub Throw (Squash)" :
+  n == 24 ? "Warble Double (Squash)" : n == 25 ? "Lo-Fi Crunch (Squash)" : "Siren Howl (Squash)"; );
+
+// =====================================================================================================
+// state
+// =====================================================================================================
+!ui_dflt ? ui_thm = 0;
+lastp = slider13;                               // adopt the saved preset without re-applying it
+// STUDIO
+drT.drift_init(0.8 + rand(0.5)); drF.drift_init(0.8 + rand(0.5));
+tsc = 1 - exp(-1 / (0.05 * srate));             // the delay time glides (as a BBD clock does) rather than jumps
+jsIL.bq_set(3, 0.3705 * srate, 0.4658, 15.673); jsIR.bq_set(3, 0.3705 * srate, 0.4658, 15.673);   // the ADAA droop shelves
+jsFL.bq_set(3, 0.3705 * srate, 0.4658, 15.673); jsFR.bq_set(3, 0.3705 * srate, 0.4658, 15.673);
+// MINI
+mi_drT.drift_init(0.8 + rand(0.5)); drV.drift_init(0.8 + rand(0.5));
+mi_tsc = 1 - exp(-1 / (0.06 * srate));            // the clock glides rather than jumps
+hpa = exp(-2 * $pi * 120 / srate);                // feedback-loop coupling cap
+mca = exp(-2 * $pi * 150 / srate);                // MIC low cut
+ie_ca = 1 - exp(-1 / (0.004 * srate)); cr = 1 - exp(-1 / (0.040 * srate));   // compander detectors
+sga = 1 - exp(-1 / (0.25 * srate));               // supply sag follows the level slowly
+ieP.bq_set(3, 0.3705 * srate, 0.4658, 15.673); ieF.bq_set(3, 0.3705 * srate, 0.4658, 15.673);   // the ADAA droop shelves
+fwc = 1 - exp(-1 / (0.004 * srate));              // ECHO / MOMENTARY: the send opens and closes in about 4 ms
+// SQUASH
+qb_tb = ost_tanh(0.12);
+qb_dhc = 1 - exp(-2 * $pi * 45 / srate);
+qb_dlc = 1 - exp(-2 * $pi * 7000 / srate);
+qb_lhc = 1 - exp(-2 * $pi * 60 / srate);
+qdL.qbs.bq_set(3, 0.3705 * srate, 0.4658, 15.673); qdR.qbs.bq_set(3, 0.3705 * srate, 0.4658, 15.673);   // the ADAA droop shelves
+qsL.qbs.bq_set(3, 0.3705 * srate, 0.4658, 15.673); qsR.qbs.bq_set(3, 0.3705 * srate, 0.4658, 15.673);
+qb_sm  = 1 - exp(-1 / (0.03 * srate));                       // knob smoothing (no zipper)
+qb_pw  = 1 / (0.02 * srate);                                 // the clock follows the target time (~20 ms) ...
+qb_vc  = 1 - exp(-1 / (0.005 * srate));                      // ... with its speed smoothed (~5 ms): bends, never clicks
+qb_vmax = 0.8;                                               // fastest clock change: pitch held within 0.2x - 1.8x
+qdrT.drift_init(0.8 + rand(0.5)); qdrR.drift_init(0.8 + rand(0.5)); qdrF.drift_init(0.8 + rand(0.5));
+qb_bc = 0; qb_blk = 0; qb_pk = 0;
+// MODEL: the running engine (0 STUDIO, 1 MINI, 2 SQUASH) and the change-over (new model in over 20 ms, old repeats
+// out over 250 ms)
+eng = floor(slider14 + 0.5); xf_on = 0; xf_old = eng;
+xf_n = floor(0.25 * srate); xf_nd = floor(0.02 * srate);
+st_reset(); mi_reset(); sq_reset();
+ui_dflt = 1;
+
+@slider
+slider13 != lastp ? ( apply_preset(slider13); lastp = slider13; );
+update(); mi_update(); qb_update();
+
+@block
+// MODEL change: start the new engine from a clean state, fade it in and fade the old one's repeats out
+!xf_on && floor(slider14 + 0.5) != eng ? (
+  xf_old = eng; eng = floor(slider14 + 0.5);
+  eng == 0 ? st_reset() : eng == 1 ? mi_reset() : sq_reset();
+  xf_on = 1; xf_i = 0;
+);
+// an engine runs while it is the model, or while it fades out after a change
+run0 = eng == 0 || (xf_on && xf_old == 0); run1 = eng == 1 || (xf_on && xf_old == 1); run2 = eng == 2 || (xf_on && xf_old == 2);
+run0 ? (
+  update();
+  // DRIFT: the clock filter (tone) wanders here; the clock rate (timing) wanders per sample below
+  vF = drF.drift_tick(0.2 * st_dms * samplesblock / srate);
+  bbd_alpha = 1 - exp(-2 * $pi * min(lpf_cutoff * (1 + 0.12 * st_dma * vF), srate * 0.45) / srate);
+);
+run1 ? (
+  mi_update();
+  // DRIFT: the supply voltage wanders slowly (a few per cent), setting the preamp's headroom and gain
+  vV = drV.drift_tick(0.15 * mi_dms * samplesblock / srate);
+);
+run2 ? (
+  qb_update();                                               // knobs moved on the panel do not run @slider
+  // the clock filter: TONE, a little darker as the clock slows (long times), and DRIFT's slow tone wander
+  qb_vF = qdrF.drift_tick(0.2 * qb_dms * samplesblock / srate);
+  qb_fc = qb_tfc * min(1, (300 / max(qb_tdisp, 20)) ^ 0.3) * (1 + 0.12 * qb_dma * qb_vF);
+  qb_la = 1 - exp(-2 * $pi * min(max(qb_fc, 200), srate * 0.45) / srate);
+);
+
+@sample
+xf_on ? (
+  // the change-over: the new model's input opens in 20 ms (so its first echoes start smoothly too); the old one's
+  // input closes in 20 ms and its output (its repeats) fades out in 250 ms
+  xf_u = min(xf_i / xf_nd, 1);
+  xf_gn = 0.5 - 0.5 * cos($pi * xf_u);
+  xf_go = 0.5 + 0.5 * cos($pi * xf_i / xf_n);
+  st_ig = eng == 0 ? xf_gn : 1 - xf_gn; mi_ig = eng == 1 ? xf_gn : 1 - xf_gn; qb_ig = eng == 2 ? xf_gn : 1 - xf_gn;
+  xi0 = spl0; xi1 = spl1;
+);
+
+// ===== STUDIO =====
+run0 ? (
+  xf_on ? ( spl0 = xi0 * st_ig; spl1 = xi1 * st_ig; );
+  st_gl ? (                                     // control changes glide (15 ms)
+    repeats += (repeats_t - repeats) * gsc; mix_t += (mix_tt - mix_t) * gsc;
+    out_t += (out_tt - out_t) * gsc; in_trim += (in_trim_t - in_trim) * gsc;
+    abs(repeats - repeats_t) < 0.000001 && abs(mix_t - mix_tt) < 0.000001 && abs(out_t - out_tt) < 0.000001 && abs(in_trim - in_trim_t) < 0.000001 ? (
+      repeats = repeats_t; mix_t = mix_tt; out_t = out_tt; in_trim = in_trim_t; st_gl = 0;
+    );
+  );
+  // Input trimming
+  inL = spl0 * in_trim;
+  inR = spl1 * in_trim;
+
+  // Op-amp preamp input stage
+  inL = jsIL.bq_run(jaIL.ja_run(inL));
+  inR = jsIR.bq_run(jaIR.ja_run(inR));
+
+  // Delay times (DRIFT: the clock breathes) with optional dual-chip clock offset
+  vT = drT.drift_tick(0.3 * st_dms / srate);
+  t_sm += (t_s * (1 + 0.006 * st_dma * vT) - t_sm) * tsc;
+  dL = min(max(t_sm, 3), dlen - 4);
+  dR = dual_chip ? min(max(t_sm * 1.03 + 2, 3), dlen - 4) : dL;
+
+  // BBD Read
+  eL = rdl(bufL, dL);
+  eR = rdl(bufR, dR);
+
+  // BBD Anti-Aliasing LPF & Clock Noise Integration
+  lpf_stateL += (eL - lpf_stateL) * bbd_alpha; eL = lpf_stateL;
+  lpf_stateR += (eR - lpf_stateR) * bbd_alpha; eR = lpf_stateR;
+
+  noise = (rand(2.0) - 1.0) * noise_lvl;
+  eL += noise; eR += noise;
+
+  // Feedback Processing (op-amp drive in the feedback loop)
+  fL = jsFL.bq_run(jaFL.ja_run(eL * repeats));
+  fR = jsFR.bq_run(jaFR.ja_run(eR * repeats));
+
+  osc_lim ? (
+    fL = min(max(fL, -1.2), 1.2);
+    fR = min(max(fR, -1.2), 1.2);
+  );
+
+  bufL[wp] = inL + fL;
+  bufR[wp] = inR + fR;
+
+  wp += 1; wp >= dlen ? wp = 0;
+
+  // Dry / Wet Mix
+  dry_g = min(2 * (1 - mix_t), 1);
+  wet_g = min(2 * mix_t, 1);
+
+  oL = (inL * dry_g + eL * wet_g) * out_t;
+  oR = (inR * dry_g + eR * wet_g) * out_t;
+);
+
+// ===== MINI =====
+run1 ? (
+  xf_on ? ( spl0 = xi0 * mi_ig; spl1 = xi1 * mi_ig; );
+  mi_gl ? (                                     // control changes glide (15 ms), ECHO / MOMENTARY in about 4 ms
+    vol += (vol_t - vol) * gsc; bal += (bal_t - bal) * gsc; rep += (rep_t - rep) * gsc;
+    out_g += (out_g_t - out_g) * gsc; ie_trs += (ie_tr_t - ie_trs) * gsc; fsw += (fsw_t - fsw) * fwc;
+    abs(vol - vol_t) < 0.000001 && abs(bal - bal_t) < 0.000001 && abs(rep - rep_t) < 0.000001 && abs(out_g - out_g_t) < 0.000001 &&
+    abs(ie_trs - ie_tr_t) < 0.000001 && abs(fsw - fsw_t) < 0.000001 ? (
+      vol = vol_t; bal = bal_t; rep = rep_t; out_g = out_g_t; ie_trs = ie_tr_t; fsw = fsw_t; mi_gl = 0;
+    );
+  );
+  mi_dL = spl0; mi_dR = spl1;
+
+  // input socket and VOLUME (the box is mono)
+  ie_x = (mi_dL + mi_dR) * 0.5 * vol;
+  mic ? ( mcs = ie_x + mca * (mcs - ie_x); ie_x -= mcs; );
+
+  // preamp on a sagging supply: drift wanders it, loud passages pull it down
+  sag += (min(abs(ie_x), 2) - sag) * sga;
+  hv = 1.0 * (1 + 0.05 * mi_dma * vV) * (1 - 0.12 * mi_dma * min(sag, 1));
+  g_sup = 1 + 0.03 * mi_dma * vV;
+  ie_pv = ieP.bq_run(ieA.ie_pre(ie_x * g_sup / hv));      // the preamp (anti-aliased) on its supply
+  ie_x = ie_pv * hv;
+  pkIn = max(pkIn, abs(ie_pv));
+
+  // send: with the echo off (or paused by MOMENTARY) no new signal goes in; the repeats carry on
+  snd = ie_x * fsw;
+
+  // the clock (DRIFT: it breathes) and the delay time glide
+  mi_vT = mi_drT.drift_tick(0.35 * mi_dms / srate);
+  mi_tsm += (mi_ts * (1 + 0.007 * mi_dma * mi_vT) - mi_tsm) * mi_tsc;
+  ie_d = min(max(mi_tsm, 3), mi_dlen - 4);
+
+  // read the line, clock / reconstruction filter (two poles), hiss, expander
+  ie_e = mi_rdl(ie_d);
+  mi_f1 += (ie_e - mi_f1) * lpa; mi_f2 += (mi_f1 - mi_f2) * lpb; ie_e = mi_f2;
+  ie_e += (rand(2) - 1) * hiss;
+  ae = abs(ie_e); envE += (ae - envE) * (ae > envE ? ie_ca : cr);
+  ie_e = ie_e * (max(envE, 0.0005) / 0.25);              // 1:2 expander (the hiss sinks between notes)
+  ie_e += (rand(2) - 1) * hiss * 0.3;                     // the output stage hiss stays (about 60 dB down at nominal level)
+
+  // feedback: coupling cap, op-amp clip (runaway stays bounded)
+  fb = ie_e * rep;
+  hps = fb + hpa * (hps - fb); fb = fb - hps;
+  fb = ieF.bq_run(ieB.ie_fbc(fb));
+  pkFb = max(pkFb, abs(fb));
+
+  // write: input filter, then the 2:1 compressor
+  ie_w = snd + fb;
+  wf += (ie_w - wf) * lpb; ie_w = wf;
+  aw = abs(ie_w); envC += (aw - envC) * (aw > envC ? ie_ca : cr);
+  ie_w = ie_w * sqrt(0.25 / max(envC, 0.0005));
+  mi_buf[mi_wp] = min(max(ie_w, -4), 4);
+  mi_wp += 1; mi_wp >= mi_dlen ? mi_wp = 0;
+
+  // BALANCE (dry stereo, echo mono) and OUTPUT
+  mi_dry = min(2 * (1 - bal), 1); mi_wet = min(2 * bal, 1) * ie_trs;
+  mi_oL = (mi_dL * mi_dry + ie_e * mi_wet) * out_g;
+  mi_oR = (mi_dR * mi_dry + ie_e * mi_wet) * out_g;
+);
+
+// ===== SQUASH =====
+run2 ? (
+  xf_on ? ( spl0 = xi0 * qb_ig; spl1 = xi1 * qb_ig; );
+  qb_i0 = spl0; qb_i1 = spl1;
+  qb_fbs += (qb_fbt - qb_fbs) * qb_sm; qb_lvs += (qb_lvt - qb_lvs) * qb_sm;
+  qb_mxs += (qb_mxt - qb_mxs) * qb_sm; qb_outs += (qb_out - qb_outs) * qb_sm;
+  // STRETCH: an S-shaped sweep from TIME to STRETCH TIME (on a log scale, so the bend holds a steady pitch)
+  qb_sp += qb_st ? qb_rinc : -qb_rinc; qb_sp = min(max(qb_sp, 0), 1);
+  qb_ss = qb_sp * qb_sp * (3 - 2 * qb_sp);
+  qb_tt = qb_ss > 0 ? qb_tms * exp(qb_ss * log(qb_sms / qb_tms)) : qb_tms;
+  // DRIFT: the clock breathes (slow wow), a little differently on each side
+  qb_vT = qdrT.drift_tick(0.35 * qb_dms / srate);
+  qb_vR = qdrR.drift_tick(0.5 * qb_dms / srate);
+  qb_tgt = qb_tt * 0.001 * srate * (1 + 0.004 * qb_dma * qb_vT);
+  // the read point chases the target like a BBD clock / tape head being pulled: speed smoothed and limited, so time
+  // changes come out as pitch bends instead of clicks
+  qb_vd = min(max((qb_tgt - qb_ds) * qb_pw, -qb_vmax), qb_vmax);
+  qb_vel += (qb_vd - qb_vel) * qb_vc;
+  qb_ds = min(max(qb_ds + qb_vel, 4), qb_len - 6);
+  qb_dL = qb_ds - 0.068;                                       // (less the anti-aliased loop's 0.068-sample delay)
+  qb_dR = min(max(qb_ds * (1 + 0.0015 * qb_dma * qb_vR), 4), qb_len - 6) - 0.068;
+  // BBD read, clock / TONE filter
+  qb_w0 = qtL.qb_lp2(qb_rd(qb_bL, qb_dL));
+  qb_w1 = qtR.qb_lp2(qb_rd(qb_bR, qb_dR));
+  // REGEN loop (low cut in the loop) + GAIN stage, soft-limited where they meet; a whisper of clock hiss lets a loop
+  // set past 100 % start howling on its own
+  qb_f0 = qhL.qb_hp(qb_w0 * qb_fbs);
+  qb_f1 = qhR.qb_hp(qb_w1 * qb_fbs);
+  qb_hs = (rand(2) - 1) * 0.00002;
+  qb_bL[qb_wp] = qsL.qb_soft(qdL.qb_drive(qb_i0) + qb_f0 + qb_hs);
+  qb_bR[qb_wp] = qsR.qb_soft(qdR.qb_drive(qb_i1) + qb_f1 - qb_hs);
+  qb_wp += 1; qb_wp >= qb_len ? qb_wp = 0;
+  // LEVEL, MIX, OUTPUT
+  qb_dg = min(2 * (1 - qb_mxs), 1); qb_wg = min(2 * qb_mxs, 1) * qb_lvs;
+  qb_o0 = (qb_i0 * qb_dg + qb_w0 * qb_wg) * qb_outs;
+  qb_o1 = (qb_i1 * qb_dg + qb_w1 * qb_wg) * qb_outs;
+  // for the panel: the time in ms, a tick every repeat (TEMPO), the wet level (HOWL)
+  qb_tdisp = qb_ds * 1000 / srate;
+  qb_bc += 1; qb_bc >= qb_ds ? ( qb_bc -= qb_ds; qb_blk += 1; );
+  qb_pk = max(qb_pk * 0.99995, max(abs(qb_w0), abs(qb_w1)));
+);
+
+// ===== OUT =====
+// the engines' outputs: STUDIO oL / oR, MINI mi_oL / mi_oR, SQUASH qb_o0 / qb_o1
+function eo_l(k) ( k == 0 ? oL : k == 1 ? mi_oL : qb_o0; );
+function eo_r(k) ( k == 0 ? oR : k == 1 ? mi_oR : qb_o1; );
+xf_on ? (
+  spl0 = eo_l(eng) + eo_l(xf_old) * xf_go; spl1 = eo_r(eng) + eo_r(xf_old) * xf_go;
+  xf_i += 1; xf_i >= xf_n ? xf_on = 0;          // the old engine stops here
+) : ( spl0 = eo_l(eng); spl1 = eo_r(eng); );
+pkL = max(pkL, abs(spl0)); pkR = max(pkR, abs(spl1));
+
+@gfx 1060 300
+ui_begin(1060, 300);
+
+function setv(idx, v) ( slider(idx) = v; ui_auto(idx); );
+// the preset row's actions (both faces): step, pick from the list (with Reset all to defaults), or the model keys
+function pr_go(n) ( setv(13, n); apply_preset(slider13); lastp = slider13; );
+function pr_menu(x, y) local(k) (
+  drag_id = -1;
+  strcpy(#pmenu, ""); k = 0;
+  loop(27, k == floor(slider13 + 0.5) ? strcat(#pmenu, "!"); strcat(#pmenu, pmname(k)); strcat(#pmenu, "|"); k += 1; );
+  strcat(#pmenu, "Reset all to defaults");
+  gfx_x = x * sc; gfx_y = y * sc;
+  k = gfx_showmenu(#pmenu);
+  k > 0 && k <= 27 ? pr_go(k - 1) : k == 28 ? ( reset_all(); lastp = slider13; );
+);
+
+// =====================================================================================================
+// STUDIO face (navy)
+// =====================================================================================================
+function st_face() local(pm_) (
+  FACE = 0x1E2A44; INK = 0xF3EBD3; BLU = 0xF3EBD3; DIM = 0xA3ABBE;
+  dy_ink = INK; dy_bg = FACE; dy_nov = 1;
+
+  ui_col(0x0A0A0B); gfx_rect(0, 0, gfx_w, gfx_h);
+  ui_col(FACE); gfx_rect(0, 0, 1060 * sc, 300 * sc);
+  ui_col(ui_mix(FACE, 0x3A4A6E, 0.35)); gfx_rect(0, 0, 1060 * sc, 62 * sc);   // header: a lighter shade of the navy
+  ui_cola(0x000000, 0.35); gfx_rect(0, 0, 1060 * sc, 2 * sc); gfx_rect(0, 298 * sc, 1060 * sc, 2 * sc);
+  ui_col(BLU); gfx_rect(0, 62 * sc, 1060 * sc, 3 * sc);
+
+  // ---------- HEADER: title, MODEL keys, the preset LCD (click it for every preset), size ----------
+  rd_badge(40, 34, 15, INK, FACE);
+  rd_title(64, 18, "ECHO 34", 24, INK);
+  rd_sq(186, 18, 70, 30, eng_k == 0, BLU, "STUDIO") ? setv(14, 0);
+  rd_sq(260, 18, 58, 30, eng_k == 1, BLU, "MINI") ? setv(14, 1);
+  rd_sq(322, 18, 74, 30, eng_k == 2, BLU, "SQUASH") ? setv(14, 2);
+  rd_sub(408, 30, "BBD DELAY LINE", DIM, 1);
+  pm_ = rd_sq(516, 18, 78, 30, 0, BLU, "PRESETS");   // PRESETS, prev / next, then the LCD (click either for every preset)
+  rd_sq(600, 18, 30, 30, 0, BLU, "◄") ? pr_go((floor(slider13 + 0.5) + 26) % 27);
+  rd_sq(634, 18, 30, 30, 0, BLU, "►") ? pr_go((floor(slider13 + 0.5) + 1) % 27);
+  pk_lcd(672 * sc, 10 * sc, 232 * sc, 46 * sc, 0);
+  ui_col(pk_lcdc);
+  pk_lcdfont(9, 27 * sc); gfx_measurestr(pname(slider13), ltw_, lth_); pk_fitstr(pname(slider13), 684 * sc, 33 * sc - lth_ * 0.5, 27 * sc, 212 * sc);
+  pm_ || (pressed && drag_id == 0 && mouse_x >= 672 * sc && mouse_x < 904 * sc && mouse_y >= 10 * sc && mouse_y < 56 * sc) ? pr_menu(516, 56);
+  ui_size_picker(940 * sc, 24 * sc);
+
+  // ---------- PREAMP ----------
+  rd_sub(44, 74, "PREAMP", BLU, 1);
+  sprintf(#v, "%+.1f dB", slider11);
+  dy_knob(94, 160, 24, 11, -24, 12, 0, 0, 0x9DA2A8, "TRIM", hover_txt(94, 160, 24, #v));
+  sprintf(#v, "%.0f%%", slider4);
+  dy_knob(174, 160, 24, 4, 0, 100, 30, 0, 0xC4C6C3, "DRIVE", hover_txt(174, 160, 24, #v));
+
+  ui_cola(INK, 0.15); gfx_rect(229 * sc, 78 * sc, 1 * sc, 208 * sc);
+
+  // ---------- DELAY: chip, time, repeats ----------
+  rd_sub(244, 74, "DELAY", BLU, 1);
+  rd_sq(270, 92, 60, 24, slider1 == 0, BLU, "LONG")  ? setv(1, 0);
+  rd_sq(336, 92, 60, 24, slider1 == 1, BLU, "SHORT") ? setv(1, 1);
+  sprintf(#v, "%.0f ms", slider2);
+  dy_knob(330, 172, 32, 2, 50, slider1 ? 110 : 550, 250, 1, 0xC4C6C3, "TIME", hover_txt(330, 172, 32, #v));
+  sprintf(#v, "%.0f%%", slider3);
+  dy_knob(462, 172, 26, 3, 0, 110, 40, 0, 0xC4C6C3, "REPEATS", hover_txt(462, 172, 26, #v));
+  rd_sq(262, 248, 110, 24, slider7, BLU, "DUAL CHIP") ? setv(7, 1 - slider7);
+  rd_sq(410, 248, 110, 24, slider8, BLU, "OSC LIMIT") ? setv(8, 1 - slider8);
+
+  ui_cola(INK, 0.15); gfx_rect(549 * sc, 78 * sc, 1 * sc, 208 * sc);
+
+  // ---------- TONE ----------
+  rd_sub(564, 74, "TONE", BLU, 1);
+  sprintf(#v, "%.0f Hz", slider5);
+  dy_knob(614, 160, 24, 5, 1000, 8000, 3500, 1, 0x9DA2A8, "CLOCK LPF", hover_txt(614, 160, 24, #v));
+  sprintf(#v, "%.0f%%", slider6);
+  dy_knob(694, 160, 24, 6, 0, 100, 15, 0, 0x9DA2A8, "NOISE", hover_txt(694, 160, 24, #v));
+
+  ui_cola(INK, 0.15); gfx_rect(744 * sc, 78 * sc, 1 * sc, 208 * sc);
+
+  // ---------- MASTER ----------
+  rd_sub(759, 74, "MASTER", BLU, 1);
+  sprintf(#v, "%.0f%%", slider9);
+  dy_knob(796, 160, 24, 9, 0, 100, 35, 0, 0xF3EBD3, "MIX", hover_txt(796, 160, 24, #v));
+  sprintf(#v, "%.0f%%", slider12);
+  dy_knob(866, 160, 20, 12, 0, 100, 50, 0, 0x9DA2A8, "DRIFT", hover_txt(866, 160, 20, #v));
+  sprintf(#v, "%+.1f dB", slider10);
+  dy_knob(936, 160, 24, 10, -24, 12, 0, 0, 0xC4C6C3, "OUTPUT", hover_txt(936, 160, 24, #v));
+
+  mL.ui_ledm(984 * sc, 100 * sc, 9 * sc, 130 * sc, pkL); mR.ui_ledm(1000 * sc, 100 * sc, 9 * sc, 130 * sc, pkR);
+  rd_lbl(996, 244, "OUT", DIM, 1);
+);
+
+// =====================================================================================================
+// MINI face (painted black steel, orange / green / blue / yellow caps)
+// =====================================================================================================
+function mi_face() local(pm_, k_, gsy_) (
+  FACE = 0x161616; HEAD = 0x222222; INK = 0xEEEFEA; DIM = 0x9A9A9A; RULE = 0x3A3A3A;
+  C_ORG = 0xE8742A; C_GRN = 0x33A052; C_BLU = 0x3D70CC; C_YEL = 0xF2C83E; C_GRY = 0x9DA2A8; C_WHT = 0xEEEFEA;
+  KEY = 0xC7BEB3;
+  dy_ink = INK; dy_bg = FACE; dy_nov = 1;
+
+  // painted black steel: flat paint with a soft top sheen, screws in the corners
+  ui_col(0x0A0A0B); gfx_rect(0, 0, gfx_w, gfx_h);
+  ui_col(FACE); gfx_rect(0, 0, 1060 * sc, 300 * sc);
+  gfx_gradrect(0, 0, 1060 * sc, 150 * sc, 1, 1, 1, 0.05, 0, 0, 0, 0, 0, 0, 0, -0.05 / (150 * sc));
+  ui_col(HEAD); gfx_rect(0, 0, 1060 * sc, 62 * sc);
+  ui_cola(0x000000, 0.4); gfx_rect(0, 0, 1060 * sc, 2 * sc); gfx_rect(0, 298 * sc, 1060 * sc, 2 * sc);
+  ui_col(INK); gfx_rect(0, 62 * sc, 1060 * sc, 2 * sc);
+  rd_screw(10, 284); rd_screw(1050, 284);
+
+  // ---------- HEADER: title, MODEL keys, presets [PRESETS][◄][►][LCD], size ----------
+  rd_badge(40, 31, 15, INK, HEAD);
+  rd_title(64, 16, "ECHO 34", 24, INK);
+  rd_sq(186, 16, 70, 30, eng_k == 0, KEY, "STUDIO") ? setv(14, 0);
+  rd_sq(260, 16, 58, 30, eng_k == 1, KEY, "MINI") ? setv(14, 1);
+  rd_sq(322, 16, 74, 30, eng_k == 2, KEY, "SQUASH") ? setv(14, 2);
+  rd_sub(408, 28, "MINI ECHO UNIT", DIM, 1);
+  pm_ = rd_sq(516, 16, 78, 30, 0, KEY, "PRESETS");
+  rd_sq(600, 16, 30, 30, 0, KEY, "◄") ? pr_go((floor(slider13 + 0.5) + 26) % 27);
+  rd_sq(634, 16, 30, 30, 0, KEY, "►") ? pr_go((floor(slider13 + 0.5) + 1) % 27);
+  pk_lcd(672 * sc, 9 * sc, 232 * sc, 46 * sc, 0);
+  ui_col(pk_lcdc); pk_lcdfont(9, 27 * sc); gfx_measurestr(pname(slider13), lcw_, lch_);
+  pk_fitstr(pname(slider13), 684 * sc, 32 * sc - lch_ * 0.5, 27 * sc, 212 * sc);
+  pm_ || (pressed && drag_id == 0 && mouse_x >= 672 * sc && mouse_x < 904 * sc && mouse_y >= 9 * sc && mouse_y < 55 * sc) ? pr_menu(516, 56);
+  ui_size_picker(940 * sc, 24 * sc);
+
+  // ---------- INPUT ----------
+  rd_sub(24, 76, "INPUT", INK, 1);
+  rd_sq(34, 100, 62, 28, slider15 < 0.5, KEY, "INST") ? setv(15, 0);
+  rd_sq(102, 100, 62, 28, slider15 > 0.5, KEY, "MIC")  ? setv(15, 1);
+  rd_sq(34, 214, 56, 30, slider21 > 0.5, C_GRN, "ECHO") ? setv(21, 1 - slider21);
+  // MOMENTARY does not latch: held, it flips ECHO; let go, it springs back
+  k_ = rd_sq(96, 214, 96, 30, slider24 > 0.5, C_YEL, "MOMENTARY");
+  k_ && mom_m == 0 ? ( mom_m = 1; setv(24, 1); );
+  sprintf(#v, "%+.1f dB", slider16);
+  dy_knob(248, 166, 32, 16, -24, 18, 0, 0, C_ORG, "VOLUME", #v);
+  rd_led(292, 116, 5, pkIn > 0.82, 0xFF3A22); rd_lbl(292, 126, "PEAK", DIM, 1);
+
+  ui_col(RULE); gfx_rect(322 * sc, 78 * sc, 1 * sc, 196 * sc);
+
+  // ---------- ECHO ----------
+  rd_sub(338, 76, "ECHO", INK, 1);
+  sprintf(#v, "%.0f%%", slider17);
+  dy_knob(404, 166, 32, 17, 0, 100, 35, 0, C_GRN, "BALANCE", #v);
+  sprintf(#v, "%.0f%%", slider18);
+  dy_knob(534, 166, 32, 18, 0, 110, 35, 0, C_BLU, "REPEAT", #v);
+  rd_led(578, 116, 5, pkFb > 0.45, 0xFF3A22); rd_lbl(578, 126, "REPEAT", DIM, 1);
+  gsy_ = floor(slider20 + 0.5);
+  gsy_ > 0 ? sprintf(#v, "%s  %.0f ms", mi_divname(gsy_), mi_tms) : sprintf(#v, "%.0f ms", slider19);
+  dy_knob(684, 166, 38, 19, 20, 400, 180, 1, C_YEL, "DELAY TIME", #v);
+  rd_sq(746, 100, 68, 26, gsy_ > 0, KEY, mi_divname(gsy_)) ? (
+    strcpy(#smenu, ""); k_ = 0;
+    loop(9, k_ == gsy_ ? strcat(#smenu, "!"); strcat(#smenu, mi_divname(k_)); k_ < 8 ? strcat(#smenu, "|"); k_ += 1; );
+    gfx_x = 746 * sc; gfx_y = 128 * sc;
+    k_ = gfx_showmenu(#smenu);
+    k_ > 0 ? setv(20, k_ - 1);
+  );
+  rd_lbl(780, 132, "SYNC", DIM, 1);
+
+  ui_col(RULE); gfx_rect(830 * sc, 78 * sc, 1 * sc, 196 * sc);
+
+  // ---------- MASTER ----------
+  rd_sub(846, 76, "MASTER", INK, 1);
+  sprintf(#v, "%.0f%%", slider22);
+  dy_knob(904, 120, 20, 22, 0, 100, 50, 0, C_GRY, "DRIFT", #v);
+  sprintf(#v, "%+.1f dB", slider23);
+  dy_knob(904, 214, 26, 23, -24, 12, 0, 0, C_WHT, "OUTPUT", #v);
+  mL.ui_ledm(988 * sc, 96 * sc, 10 * sc, 150 * sc, pkL); mR.ui_ledm(1004 * sc, 96 * sc, 10 * sc, 150 * sc, pkR);
+  rd_lbl(1001, 256, "OUT", DIM, 1);
+);
+
+// =====================================================================================================
+// SQUASH face (matte black and yellow, after the Squashball pedal)
+// =====================================================================================================
+QG_BLK = 0x161617; QG_INK = 0xF0E8C8; QG_DIM = 0xB3AB92; QG_YEL = 0xF2C21B; QG_RED = 0xFF3A22;
+function qg_lbl(x, y, s, col) ( gfx_setfont(4); ui_col(col); ui_text(x * sc, y * sc, s); );
+function qg_title(x, y, s) ( gfx_setfont(5); ui_col(QG_INK); gfx_x = x * sc; gfx_y = y * sc; gfx_drawstr(s); );
+function qg_tray(x, y, w, h, col, title) ( pk_inset(x * sc, y * sc, w * sc, h * sc, col); strlen(title) ? qg_title(x + 8, y + 5, title); );
+// the yellow double dot
+function qg_dots(x, y, r, gap, lit) local(i) (
+  i = 0;
+  loop(2,
+    lit ? ( ui_cola(QG_YEL, 0.22); gfx_circle((x + i * gap) * sc, y * sc, (r + 4) * sc, 1, 1); );
+    ui_col(0x050505); gfx_circle((x + i * gap) * sc, y * sc, (r + 1.2) * sc, 1, 1);
+    ui_col(lit ? QG_YEL : ui_mix(QG_YEL, 0x000000, 0.25)); gfx_circle((x + i * gap) * sc, y * sc, r * sc, 1, 1);
+    ui_cola(0xFFFFFF, lit ? 0.55 : 0.2); gfx_circle((x + i * gap - r * 0.3) * sc, (y - r * 0.35) * sc, r * 0.33 * sc, 1, 1);
+    i += 1;
+  );
+);
+function sq_face() local(pm_, k_, kst0, numc0) (
+  kst0 = dy_kst; numc0 = dy_numc;                          // (put back at the end: the other faces share them)
+  dy_ink = QG_INK; dy_bg = QG_BLK; dy_numc = QG_DIM; dy_nov = 1;
+  ui_col(0x0A0A0B); gfx_rect(0, 0, gfx_w, gfx_h);
+  ui_col(QG_BLK); gfx_rect(0, 0, 1060 * sc, 300 * sc);
+  ui_col(0x1D1D1F); gfx_rect(0, 0, 1060 * sc, 62 * sc);                                 // header strip: a lighter matte
+  gfx_gradrect(0, 0, 1060 * sc, 30 * sc, 1, 1, 1, 0.05, 0, 0, 0, 0, 0, 0, 0, -0.05 / (30 * sc));
+  ui_cola(0x000000, 0.4); gfx_rect(0, 0, 1060 * sc, 2 * sc); gfx_rect(0, 298 * sc, 1060 * sc, 2 * sc);
+  ui_cola(QG_YEL, 0.85); gfx_rect(0, 62 * sc, 1060 * sc, 2 * sc);
+
+  // ---------- HEADER: title, MODEL keys, presets [PRESETS][◄][►][LCD], size ----------
+  rd_badge(40, 31, 15, QG_INK, 0x1D1D1F);
+  rd_title(64, 16, "ECHO 34", 24, QG_INK);
+  rd_sq(186, 16, 70, 30, eng_k == 0, QG_YEL, "STUDIO") ? setv(14, 0);
+  rd_sq(260, 16, 58, 30, eng_k == 1, QG_YEL, "MINI") ? setv(14, 1);
+  rd_sq(322, 16, 74, 30, eng_k == 2, QG_YEL, "SQUASH") ? setv(14, 2);
+  qg_dots(418, 31, 5, 14, 1);
+  rd_sub(446, 26, "DELAY / STRETCH", QG_DIM, 1);
+  pm_ = rd_sq(516, 16, 78, 30, 0, QG_YEL, "PRESETS");
+  rd_sq(600, 16, 30, 30, 0, QG_YEL, "◄") ? pr_go((floor(slider13 + 0.5) + 26) % 27);
+  rd_sq(634, 16, 30, 30, 0, QG_YEL, "►") ? pr_go((floor(slider13 + 0.5) + 1) % 27);
+  pk_lcd(672 * sc, 9 * sc, 232 * sc, 46 * sc, 0);
+  ui_col(pk_lcdc); pk_lcdfont(9, 27 * sc); gfx_measurestr(pname(slider13), lcw_, lch_);
+  pk_fitstr(pname(slider13), 684 * sc, 32 * sc - lch_ * 0.5, 27 * sc, 212 * sc);
+  pm_ || (pressed && drag_id == 0 && mouse_x >= 672 * sc && mouse_x < 904 * sc && mouse_y >= 9 * sc && mouse_y < 55 * sc) ? pr_menu(516, 56);
+  ui_size_picker(940 * sc, 24 * sc);
+
+  // ---------- the pedal: GAIN | TIME REGEN TONE | LEVEL MIX, with the readout and lights below ----------
+  qg_tray(12, 72, 560, 220, 0x1B1B1D, "");
+  ui_cola(QG_INK, 0.16); gfx_rect(110 * sc, 82 * sc, 1 * sc, 120 * sc); gfx_rect(418 * sc, 82 * sc, 1 * sc, 120 * sc);
+  dy_kst = 33; dy_num = 1;                                    // black ribbed caps with a yellow pointer
+  sprintf(#v, "%.0f%%", slider30);
+  dy_knob(60, 140, 24, 30, 0, 100, 25, 0, QG_YEL, "GAIN", #v);
+  dy_kst = 7;                                                 // TIME: the yellow cap
+  slider26 ? (
+    dy_step = 16; dy_steps = "";
+    dy_knob(172, 140, 30, 27, 0, 15, 6, 0, QG_YEL, "TIME", lfo_div_name(slider27));
+  ) : (
+    sprintf(#v, "%.0f ms", slider25);
+    dy_knob(172, 140, 30, 25, 30, 1500, 350, 1, QG_YEL, "TIME", #v);
+  );
+  dy_kst = 33;
+  sprintf(#v, "%.0f%%", slider28);
+  dy_knob(268, 140, 24, 28, 0, 130, 35, 0, QG_YEL, "REGEN", #v);
+  sprintf(#v, "%.0f Hz", qb_tfc);
+  dy_knob(354, 140, 24, 29, 0, 100, 55, 0, QG_YEL, "TONE", #v);
+  sprintf(#v, "%+.1f dB", slider31);
+  dy_knob(464, 140, 24, 31, -24, 6, 0, 0, QG_YEL, "LEVEL", #v);
+  sprintf(#v, "%.0f%%", slider32);
+  dy_knob(534, 140, 24, 32, 0, 100, 35, 0, QG_YEL, "MIX", #v);
+  dy_num = 0;
+  // the readout (time in ms), SYNC, and the lights: TEMPO (every repeat), the double dot (STRETCH), HOWL
+  ui_col(0x0B0B0C); rd_rr(118 * sc, 228 * sc, 96 * sc, 40 * sc, 4 * sc);
+  ui_col(0x1A0705); gfx_rect(122 * sc, 232 * sc, 88 * sc, 32 * sc);
+  sprintf(#qg_ms, "%d", floor(min(qb_tdisp, 9999) + 0.5));
+  rd_seg(127, 238, 11, 20, 4, #qg_ms, QG_RED, 0x3A0C08);
+  gfx_setfont(4); ui_col(QG_RED); gfx_x = 191 * sc; gfx_y = 248 * sc; gfx_drawstr("ms");
+  rd_sq(222, 228, 52, 40, slider26, QG_YEL, "SYNC") ? setv(26, 1 - slider26);
+  qb_blk != qg_lb ? ( qg_lb = qb_blk; qg_lt = time_precise(); );
+  rd_led(318, 242, 4, time_precise() - qg_lt < 0.07, QG_RED); qg_lbl(318, 254, "TEMPO", QG_DIM);
+  qg_dots(372, 242, 5, 16, slider33 >= 0.5 || qb_sp > 0.01);
+  rd_led(440, 242, 4, slider28 > 100 && qb_pk > 0.05, 0xFF8A1E); qg_lbl(440, 254, "HOWL", QG_DIM);
+
+  // ---------- STRETCH: its time and rate, HOLD / LATCH and the STRETCH key ----------
+  qg_tray(582, 72, 290, 220, 0x1E1D1B, "STRETCH");
+  dy_kst = 33; dy_num = 1;
+  sprintf(#v, "%.0f ms", slider35);
+  dy_knob(632, 136, 22, 35, 30, 2000, 900, 1, QG_YEL, "TIME", #v);
+  sprintf(#v, "%.0f%%", slider36);
+  dy_knob(722, 136, 22, 36, 0, 100, 50, 0, QG_YEL, "RATE", #v);
+  dy_num = 0;
+  rd_sq(778, 100, 82, 26, slider34 == 0, QG_YEL, "HOLD")  ? setv(34, 0);
+  rd_sq(778, 134, 82, 26, slider34 == 1, QG_YEL, "LATCH") ? setv(34, 1);
+  // hold it (HOLD) or click it on and off (LATCH)
+  rd_sq(600, 214, 254, 58, slider33 >= 0.5, QG_YEL, "STRETCH") ? (
+    qg_fdn = 1;
+    slider34 == 1 ? setv(33, slider33 >= 0.5 ? 0 : 1) : setv(33, 1);
+  );
+
+  // ---------- MASTER: DRIFT, OUTPUT, meters ----------
+  qg_tray(882, 72, 166, 220, 0x1A1B1D, "");
+  dy_kst = 20;
+  sprintf(#v, "%.0f%%", slider37);
+  dy_knob(924, 126, 18, 37, 0, 100, 50, 0, 0x9DA2A8, "DRIFT", #v);
+  sprintf(#v, "%+.1f dB", slider38);
+  dy_knob(924, 220, 22, 38, -24, 12, 0, 0, 0x9DA2A8, "OUTPUT", #v);
+  dy_kst = kst0; dy_numc = numc0;
+  mL.ui_ledm(988 * sc, 96 * sc, 10 * sc, 150 * sc, pkL); mR.ui_ledm(1004 * sc, 96 * sc, 10 * sc, 150 * sc, pkR);
+  rd_lbl(1001, 256, "OUT", QG_DIM, 1);
+);
+
+eng_k = floor(slider14 + 0.5);
+eng_k == 2 ? sq_face() : eng_k == 1 ? mi_face() : st_face();
+// STRETCH (HOLD) lets go when the mouse is let go
+!mdown && qg_fdn ? ( qg_fdn = 0; slider34 == 0 ? setv(33, 0); );
+// MOMENTARY springs back when the mouse is let go (on either face)
+mom_m && !(mouse_cap & 1) ? ( mom_m = 0; setv(24, 0); );
+// the meters' and lights' mailboxes fall back
+pkL *= 0.85; pkR *= 0.85; pkIn *= 0.8; pkFb *= 0.85;
+
+pk_end();
+ui_end();

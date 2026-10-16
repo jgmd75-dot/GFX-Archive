@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX DLY57 - manual</title><meta name="description" content="Series 57's delay: a multi-head echo - a record head and four replay heads round a magnetic drum, any of them in, with swell, wow and a valve record amp.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="index.html">All manuals</a><a href="all.html">One page</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-dly57">
+<div class="cat">Modulation &amp; space</div><h1>DLY57</h1>
+<p class="tagline">Series 57's delay: a multi-head echo - a record head and four replay heads round a magnetic drum, any of them in, with swell, wow and a valve record amp.</p>
+<div class="shot"><img src="img/gfx-dly57.webp" alt="The DLY57 panel" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-dly57-cph.webp" alt="The DLY57 panel, COPENHAGEN face" loading="lazy"></div>
+<h2>Overview</h2><p>DLY57 is the Series 57 counterpart of DLY81: a multi-head echo of the late 50s. One recording head and four replay heads sit round a turning drum of magnetic tape. Switch any of them in: one setting gives a single slap, another a rhythm of repeats.</p><p>TIME sets the delay at head 4; heads 1, 2 and 3 sit at a quarter, a half and three quarters of it. SYNC locks head 4 to the tempo. SWELL feeds every head that is in back onto the drum, through the replay EQ (TONE). The valve record amp runs oversampled 2x.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Rhythmic multi-tap echoes from one setting</li><li>Slapback and doubling</li><li>Swelling, self-oscillating echo textures</li><li>Wide ping-pong repeats with SPREAD</li></ul>
+<h2>Getting started</h2><ol class="steps"><li>Insert DLY57 on a track, or on a send with MIX at 100%. It opens on Init: heads 1 and 3 at 480 ms.</li><li>Switch heads in and out with the HEAD keys (or click the heads on the drum): the times are shown beside the keys.</li><li>Set TIME, or press SYNC and choose a note value for head 4.</li><li>Raise SWELL for more repeats; TONE makes them darker or brighter.</li><li>Set SPREAD for the stereo picture and MIX for the balance.</li></ol>
+<h2>Controls</h2><h3>The header</h3><dl class="ctl"><dt>PRESETS</dt><dd>Opens the preset list (a click on the preset display does the same). The list ends with Reset all to defaults.</dd><dt>&#9668; / &#9658;</dt><dd>Step to the previous or next preset.</dd><dt>Preset display</dt><dd>Shows the name of the preset in use. New instances open on Init.</dd><dt>ULM / COPENHAGEN</dt><dd>The face: the look and the voice of the unit (see Two faces). Presets leave it as it is.</dd><dt>S / M / L</dt><dd>Panel size: small, medium or large. The panel also scales to fit the plugin window.</dd><dt>?</dt><dd>Opens a pop-up with the design credit, the GFX website address and the address of this manual.</dd></dl>
+<h3>DRUM &middot; HEADS</h3><dl class="ctl"><dt>The drum</dt><dd>The record head (R) and the four replay heads, lit when in; click a head to switch it.</dd><dt>HEAD 1 - 4</dt><dd>Switch each replay head in or out; the times in ms are shown beside them.</dd><dt>TIME</dt><dd>The delay at head 4, 80 - 1200 ms (480 ms); the others at a quarter, a half and three quarters. Changes glide, as the motor speeds up or slows down.</dd><dt>SYNC</dt><dd>Locks head 4 to the tempo; the small knob picks 1/16, 1/8, dotted 1/8, 1/4 (the default), dotted 1/4, 1/2 or one bar.</dd></dl>
+<h3>ECHO</h3><dl class="ctl"><dt>RECORD</dt><dd>An edgewise meter: the level on the drum.</dd><dt>SWELL</dt><dd>The feedback, 0 - 100% (35%): every head that is in feeds back. Near the top the echoes swell and run away, as they did.</dd><dt>TONE</dt><dd>The repeats get darker (-) or brighter (+) each time round (0).</dd><dt>SPREAD</dt><dd>Heads 1 and 3 go left, 2 and 4 right, 0 - 100% (60%); 0 = all centred.</dd><dt>WOW</dt><dd>The motor's wander, 0 - 100% (15%).</dd><dt>SATURATION</dt><dd>How hard the valve record amp drives the drum, 0 - 100% (30%). Oversampled 2x.</dd></dl>
+<h3>IN &middot; OUT</h3><dl class="ctl"><dt>INPUT</dt><dd>Trim before everything, -24 to +12 dB (0 dB).</dd><dt>GUARD</dt><dd>The house input guard (on by default). Its LED lights while it works.</dd><dt>MIX</dt><dd>Dry to echo, 0 - 100% (30%). The dry stays at full level up to 50%.</dd><dt>OUTPUT</dt><dd>The output level, -24 to +12 dB (0 dB).</dd><dt>DRIFT</dt><dd>The series' drift, 0 - 100% (50% is the standard amount): the motor's speed wanders, so the repeats breathe in time and pitch.</dd><dt>SAT</dt><dd>The house output stage's band saturation (off by default). As a mix tool it passes straight through otherwise.</dd></dl>
+
+<h2>Two faces</h2><p>Every Series 57 unit has two faces, chosen with the ULM / COPENHAGEN keys in the header. Each changes the look and the sound, and the two are level matched; switching fades the sound out and back in. Presets leave the face as it is.</p><dl class="ctl"><dt>ULM</dt><dd>The kitchen-radio face: sand with olive-green keys and accents. A crisp replay, a firm record amp, the motor steady.</dd><dt>COPENHAGEN</dt><dd>Darker, rounder repeats with more low-mid body, a softer record amp and a wider wow.</dd></dl>
+<h2>Presets</h2><p>A preset sets the time, sync, heads, SWELL, TONE, WOW, SATURATION, SPREAD and MIX; the face, INPUT, GUARD, OUTPUT, DRIFT and the output stage are left as they are. The presets are levelled to play at a similar loudness.</p><dl class="ctl"><dt>Init</dt><dd>Heads 1 and 3 at 480 ms.</dd><dt>Single Slap</dt><dd>Head 1 alone, no swell.</dd><dt>Head Rhythm</dt><dd>Heads 1, 3 and 4.</dd><dt>All Four</dt><dd>Every head, a little darker.</dd><dt>Swelling Echoes</dt><dd>Heads 2 and 4, high swell, dark.</dd><dt>Dotted Eighths</dt><dd>Head 4 synced to a dotted 1/8.</dd><dt>Dark Drum</dt><dd>Three heads, very dark, saturated.</dd><dt>Wide Ping</dt><dd>All four, fully spread, a little bright.</dd><dt>Quarter Sync</dt><dd>Head 4 synced to 1/4.</dd><dt>Warbling Tape</dt><dd>Heads 2 and 4 with heavy wow.</dd><dt>Runaway</dt><dd>Swell near the top: the echoes grow on their own (low MIX).</dd><dt>Ambient Wash</dt><dd>All four at 1.1 s, high swell, dark and wide.</dd><dt>Reset all to defaults</dt><dd>(Last in the list.) Every control back to its starting value; the face stays.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>Heads 1 + 3 or 2 + 4 give even rhythms; 1 + 4 or 3 + 4 give swung ones.</li><li>Turn TIME while the echoes ring for pitch bends, as on the real machines.</li><li>With SWELL past 90%, ride it like an instrument: up for a swell, down to stop it.</li><li>COPENHAGEN's darker repeats sit behind a vocal; ULM's crisp ones suit guitars.</li></ul>
+<p class="file">File: gfx-dly57.jsfx (needs gfx-s57.jsfx-inc and the other shared .jsfx-inc files)</p></section></main>
+
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a> &copy; 2026 John Garden.</div></footer></body></html>

@@ -1,0 +1,266 @@
+desc:GFX DLY57 [delay]
+//tags: delay echo tape multi-head drum swell wow valve vintage space series57
+//author: JGWizrad / Garden FX (GFX)
+//
+// Requires gfx-drift, gfx-input, gfx-output, gfx-ui, gfx-panel and gfx-s57 (.jsfx-inc) in the same folder.
+//
+// DLY57 (Series 57). The 1957 counterpart of DLY81: a multi-head echo of the late 50s - one recording head and four
+// replay heads round a turning drum of magnetic tape, any of them switched in, so one setting gives a single slap,
+// another a rhythm of repeats.
+//   TIME  the delay at head 4 (80 - 1200 ms); heads 1, 2 and 3 sit at a quarter, a half and three quarters of it.
+//         SYNC locks head 4 to the tempo (1/16 .. one bar; the other heads fall on its quarters).
+//   HEADS 1 - 4  switch each replay head in or out (click the keys, or the heads on the drum).
+//   SWELL  the feedback: every head that is in feeds back; near the top the echoes swell and run away, as they did.
+//   TONE  the repeats get darker or brighter each time round. WOW  the motor's wander.
+//   SATURATION  how hard the valve record amp drives the drum (oversampled 2x).
+//   SPREAD  the heads are panned alternately left and right: 0 = all centred.
+//   MIX  dry / echo (the dry stays at full up to 50 %), OUTPUT, the house output stage (straight through: a mix tool).
+// ULM / COPENHAGEN (the face): ULM - a crisp replay, a firm record amp, the motor steady. COPENHAGEN - darker,
+//   rounder repeats, a softer record amp, a wider wow. Level matched; presets leave the face alone.
+// DRIFT (0 - 100 %, 50 % = standard): the motor's speed wanders, so the repeats breathe in time and pitch.
+
+import gfx-drift.jsfx-inc
+import gfx-input.jsfx-inc
+import gfx-output.jsfx-inc
+import gfx-ui.jsfx-inc
+import gfx-panel.jsfx-inc
+import gfx-s57.jsfx-inc
+
+slider1:0<-24,12,0.1>-Input trim (dB)
+slider2:1<0,1,1{Off,On}>-Input guard
+slider3:480<80,1200,1>-Time (ms, head 4)
+slider4:0<0,1,1{Off,On}>-Sync
+slider5:3<0,6,1{1/16,1/8,1/8 dotted,1/4,1/4 dotted,1/2,1 bar}>-Sync note (head 4)
+slider6:1<0,1,1{Out,In}>-Head 1
+slider7:0<0,1,1{Out,In}>-Head 2
+slider8:1<0,1,1{Out,In}>-Head 3
+slider9:0<0,1,1{Out,In}>-Head 4
+slider10:35<0,100,1>-Swell (%)
+slider11:0<-100,100,1>-Tone
+slider12:15<0,100,1>-Wow (%)
+slider13:30<0,100,1>-Saturation (%)
+slider14:60<0,100,1>-Spread (%)
+slider15:30<0,100,1>-Mix (%)
+slider16:0<-24,12,0.1>-Output (dB)
+slider17:50<0,100,1>-Drift (%)
+slider18:0<0,100,1>-Band sat (%)
+slider19:30<0,100,1>-Bias (output stage, %)
+slider20:120<40,400,1>-Sat low band (Hz)
+slider21:6000<2000,16000,10>-Sat high band (Hz)
+slider22:-0.3<-24,0,0.1>-Ceiling (dB)
+slider23:0<0,1,1{Ulm,Copenhagen}>-Face
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+#ui_man = "gfx-dly57";
+ext_noinit = 1;
+s57_mem = 0;
+dl_HB = s57_alloc(64); s57_hbdesign(dl_HB, 63, 8);
+dlu.s57_upinit(63, dl_HB, 64); dld.s57_dninit(63, dl_HB, 64);
+dlT.s57_dlinit(262144);
+dl_HO = s57_alloc(8);                                   // the heads' on / off (glided)
+
+function dl_update() (
+  in_setup(slider1, slider2 >= 0.5);
+  dl_sw = slider10 / 100 * 1.02;
+  dl_sat = slider13 / 100;
+  dl_spr = slider14 / 100;
+  dl_tmix = slider15 / 100; dl_tog = 10 ^ (slider16 / 20);
+  dl_tfc = slider23 >= 0.5;
+  drift_macro(slider17);
+  ost_setup(slider18 / 100, slider19 / 100, slider20, slider21, slider22, 0);
+  pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 0;
+);
+function dl_tone() (
+  dlE1.s57_bqset(0, (dl_fc ? 7000 : 10000) * 2 ^ (slider11 / 100 * 0.8), 0, 0.6, srate);
+  dlE2.s57_bqset(1, 60 + max(slider11, 0) * 1.5, 0, 0.6, srate);
+  dlE3.s57_bqset(3, dl_fc ? 180 : 260, dl_fc ? 1.5 : 0.8, 1, srate);
+  dl_tl = slider11; dl_tf = dl_fc;
+);
+function dl_srinit() (
+  dl_sr = srate; dl_sm = s57_kt(0.03, srate); dl_kt = s57_kt(0.2, srate); dl_fd = 1 / (0.01 * srate);
+  dl_tone(); ost_init(0);
+);
+
+in_init();
+dl_fc = dl_tfc = slider23 >= 0.5;
+dl_update(); dl_srinit();
+dl_dfM.drift_init(0.7 + rand(0.4));
+dlo.ost_ch_init(); dlp.ost_ch_init();
+dl_mix = dl_tmix; dl_og = dl_tog; dl_T = slider3 / 1000 * srate; dl_fade = 1; dl_fst = 0;
+
+function dl_set(tm, sy, nt, h1, h2, h3, h4, sw, tn, wo, sa, sp, mx) (
+  slider3 = tm; slider4 = sy; slider5 = nt; slider6 = h1; slider7 = h2; slider8 = h3; slider9 = h4;
+  slider10 = sw; slider11 = tn; slider12 = wo; slider13 = sa; slider14 = sp; slider15 = mx;
+  slider_automate(32764);                               // sliders 3 - 15
+);
+#dl_pm = "Init|Single Slap|Head Rhythm|All Four|Swelling Echoes|Dotted Eighths|Dark Drum|Wide Ping|Quarter Sync|Warbling Tape|Runaway|Ambient Wash";
+function load_preset(p) (
+  //               time sy nt h1 h2 h3 h4  sw   tn  wo  sa  sp  mix
+  p == 1  ? dl_set(480, 0, 3, 1, 0, 1, 0, 35,   0, 15, 30, 60, 30) :     // Init
+  p == 2  ? dl_set(440, 0, 3, 1, 0, 0, 0,  0,  10, 10, 40,  0, 32) :     // Single Slap
+  p == 3  ? dl_set(600, 0, 3, 1, 0, 1, 1, 30,   0, 15, 30, 70, 30) :     // Head Rhythm
+  p == 4  ? dl_set(640, 0, 3, 1, 1, 1, 1, 25, -20, 15, 30, 80, 28) :     // All Four
+  p == 5  ? dl_set(520, 0, 3, 0, 1, 0, 1, 75, -30, 20, 40, 60, 28) :     // Swelling Echoes
+  p == 6  ? dl_set(480, 1, 2, 0, 0, 0, 1, 40,   0, 10, 30, 40, 28) :     // Dotted Eighths
+  p == 7  ? dl_set(560, 0, 3, 1, 0, 1, 1, 50, -70, 25, 50, 50, 30) :     // Dark Drum
+  p == 8  ? dl_set(400, 0, 3, 1, 1, 1, 1, 35,  20, 10, 25,100, 28) :     // Wide Ping
+  p == 9  ? dl_set(480, 1, 3, 0, 0, 0, 1, 35,   0, 10, 30, 30, 28) :     // Quarter Sync
+  p == 10 ? dl_set(700, 0, 3, 0, 1, 0, 1, 45, -30, 80, 45, 60, 30) :     // Warbling Tape
+  p == 11 ? dl_set(360, 0, 3, 1, 0, 1, 0, 98, -40, 25, 60, 60, 12) :     // Runaway
+  p == 12 ? dl_set(1100,0, 3, 1, 1, 1, 1, 70, -50, 30, 30,100, 22) :     // Ambient Wash
+  p == 13 ? (
+    dl_set(480, 0, 3, 1, 0, 1, 0, 35, 0, 15, 30, 60, 30);
+    slider1 = 0; slider2 = 1; slider16 = 0; slider17 = 50; slider18 = 0; slider19 = 30; slider20 = 120; slider21 = 6000; slider22 = -0.3;
+    slider_automate(4194303);
+  );
+  pr_cur = p;
+);
+
+ui_thm = 5; ui_hw = 1;
+!ui_dflt ? ( ui_sz = 0; pr_cur = 1; );
+ui_dflt = 1;
+
+@slider
+dl_update();
+
+@block
+srate != dl_sr ? dl_srinit();
+dl_update();
+dl_tfc != dl_fc && dl_fst == 0 ? dl_fst = 1;
+slider11 != dl_tl ? dl_tone();
+// the time at head 4: free (ms) or locked to the tempo
+dl_beats = slider5 == 0 ? 0.25 : slider5 == 1 ? 0.5 : slider5 == 2 ? 0.75 : slider5 == 3 ? 1 : slider5 == 4 ? 1.5 : slider5 == 5 ? 2 : 4;
+dl_tt = slider4 >= 0.5 ? min(60 / max(tempo, 20) * dl_beats, 1.25) * srate : slider3 / 1000 * srate;
+dl_di = 0.12 * dm_s * samplesblock / srate;
+dl_dsp = dm_a * 0.006 * dl_dfM.drift_tick(dl_di);
+dl_wd = slider12 / 100 * 0.0035 * (dl_fc ? 1.3 : 1);
+dl_nh = slider6 + slider7 + slider8 + slider9;
+dla_rec = max(dla_rec, dl_rv); dl_rv = 0;
+
+@serialize
+file_var(0, ui_sz);
+file_var(0, pr_cur);
+
+@sample
+dl_mix += (dl_tmix - dl_mix) * dl_sm; dl_og += (dl_tog - dl_og) * dl_sm;
+dl_T += (dl_tt - dl_T) * dl_kt;
+dl_HO[0] += (slider6 - dl_HO[0]) * dl_sm; dl_HO[1] += (slider7 - dl_HO[1]) * dl_sm;
+dl_HO[2] += (slider8 - dl_HO[2]) * dl_sm; dl_HO[3] += (slider9 - dl_HO[3]) * dl_sm;
+dl_fst == 1 ? ( dl_fade -= dl_fd; dl_fade <= 0 ? ( dl_fade = 0; dl_fc = dl_tfc; dl_tone(); dl_hold = 64; dl_fst = 2; ); ) :
+dl_fst == 2 ? ( dl_hold -= 1; dl_hold <= 0 ? dl_fst = 3; ) :
+dl_fst == 3 ? ( dl_fade += dl_fd; dl_fade >= 1 ? ( dl_fade = 1; dl_fst = 0; ); );
+
+in_process(spl0, spl1);
+dl_xl = in_l; dl_xr = in_r;
+
+// ---------- the drum: record (the valve amp at 2x), four replay heads, the swell ----------
+dl_in = (dl_xl + dl_xr) * 0.5 + dl_fbv;
+dl_k = 1 + 4 * dl_sat * (dl_fc ? 0.8 : 1);
+dlu.s57_up(dl_in);
+dl_r0 = s57_th(dlu.o0 * dl_k) / dl_k; dl_r1 = s57_th(dlu.o1 * dl_k) / dl_k;
+dl_rec = dld.s57_dn(dl_r0, dl_r1) * (1 + 0.5 * dl_sat);
+dl_rv = max(dl_rv, abs(dl_rec));
+dlT.s57_dlw(dl_rec);
+dl_ph += 0.55 / srate; dl_ph >= 1 ? dl_ph -= 1; dl_fp += 5.7 / srate; dl_fp >= 1 ? dl_fp -= 1;
+dl_wob = 1 + dl_dsp + dl_wd * sin(2 * $pi * dl_ph) + dl_wd * 0.2 * sin(2 * $pi * dl_fp);
+// the heads (the oversampler's 15 samples are taken off the time)
+dl_h1 = dlT.s57_dlr3(max(dl_T * 0.25 * dl_wob - 15, 2)) * dl_HO[0];
+dl_h2 = dlT.s57_dlr3(max(dl_T * 0.5 * dl_wob - 15, 2)) * dl_HO[1];
+dl_h3 = dlT.s57_dlr3(max(dl_T * 0.75 * dl_wob - 15, 2)) * dl_HO[2];
+dl_h4 = dlT.s57_dlr3(max(dl_T * dl_wob - 15, 2)) * dl_HO[3];
+// the swell: all the heads that are in feed back, through the replay EQ (TONE)
+dl_sum = dl_h1 + dl_h2 + dl_h3 + dl_h4;
+dl_fbv = dlE3.s57_bq(dlE2.s57_bq(dlE1.s57_bq(dl_sum))) * dl_sw / max(dl_nh, 1);
+// the repeats out: heads 1 and 3 to the left, 2 and 4 to the right (SPREAD)
+dl_a = dl_h1 + dl_h3; dl_b = dl_h2 + dl_h4;
+dl_el = dl_a * (0.5 + 0.5 * dl_spr) + dl_b * (0.5 - 0.5 * dl_spr);
+dl_er = dl_b * (0.5 + 0.5 * dl_spr) + dl_a * (0.5 - 0.5 * dl_spr);
+dl_el *= dl_fade; dl_er *= dl_fade;
+dl_gd = min(1, 2 - 2 * dl_mix); dl_gw = min(1, 2 * dl_mix);
+dl_yl = dl_xl * dl_gd + dl_el * dl_gw; dl_yr = dl_xr * dl_gd + dl_er * dl_gw;
+dl_yl = dlo.ost_band(dl_yl) * dl_og; dl_yr = dlp.ost_band(dl_yr) * dl_og;
+ost_out(dl_yl, dl_yr);
+spl0 = abs(ost_l) < 0.00000000000000000001 ? 0 : ost_l;
+spl1 = abs(ost_r) < 0.00000000000000000001 ? 0 : ost_r;
+
+@gfx 960 380
+ui_begin(960, 380);
+s57_pal(slider23);
+slider23 < 0.5 ? (                                      // ULM: kitchen radio
+  S57_FACE = 0xE0D3B6; S57_FACEX = 0xD6C8AA; S57_WELL = 0xD2C3A2; S57_PLATE = 0xEAE0C9; S57_INK = 0x24241D; S57_DIM = 0x76705C;
+  S57_GRID = 0x4E5326; S57_GRA = 0.05; S57_ORNG = 0x667530; S57_ORNGL = 0xB3C27A; S57_KEYC = 0x667530; S57_KEYT = 0xF6F0DE;
+  S57_IDX = 0x24241D; S57_NDL = 0x24241D; S57_CREAM = 0xF5EEDB; S57_AMB = 0xFFD98A; S57_AMBW = 0xFFF6DC; S57_AMBD = 0xCDBE96;
+  S57_KEYH = 0xDED3B8; S57_KRIM = 0x55513F; S57_KSKT = 0xF5EEDB; S57_KSHN = 0;
+);
+s57_fonts();
+s57_face(960, 380);
+k_ = s57_header(960, "DLY57", "SERIES 57", "MULTI-HEAD ECHO", #dl_pm, 23);
+k_ > 0 ? load_preset(k_);
+slider23 < 0.5 ? ( ui_col(S57_ORNG); s57_r(24, 14, 26, 26); gfx_setfont(15); ui_col(0xF6F0DE); s57_tc(37, 27, "57"); );
+
+// ---------- the drum and its heads ----------
+s57_plate(20, 68, 340, 292);
+s57_title(32, 76, "DRUM · HEADS");
+cx_ = 118; cy_ = 214; r_ = 70;
+dl_rot += (slider4 >= 0.5 ? 60 / max(tempo, 20) * dl_beats : slider3 / 1000) > 0 ? 0.6 / max(slider4 >= 0.5 ? 60 / max(tempo, 20) * dl_beats : slider3 / 1000, 0.08) / 30 : 0;
+ui_cola(0x000000, 0.15); gfx_circle((cx_ + 2) * sc, (cy_ + 3) * sc, (r_ + 4) * sc, 1, 1);
+ui_col(0x3A3A3E); gfx_circle(cx_ * sc, cy_ * sc, r_ * sc, 1, 1);
+ui_col(0x5A4A3A); gfx_circle(cx_ * sc, cy_ * sc, (r_ - 6) * sc, 1, 1);
+ui_col(0x2E2E32); gfx_circle(cx_ * sc, cy_ * sc, (r_ - 22) * sc, 1, 1);
+i_ = 0; loop(6, a_ = dl_rot + i_ * $pi / 3; ui_cola(0xFFFFFF, 0.12); s57_ln(cx_ + cos(a_) * (r_ - 20), cy_ + sin(a_) * (r_ - 20), cx_ + cos(a_) * (r_ - 7), cy_ + sin(a_) * (r_ - 7), 2); i_ += 1; );
+ui_col(0x9EA3AA); gfx_circle(cx_ * sc, cy_ * sc, 8 * sc, 1, 1);
+// the record head (R) at the left, the four replay heads round the drum, lit when in
+a_ = $pi; ui_col(S57_INK); s57_rr(cx_ + cos(a_) * (r_ + 8) - 8, cy_ + sin(a_) * (r_ + 8) - 7, 16, 14, 2);
+gfx_setfont(13); ui_col(S57_PLATE); s57_tc(cx_ + cos(a_) * (r_ + 8), cy_ + sin(a_) * (r_ + 8), "R");
+i_ = 0; loop(4,
+  a_ = $pi + (i_ + 1) * $pi * 2 / 5;
+  hx_ = cx_ + cos(a_) * (r_ + 8); hy_ = cy_ + sin(a_) * (r_ + 8);
+  on_ = slider(6 + i_) >= 0.5;
+  ui_col(S57_INK); s57_rr(hx_ - 9, hy_ - 8, 18, 16, 2);
+  ui_col(on_ ? S57_KEYC : S57_DIM); s57_rr(hx_ - 7, hy_ - 6, 14, 12, 1.5);
+  sprintf(#t_, "%d", i_ + 1); gfx_setfont(13); ui_col(on_ ? S57_KEYT : S57_PLATE); s57_tc(hx_, hy_, #t_);
+  s57_hov(hx_ - 10, hy_ - 10, 20, 20) && pressed && drag_id == 0 ? ( drag_id = -1; s57_set(6 + i_, on_ ? 0 : 1); );
+  i_ += 1; );
+m_ = 0; loop(4, sprintf(#t_, "HEAD %d", m_ + 1); s57_key(222, 104 + m_ * 30, 64, 22, slider(6 + m_) >= 0.5, #t_) ? s57_set(6 + m_, slider(6 + m_) >= 0.5 ? 0 : 1); m_ += 1; );
+// the times of the heads
+dl_ms = slider4 >= 0.5 ? min(60 / max(tempo, 20) * dl_beats, 1.25) * 1000 : slider3;
+m_ = 0; loop(4, sprintf(#t_, "%.0f", dl_ms * (m_ + 1) / 4); gfx_setfont(13); ui_col(S57_DIM); s57_t(292, 109 + m_ * 30, #t_); m_ += 1; );
+s57_small(292, 92, "MS");
+s57_knob(250, 292, 22, 3, 80, 1200, 480, 1, "TIME", "%.0f ms", 0);
+s57_key(296, 262, 52, 20, slider4 >= 0.5, "SYNC") ? s57_set(4, slider4 >= 0.5 ? 0 : 1);
+s57_knob(322, 316, 13, 5, 0, 6, 3, 0, "", "", 1);
+strcpy(#t_, slider5 == 0 ? "1/16" : slider5 == 1 ? "1/8" : slider5 == 2 ? "1/8 D" : slider5 == 3 ? "1/4" : slider5 == 4 ? "1/4 D" : slider5 == 5 ? "1/2" : "BAR");
+gfx_setfont(13); ui_col(slider4 >= 0.5 ? S57_ORNG : S57_DIM); s57_tc(322, 344, #t_);
+slider4 >= 0.5 ? ( ui_cola(S57_PLATE, 0.6); s57_r(222, 266, 60, 56); );
+
+// ---------- the echo ----------
+s57_well(376, 68, 340, 292);
+s57_title(388, 76, "ECHO");
+dlM.s57_edge(388, 98, 316, 56, dla_rec * 4, "RECORD");
+dla_rec *= 0.6;
+s57_knob(436, 214, 24, 10, 0, 100, 35, 0, "SWELL", "%.0f%%", 0);
+s57_knob(546, 214, 22, 11, -100, 100, 0, 0, "TONE", "%+.0f", 0);
+s57_knob(656, 214, 22, 14, 0, 100, 60, 0, "SPREAD", "%.0f%%", 0);
+s57_knob(491, 314, 18, 12, 0, 100, 15, 0, "WOW", "%.0f%%", 0);
+s57_knob(601, 314, 18, 13, 0, 100, 30, 0, "SATURATION", "%.0f%%", 0);
+
+// ---------- IN / OUT ----------
+s57_plate(732, 68, 208, 292);
+s57_title(744, 76, "IN · OUT");
+s57_knob(782, 140, 16, 1, -24, 12, 0, 0, "INPUT", "%+.1f dB", 0);
+gfx_setfont(13); ui_col(S57_INK); s57_tc(886, 120, "GUARD");
+s57_key(862, 130, 48, 20, slider2 >= 0.5, slider2 >= 0.5 ? "ON" : "OFF") ? s57_set(2, slider2 >= 0.5 ? 0 : 1);
+in_grd > 0.5 ? ( pk_led(918 * sc, 140 * sc, 3 * sc, 1, S57_ORNG); ); in_grd = 0;
+s57_knob(782, 234, 20, 15, 0, 100, 30, 0, "MIX", "%.0f%%", 0);
+s57_knob(886, 234, 20, 16, -24, 12, 0, 0, "OUTPUT", "%+.1f dB", 0);
+s57_knob(782, 316, 13, 17, 0, 100, 50, 0, "DRIFT", "%.0f%%", 0);
+s57_knob(886, 316, 13, 18, 0, 100, 0, 0, "SAT", "%.0f%%", 0);
+
+s57_cheeks(960, 380);
+pk_end();
+ui_end();

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX Lab ORCHD - manual</title><meta name="description" content="A pocket-calculator chord box that plays: build a chord on the keys, play it from = or a MIDI keyboard, with voice leading, a leading note on top and a chord memory.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+.lab{border:1px solid var(--line);border-left:3px solid #9fd05a;border-radius:8px;padding:10px 14px;margin:0 0 18px;color:var(--ink-2);font-size:15px;background:var(--panel)}
+@media print{.lab{background:#f4f8ee;color:#222;border-color:#ccc;border-left-color:#6a9a2a}}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="https://www.gardenfx.uk/lab/">The Lab</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-lab-orchd">
+<div class="cat">GFX Lab &middot; MIDI</div><h1>ORCHD</h1>
+<p class="tagline">A pocket-calculator chord box that plays: build a chord on the keys and play it, from the = key or from a MIDI keyboard.</p>
+<p class="lab"><b>A Lab plug-in.</b> The Lab is where new GFX plug-ins are built in the open: they may change sound or controls between versions.</p>
+<div class="shot" style="max-width:340px"><img src="img/gfx-lab-orchd.webp" alt="The ORCHD panel: a cream pocket calculator with a solar cell, a green LCD showing Cmaj9 and its notes, and rows of rubber keys - CLEAR, memory and LEAD, the four lengths and REST, the qualities, sevenths and extensions, the seven roots, flat, sharp, OCT- and OCT+, and a wide orange = key" loading="lazy"></div>
+<h2>Overview</h2>
+<p>ORCHD is a MIDI plug-in. Put it on a track before a GFX instrument (or any synth): it makes no sound of its own, it sends chords. You build a chord on the calculator's keys - a root, a quality, a seventh and an extension - and the LCD shows its name and spells it out note by note.</p>
+<p>There are two ways to play. Press <b>=</b> and the chord sounds for the length you picked (a whole note down to an eighth, at the project's tempo). Or play a MIDI keyboard: every note you hold plays the chord built on the keys, with that note as its root, for as long as you hold it, at the note's velocity and on its channel. The keyboard picks the root; the keys pick the colour. Other MIDI - sustain pedal, pitch bend, controllers - passes straight through.</p>
+<p><b>Voice leading</b>: each new chord takes the inversion and octave closest to the one before, so the voices move as little as they can, the way a pianist would play the changes.</p>
+<p>ORCHD grew out of the CC-80 chord-writing script. It has no drift: it plays exactly what you ask. No latency; audio passes through untouched.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Trying out chord progressions with smooth, piano-like voicings</li><li>Playing full chords from one finger on a keyboard</li><li>Pads and progressions under a melody note that stays put (LEAD)</li><li>Sketching a sequence of chords and hearing it back in time (memory)</li></ul>
+<h2>Controls</h2>
+<h3>Building a chord</h3><dl class="ctl"><dt>C D E F G A B</dt><dd>The root. Changing it keeps the quality, seventh and extension you've chosen, so you can move a chord around.</dd><dt>b / #</dt><dd>Flat or sharp on the root. Press again to cancel.</dd><dt>maj min dim aug sus4</dt><dd>The triad. Press a lit key again to clear it (no quality = major).</dd><dt>7 M7 m7</dt><dd>The seventh. 7 is a dominant seventh (a major seventh on maj, a diminished seventh on dim); M7 a major seventh; m7 a minor seventh, which also makes the chord minor (or half-diminished with dim).</dd><dt>9 11 13</dt><dd>The extension; it brings its seventh with it. An 11 on a major chord leaves out the third (it clashes with the 11th); a 13 leaves out the 11th.</dd><dt>CLEAR</dt><dd>Empties the keys. Press it again on an empty display to start the voice leading afresh.</dd></dl>
+<p>Keys that hold a setting have a small red LED. Combinations that don't make a chord (dim with an extension, sus4 or aug with 11, m7 on a major or augmented chord) flash ERR on the LCD instead.</p>
+<h3>Playing</h3><dl class="ctl"><dt>=</dt><dd>Plays the chord on the keys for the chosen length (on MIDI channel 1).</dd><dt>1/1 1/2 1/4 1/8</dt><dd>The length for = and for chords stored in memory: whole, minim, crotchet, quaver, at the project tempo.</dd><dt>OCT- / OCT+</dt><dd>Moves everything ORCHD plays down or up an octave, up to two each way. The LCD shows OCT-1, OCT+2 and so on.</dd><dt>MIDI keyboard</dt><dd>Each note held plays the keys' chord on that note's root.</dd><dt>WRITE</dt><dd>With WRITE lit (it is lit on a new ORCHD), = and MR also write their chords into a MIDI item on the selected track at the edit cursor, and move the cursor on, the way the CC-80 script did - with the same voicings, leading note, octave and lengths you hear. It works with the transport stopped. It needs the companion script (below); the LCD says START SCRIPT when you press = or MR and the script isn't running.</dd></dl>
+<h3>Writing chords into an item</h3><p>A plug-in can't write MIDI items itself, so WRITE hands each chord to a small script, <b>GFX ORCHD - write MIDI</b> (on the GFX ReaPack under Scripts, and in the Lab ZIP). Load it once with <code>Actions &rsaquo; Show action list &rsaquo; New action &rsaquo; Load ReaScript</code> and run it: it waits in the background (its toolbar button lights; run it again to stop it). Then select a track and press = (WRITE is lit on a new ORCHD; the LCD says WRITTEN, or START SCRIPT if the script isn't running). The transport can be stopped. Each = writes the chord on the keys at the edit cursor and moves the cursor to its end; MR writes the whole memory, rests included. The notes go into the take open in the MIDI editor if there is one, else into the MIDI item the cursor is in on the selected track, else into a new item.</p><p>To capture what you play on a MIDI keyboard instead, record the track's output: right-click the record-arm button and choose <code>Record: output &rsaquo; MIDI output</code>.</p>
+<h3>LEAD - the leading note</h3><p>LEAD holds one note on top of every chord, the way a melody note sits on top of a run of changes. Press <b>LEAD</b>, then a note key (C - B, then b or # straight after if you want one): the LCD shows TOP and the note. With G as the leading note, Eb plays with G on top, Cm with the same G on top, and F gets the G added - F becomes Fadd9, F7 becomes F9, Fmaj7 becomes Fmaj9. A leading note that isn't in the chord is added and named as the 9, 11, 13, 6 or 7. The leading note sits between E above middle C and the Eb above that (OCT moves it with the rest); the other notes are voice-led underneath it. Press LEAD again to turn it off.</p>
+<h3>Memory</h3><dl class="ctl"><dt>M+</dt><dd>Stores the chord on the keys, with its length.</dd><dt>REST</dt><dd>Stores a rest of the chosen length.</dd><dt>MR</dt><dd>Plays the stored sequence at the project tempo (its LED is lit while memory holds something); press again to stop. The LCD shows MR 2/4 and so on as it plays.</dd><dt>MC</dt><dd>Clears the memory.</dd></dl>
+<p>The memory holds up to 32 steps and is saved with the project. The LCD's bottom line shows the length, the number of stored steps (M4), the octave, the leading note and the status.</p>
+<h3>Computer keys</h3><p>While the window has focus: A - G root, Enter =, Space REST, Backspace CLEAR, 1 2 4 8 length, - and + octave.</p>
+<h3>Size</h3><p>S, M and L set the panel's size; ? shows the credits and this manual's address.</p>
+<h2>Tips</h2><ul class="tips"><li>Set a quality and seventh (say m7), then play roots on the keyboard: every note becomes a minor seventh chord, voice-led.</li><li>Try a leading note with a ii - V - I: G on top over Am7, D7 and Gmaj7 gives Am7, D11 and Gmaj7 - one held note, three colours.</li><li>Press CLEAR twice if a progression has wandered too high or low: the next chord starts from the middle again.</li><li>Build a progression with M+, light WRITE and press MR: the whole progression lands in the item in one go, ready to edit.</li></ul>
+<p class="file">File: gfx-lab-orchd.jsfx</p></section></main>
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a> &copy; 2026 John Garden.</div></footer>
+</body></html>

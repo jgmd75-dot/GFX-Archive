@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GFX Lab Overland - manual</title><meta name="description" content="A go-anywhere drive and weight processor: three transfer ranges, lift, terrain, diff lock, fog and eight liveries with their own sound.">
+<style>
+:root{--bg:#0e0f11;--panel:#1b1d21;--panel-2:#23262b;--line:#2f3238;--ink:#e9e7e2;--ink-2:#b4b2ad;--ink-3:#85837e;--accent:#e0603a;--accent-2:#e8b23a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Trebuchet MS","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2)}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px}
+.top{position:sticky;top:0;z-index:5;background:rgba(14,15,17,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.badge{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}
+.top a.home{color:var(--ink);text-decoration:none;font-weight:700;letter-spacing:1px}
+.top nav{margin-left:auto;display:flex;gap:16px;font-size:14px}.top nav a{color:var(--ink-2);text-decoration:none}
+h1{font-size:clamp(28px,5vw,42px);margin:28px 0 4px;line-height:1.1}
+.cat{color:var(--ink-3);font-size:13px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.tagline{color:var(--ink-2);font-size:18px;margin:6px 0 18px}
+.shot{background:#0b0c0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px}
+.shot img{display:block;width:100%;height:auto}
+h2{font-size:22px;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px;color:var(--accent-2)}
+p{margin:0 0 12px;color:var(--ink-2)}
+ul.when{margin:0 0 12px;padding-left:20px;color:var(--ink-2)}
+dl.ctl{margin:0;display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+dl.ctl dt,dl.ctl dd{margin:0;padding:10px 14px;border-top:1px solid var(--line)}
+dl.ctl dt:first-of-type,dl.ctl dd:first-of-type{border-top:0}
+dl.ctl dt{background:var(--panel-2);font-weight:700;font-size:14px;letter-spacing:.3px}
+dl.ctl dd{background:var(--panel);color:var(--ink-2);font-size:15px}
+ol.steps{color:var(--ink-2);padding-left:22px}ol.steps li{margin:0 0 6px}
+.tips li{color:var(--ink-2);margin:0 0 6px}
+.file{font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-3)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--ink)}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:24px 0 40px;color:var(--ink-3);font-size:14px}
+.toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:10px;margin:10px 0 24px}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.toc a span{display:block;color:var(--ink-3);font-size:13px}
+.manual + .manual{margin-top:60px}
+.lab{border:1px solid var(--line);border-left:3px solid #9fd05a;border-radius:8px;padding:10px 14px;margin:0 0 18px;color:var(--ink-2);font-size:15px;background:var(--panel)}
+@media print{.lab{background:#f4f8ee;color:#222;border-color:#ccc;border-left-color:#6a9a2a}}
+@media (max-width:600px){dl.ctl{grid-template-columns:1fr}dl.ctl dd{border-top:0;padding-top:2px}}
+@media print{body{background:#fff;color:#000}.top,footer{display:none}p,dl.ctl dd,ul.when,.tips li,ol.steps{color:#222}
+ dl.ctl dt{background:#eee}dl.ctl dd{background:#fff}dl.ctl,dl.ctl dt,dl.ctl dd,h2{border-color:#ccc}h3{color:#7a4a10}.manual{break-before:page}.manual:first-of-type{break-before:auto}a{color:#000}}
+</style></head><body>
+<header class="top"><div class="wrap"><span class="badge">GFX</span><a class="home" href="index.html">GFX</a>
+<nav><a href="https://www.gardenfx.uk/lab/">The Lab</a><a href="https://www.gardenfx.uk/">Website</a></nav></div></header>
+<main class="wrap"><section class="manual" id="gfx-lab-overland">
+<div class="cat">GFX Lab &middot; Road</div><h1>Overland</h1>
+<p class="tagline">A go-anywhere drive and weight processor with the mood of an 80s four-wheel-drive camper: three transfer ranges, lift, terrain, diff lock, fog, and paint that has a sound.</p>
+<p class="lab"><b>A Lab plug-in.</b> The Lab is where new GFX plug-ins are built in the open: they may change sound or controls between versions.</p>
+<div class="shot"><img src="img/gfx-lab-overland.webp" alt="The Overland panel in a blue and grey livery: the dusk-road window with its rainbow spectrum, the slatted level meters, DRIVE, LIFT, TERRAIN, the TRANSFER gate, DIFF LOCK, FOG, OUTPUT, the 4WD plate and the livery chips" loading="lazy"></div>
+<div class="shot"><img src="img/gfx-lab-overland-b.webp" alt="The Overland panel repainted in a cream and green livery" loading="lazy"></div>
+<h2>Overview</h2>
+<p>Overland is a drive for adding density, warmth and weight, from a touch of thickening to a full-on off-road grind. The signal goes through LIFT (the mud trimmed below about 150 Hz), then the drive, then TERRAIN's grit, LIFT's top shelf and FOG, then DIFF LOCK and the livery's stereo width, TERRAIN's wobble and a finishing stage, and out through the house output stage.</p>
+<p>DRIVE works two layers at once. One is the TRANSFER curve you pick (2H, 4H or 3L). The other is a tape-style stage. As DRIVE rises the blend moves from the TRANSFER curve towards the tape stage, and the curve is driven less as the tape takes over: you get tape density rather than ever more fuzz. Both layers are level-matched at -12 dBFS, so DRIVE changes the character, not the loudness.</p>
+<p>The paint is part of the sound. Each of the eight liveries has its own voicing: darker paint is warmer and denser (the lows saturate harder, the highs lift less, the image narrows slightly, and the top rolls off as DRIVE rises); lighter paint is brighter and wider (more air, and the image widens with a slight left / right detune as DRIVE rises). A finishing stage follows the paint too: a weighty limiter and mid clipper on the warm liveries, a clean peak catcher on the middle one, an airy soft knee on the bright ones. Livery changes glide.</p>
+<p>The output stage's clipper is always on, with its ceiling at -0.3 dBFS. Latency is 1.5 ms (reported to REAPER). There is no DRIFT dial; TERRAIN supplies the movement.</p>
+<h3>Reach for it for</h3><ul class="when"><li>Warmth and thickness on a mix bus or stem</li><li>Heavy, glued low end on bass and kick (3L)</li><li>Dense, controlled drive on drums without mush (4H)</li><li>A dusty, wobbly, lo-fi tape feel (TERRAIN, FOG)</li><li>Brightening and widening a dull stereo source (a light livery, LIFT)</li></ul>
+<h2>Controls</h2>
+<h3>The header</h3><dl class="ctl"><dt>PRESET</dt><dd>Click the word PRESET for the preset list (with "Reset all to defaults" at the end).</dd><dt>&#9664; / &#9654;</dt><dd>Step to the previous or next preset, wrapping round.</dd><dt>Preset display</dt><dd>Shows the preset's name. Click it for the preset list too.</dd></dl>
+<h3>The window and the louvres</h3><dl class="ctl"><dt>Spectrum</dt><dd>The rainbow bars in the foreground of the dusk scene are a live spectrum of the output, 24 bands from 40 Hz (red) to 16 kHz (violet).</dd><dt>Louvres</dt><dd>The two slatted vents are the left and right output meters, 3 dB per slat; the top slat lights at about -3 dBFS, and the top three slats turn yellow.</dd></dl>
+<h3>The controls</h3><dl class="ctl"><dt>DRIVE</dt><dd>0 to 10, default 4. How hard it is driven, and how far the blend moves from the TRANSFER curve towards the tape stage. Loudness stays roughly put.</dd><dt>LIFT</dt><dd>0 to 10, default 3. Ground clearance: trims the mud below about 150 Hz before the drive (up to 8 dB) and adds a high shelf at 6 kHz after it (a few dB; more on light liveries, less on dark ones).</dd><dt>TERRAIN</dt><dd>0 to 10, default 2. Tarmac to rough track: a slow wobble in pitch and level. Above half way it also roughens the transients of the top end (above about 3 kHz).</dd><dt>TRANSFER</dt><dd>Click 2H, 4H or 3L (the change crossfades). <b>2H</b>: one gentle stage on the whole signal, for warmth and thickening. <b>4H</b>: four bands (split at 150 Hz, 1.2 kHz and 5 kHz), each driven on its own, then summed: density without mush. <b>3L</b>: low range for hill climbs: the lows (below about 200 Hz) are driven harder with slow, heavy glue and a little sub-octave that grows with DRIVE; the top is driven lightly.</dd><dt>DIFF LOCK</dt><dd>Everything below about 120 Hz to mono: a solid, centred low end.</dd><dt>FOG</dt><dd>A warm haze: a soft low-pass at 6.5 kHz.</dd><dt>OUTPUT</dt><dd>-12 to +12 dB, before the output clipper.</dd><dt>4WD / 2WD</dt><dd>Click the plate. <b>4WD</b> (default): every saturation stage is anti-aliased, for a clean top end. <b>2WD</b>: everything runs plain, lighter on the CPU, with a rawer top and a little aliasing fizz. The switch dips the output for about 5 ms so it never clicks.</dd><dt>Livery chips</dt><dd>Eight paint chips: click one to repaint the panel and change the voicing. The line under them reads LIVERY - BRIGHT / WIDE, BALANCED or WARM / DENSE. Toy Teal, Sage, Desert Tan, Alpine Blue and Alpine Cream are bright and wide; Midnight Gold is balanced; Sunset Bronze and Bottle Green are warm and dense.</dd></dl>
+<p>Knobs: drag up or down; Ctrl-click returns to the default. Values show while you hover.</p>
+<h2>Presets</h2><dl class="ctl"><dt>Init</dt><dd>The defaults: DRIVE 4, LIFT 3, TERRAIN 2, 4H, Alpine Blue.</dd><dt>Gravel Road</dt><dd>More drive (5), lift and terrain (4) on 4H in Desert Tan: bright, gritty movement.</dd><dt>Coastal Fog</dt><dd>Gentle 2H at DRIVE 3 with FOG on, in Alpine Cream: soft and hazy.</dd><dt>Hill Climb Bass</dt><dd>3L at DRIVE 6 with DIFF LOCK, little lift, in Bottle Green: heavy, glued, mono low end with a hint of sub.</dd><dt>Highway Polish</dt><dd>Light 2H drive (2) with LIFT 6 and no terrain, in Alpine Blue: clean polish and air.</dd><dt>Night Drive</dt><dd>4H at DRIVE 4, TERRAIN 5 and FOG, in Midnight Gold, OUTPUT +1 dB: dark, moving and soft-topped.</dd><dt>Mountain Pass</dt><dd>4H at DRIVE 7 with LIFT 5 and TERRAIN 6 (a little grit), in Sage, OUTPUT -1 dB.</dd><dt>Kick in the Mud</dt><dd>3L at DRIVE 6 with DIFF LOCK and no terrain, in Sunset Bronze: a weighty, warm kick or bass.</dd><dt>Toy Rally</dt><dd>4H at DRIVE 8, LIFT 7, TERRAIN 7, in Toy Teal, OUTPUT -1 dB: bright, wide and rough.</dd><dt>Mix Bus Cruise</dt><dd>Light 4H drive (3) with DIFF LOCK and very little terrain, in Alpine Blue, OUTPUT -0.5 dB: gentle glue for a mix.</dd><dt>Dusty Tape</dt><dd>2H at DRIVE 5 with heavy TERRAIN (8) and FOG, in Sunset Bronze: wobbly, warm, lo-fi.</dd><dt>Off the Map</dt><dd>Everything up: 3L at full DRIVE and full TERRAIN in Midnight Gold, OUTPUT -4.5 dB.</dd></dl>
+<h2>Tips</h2><ul class="tips"><li>Try the same settings in a light and a dark livery: the paint changes the tone as much as an EQ would.</li><li>On a full mix, 4H keeps the drive from smearing the low end into the top; 3L is for bass and kick.</li><li>DIFF LOCK is worth leaving on for bass-heavy stereo material, especially with 3L's sub-octave.</li><li>Keep TERRAIN at 5 or below for movement without grit; above 5 the top end starts to roughen.</li><li>2WD is a quick way to save CPU on many instances, or to get a rawer, fizzier top on purpose.</li></ul>
+<p class="file">File: gfx-lab-overland.jsfx</p>
+</section></main>
+<footer><div class="wrap">GFX (Garden FX) - free JSFX plug-ins for REAPER. Designed by JGWizrad. <a href="https://www.gardenfx.uk/">https://www.gardenfx.uk/</a> &copy; 2026 John Garden.</div></footer>
+</body></html>
